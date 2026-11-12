@@ -328,7 +328,7 @@ def test_nhl_full_scan_end_to_end(tmp_path, ledger, monkeypatch):
 
 def test_football_full_scan_end_to_end(ledger, monkeypatch):
     """Cely fotbalovy beh se syntetickou ligou: model, kalibrace, rozbor, doplnkove trhy, cilovy tip."""
-    from tests.conftest import simulate_league
+    from conftest import simulate_league
     from tipsbot import analysis, calibration, ingestion
 
     df, truth = simulate_league(n_teams=6, rounds=6, seed=2, start=date(2026, 5, 20))

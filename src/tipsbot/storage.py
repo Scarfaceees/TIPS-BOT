@@ -175,6 +175,18 @@ class Ledger:
     def set_api_football_key(self, key: str) -> None:
         self._set("api_football_key", key.strip())
 
+    def football_data_key(self) -> str:
+        return self._get("football_data_key", "")
+
+    def set_football_data_key(self, key: str) -> None:
+        self._set("football_data_key", key.strip())
+
+    def highlightly_key(self) -> str:
+        return self._get("highlightly_key", "")
+
+    def set_highlightly_key(self, key: str) -> None:
+        self._set("highlightly_key", key.strip())
+
     def next_kickoff(self, league: str) -> datetime | None:
         raw = self._get(f"next_kickoff:{league}", "")
         return datetime.fromisoformat(raw) if raw else None

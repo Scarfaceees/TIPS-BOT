@@ -132,7 +132,37 @@ def describe_weather(hourly: dict, kickoff_hour_iso: str) -> str | None:
     return f"{temp:.0f} °C, srážky {rain:.1f} mm (pravděpodobnost {prob:.0f} %), vítr {wind:.0f} km/h – {note}"
 
 
-def fetch_weather(city: str, kickoff_utc, timeout: int = 20) -> str | None:
+def weather_scale(hourly: dict, kickoff_hour_iso: str, effect: float) -> float:
+    """Nasobek golu: tezky dest (>= 2,5 mm) nebo silny vitr (>= 35 km/h) = 1 - effect."""
+    try:
+        i = hourly["time"].index(kickoff_hour_iso)
+        return 1.0 - effect if hourly["precipitation"][i] >= 2.5 or hourly["wind_speed_10m"][i] >= 35 else 1.0
+    except (KeyError, ValueError, IndexError, TypeError):
+        return 1.0
+
+
+def team_out_counts(absences: list[Absence]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for a in absences:
+        if severity([a]):
+            out[a.team] = out.get(a.team, 0) + 1
+    return out
+
+
+def football_scale(home_out: int, away_out: int, weather: float, cfg) -> tuple[float, float]:
+    """Nasobky ocekavanych golu (domaci, hoste): vypadky hracu a pocasi, se stropem na stranu."""
+    cap = cfg.absence_cap
+
+    def side(own_out: int, opp_out: int) -> float:
+        down = min(own_out * cfg.absence_attack_per_player, cap)
+        up = min(opp_out * cfg.absence_defence_per_player, cap)
+        return (1.0 - down) * (1.0 + up) * weather
+
+    return side(home_out, away_out), side(away_out, home_out)
+
+
+def fetch_weather(city: str, kickoff_utc, timeout: int = 20, effect: float | None = None):
+    """Text o pocasi; s `effect` vrati dvojici (text, nasobek golu)."""
     try:
         g = requests.get(OPEN_METEO_GEO, params={"name": city, "count": 1}, timeout=timeout).json()
         loc = g["results"][0]
@@ -141,10 +171,12 @@ def fetch_weather(city: str, kickoff_utc, timeout: int = 20) -> str | None:
             "latitude": loc["latitude"], "longitude": loc["longitude"], "timezone": "UTC",
             "hourly": "temperature_2m,precipitation,precipitation_probability,wind_speed_10m",
             "start_date": day, "end_date": day}, timeout=timeout).json()
-        return describe_weather(w["hourly"], kickoff_utc.strftime("%Y-%m-%dT%H:00"))
+        hour = kickoff_utc.strftime("%Y-%m-%dT%H:00")
+        text = describe_weather(w["hourly"], hour)
+        return text if effect is None else (text, weather_scale(w["hourly"], hour, effect))
     except Exception as e:  # noqa: BLE001
         log.warning("Pocasi pro %s neni dostupne: %s", city, e)
-        return None
+        return None if effect is None else (None, 1.0)
 
 
 def parse_news_rss(xml_text: str, limit: int = 3) -> list[str]:

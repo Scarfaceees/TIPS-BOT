@@ -68,7 +68,7 @@ def _prepare(matches: pd.DataFrame, as_of: date, cfg: FootballModelConfig) -> pd
     missing = [c for c in REQUIRED_COLUMNS if c not in matches.columns]
     if missing:
         raise ModelError(f"Chybi sloupce: {missing}")
-    df = matches.loc[:, list(REQUIRED_COLUMNS)].dropna().copy()
+    df = matches.loc[:, list(REQUIRED_COLUMNS)].dropna().copy()  # sloupce navic (kurzy, liga) se zahodi
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df[df["date"] < as_of]
     days = np.array([(as_of - d).days for d in df["date"]], dtype=float)
@@ -79,12 +79,16 @@ def _prepare(matches: pd.DataFrame, as_of: date, cfg: FootballModelConfig) -> pd
     return df.reset_index(drop=True)
 
 
-def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig) -> DCParams:
+def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig, team_group: dict[str, int] | None = None) -> DCParams:
+    """`team_group` (tym -> cislo skupiny/ligy) zapne spolecny odhad: kazda skupina dostane offset sily,
+    ktery se uplatni jen v zapasech mezi skupinami (poharech); v ligovych zapasech se vykrati."""
     teams = tuple(sorted(set(df["home"]) | set(df["away"])))
     n = len(teams)
     if len(df) < n:
         raise ModelError("Prilis malo zapasu pro odhad modelu.")
     idx = {t: i for i, t in enumerate(teams)}
+    n_groups = (max(team_group.values()) + 1) if team_group else 0
+    grp = np.array([team_group.get(t, 0) for t in teams], dtype=int) if team_group else np.zeros(n, dtype=int)
     h = df["home"].map(idx).to_numpy()
     a = df["away"].map(idx).to_numpy()
     x = df["home_goals"].to_numpy(dtype=float)
@@ -93,6 +97,8 @@ def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig) -> DCParams:
     use_hta = cfg.team_home_advantage
     shrink = cfg.home_advantage_shrinkage_matches
 
+    base = 3 + (3 * n if use_hta else 2 * n)
+
     def unpack(p: np.ndarray):
         mu, gamma, rho = p[0], p[1], p[2]
         att = p[3 : 3 + n]
@@ -100,6 +106,9 @@ def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig) -> DCParams:
         att = att - att.mean()
         de = de - de.mean()
         hta = p[3 + 2 * n : 3 + 3 * n] if use_hta else np.zeros(n)
+        if n_groups:
+            q = p[base : base + n_groups][grp]
+            att, de = att + q, de + q
         return mu, gamma, rho, att, de, hta
 
     def nll(p: np.ndarray) -> float:
@@ -112,7 +121,7 @@ def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig) -> DCParams:
         return float(-np.sum(w * ll) + penalty)
 
     mean_goals = max((x.mean() + y.mean()) / 2.0, 0.1)
-    size = 3 + (3 * n if use_hta else 2 * n)
+    size = base + n_groups
     p0 = np.zeros(size)
     p0[0], p0[1], p0[2] = np.log(mean_goals), 0.25, -0.05
     bounds = [(-3, 3), (-1, 1.5), (-0.3, 0.3)] + [(-3, 3)] * (size - 3)
@@ -174,6 +183,52 @@ def fit(
     return DCParams(full.teams, attack, defence, home_adv, full.mu, full.gamma, full.rho)
 
 
+def fit_joint(
+    domestic: dict[str, pd.DataFrame],
+    cups: pd.DataFrame,
+    as_of,
+    cfg: FootballModelConfig | None = None,
+    cup_name_map=None,
+) -> tuple[DCParams, dict[str, float]]:
+    """Spolecny odhad ligovych a pohatovych zapasu. Vraci parametry a offsety sily lig.
+
+    `domestic`: liga -> zapasy (jmena tymu z football-data.co.uk). `cups`: pohary (jmena z API).
+    `cup_name_map(name, known_teams)` prevede nazev z poharu na ligovy; tymy bez shody patri do skupiny OTHER.
+    """
+    cfg = cfg or SETTINGS.football
+    as_of = _to_date(as_of)
+    leagues = sorted(domestic)
+    group_of = {lg: i for i, lg in enumerate(leagues)}
+    other = len(leagues)
+    team_group: dict[str, int] = {}
+    frames = []
+    for lg in leagues:
+        d = domestic[lg]
+        frames.append(d.loc[:, list(REQUIRED_COLUMNS)])
+        for t in set(d["home"]) | set(d["away"]):
+            team_group[t] = group_of[lg]
+    known = list(team_group)
+    c = cups.loc[:, list(REQUIRED_COLUMNS)].copy()
+    if cup_name_map is not None:
+        for col in ("home", "away"):
+            c[col] = c[col].map(lambda n: cup_name_map(n, known) or n)
+    for t in set(c["home"]) | set(c["away"]):
+        team_group.setdefault(t, other)
+    frames.append(c)
+    df = _prepare(pd.concat(frames, ignore_index=True), as_of, cfg)
+    params = _fit_raw(df, cfg, team_group={t: g for t, g in team_group.items() if t in set(df["home"]) | set(df["away"])})
+    # offset ligy = prumerna sila (utok+obrana) jejich tymu proti prumeru vsech tymu
+    strength = {t: params.attack[t] + params.defence[t] for t in params.teams}
+    overall = float(np.mean(list(strength.values())))
+    names = leagues + ["OTHER"]
+    offsets = {}
+    for g, name in enumerate(names):
+        vals = [strength[t] for t in params.teams if team_group.get(t) == g]
+        if vals:
+            offsets[name] = float(np.mean(vals) - overall)
+    return params, offsets
+
+
 def score_matrix(lam: float, mu_: float, rho: float, max_goals: int | None = None) -> np.ndarray:
     """Matice P(domaci = i, hoste = j) s korekci nizkych skore."""
     k = (max_goals or SETTINGS.football.max_goals) + 1
@@ -229,9 +284,12 @@ def equivalent_probability(ev: float, odds: float) -> float:
     return (ev + 1.0) / odds
 
 
-def market_probabilities(params: DCParams, home: str, away: str) -> dict[str, float]:
-    """Pravdepodobnosti hlavnich trhu pro jeden zapas."""
+def market_probabilities(
+    params: DCParams, home: str, away: str, scale: tuple[float, float] = (1.0, 1.0)
+) -> dict[str, float]:
+    """Pravdepodobnosti hlavnich trhu pro jeden zapas. `scale` = nasobky golu (domaci, hoste) z kontextu."""
     lam, mu_ = params.expected_goals(home, away)
+    lam, mu_ = lam * scale[0], mu_ * scale[1]
     m = score_matrix(lam, mu_, params.rho)
     p1, px, p2 = probs_1x2(m)
     i, j = np.indices(m.shape)

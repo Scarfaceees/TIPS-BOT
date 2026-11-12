@@ -61,6 +61,8 @@ def _parser() -> argparse.ArgumentParser:
     ff.add_argument("--league", required=True)
     ff.add_argument("--seasons", type=int, default=4)
 
+    sub.add_parser("fetch-cups", help="stahne vysledky pohar (LM, EL, ECL)")
+
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
     ak.add_argument("key")
 
@@ -183,6 +185,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Stazeno souboru: {len(paths)}")
         return 0 if paths else 1
+    if args.cmd == "fetch-cups":
+        from .cups import fetch_cups
+
+        with make_session_factory(args.db)() as session:
+            led = Ledger(session)
+            notes = fetch_cups(led.api_football_key(), led.football_data_key())
+        print("\n".join(notes))
+        return 0
     if args.cmd == "calibrate":
         return _calibrate(args.league, args.seasons)
     if args.cmd == "backtest":

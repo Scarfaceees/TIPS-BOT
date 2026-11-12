@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 import numpy as np
+import pandas as pd
 
-from . import analysis, calibration, context, detail, devig, ingestion, nhl_data, oddsapi
+from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_data, oddsapi
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -72,6 +73,30 @@ def _total_anchor(ev: oddsapi.Event, settings: Settings) -> tuple[str, float] | 
     return best
 
 
+def _fit_cup_model(today: date, settings: Settings):
+    """Spolecny model pohar (LM, EL, ECL): ligova data domacich lig + vsechny stazene pohary."""
+    domestic = {}
+    for lg in cups.DOMESTIC:
+        try:
+            domestic[lg] = ingestion.load_football(lg)
+        except FileNotFoundError:
+            continue
+    if not domestic:
+        raise FileNotFoundError("chybi ligova data domacich lig; spust tipsbot fetch-football")
+    frames = []
+    for cup in cups.CUP_API_FOOTBALL_IDS:
+        try:
+            frames.append(ingestion.load_football(cup))
+        except FileNotFoundError:
+            continue
+    if not frames:
+        raise FileNotFoundError("chybi data pohar; spust tipsbot fetch-cups")
+    cup_df = pd.concat(frames, ignore_index=True)
+    params, offsets = football.fit_joint(domestic, cup_df, today, settings.football, cup_name_map=match_team)
+    all_df = pd.concat([cup_df, *domestic.values()], ignore_index=True)
+    return params, all_df, offsets
+
+
 class ModelProvider:
     """Modelove pravdepodobnosti pro udalost. Bez dat vraci None (pouzije se jen trh)."""
 
@@ -82,6 +107,8 @@ class ModelProvider:
         self.params = None
         self.ratings = None
         self.unmatched: set[str] = set()
+        self.league_offsets: dict[str, float] = {}
+        self.scales: dict[str, tuple[float, float]] = {}  # match_id -> nasobky golu z kontextu (fotbal)
         self.df = None
         self.scalers = None
         try:
@@ -92,6 +119,8 @@ class ModelProvider:
                     log.warning("brankari nejsou k dispozici: %s", e)
                     goalies = {}
                 self.ratings = nhl_data.NHLRatings(nhl_data.load_nhl(min_season=today.year - 2), today, settings.nhl, goalies)
+            elif league in cups.CUP_API_FOOTBALL_IDS:
+                self.params, self.df, self.league_offsets = _fit_cup_model(today, settings)
             else:
                 df = self.df = ingestion.load_football(league)
                 self.scalers = calibration.load_scalers(calibration_path(league, settings))
@@ -107,7 +136,7 @@ class ModelProvider:
             if not home or not away:
                 self.unmatched.update(n for n, m in ((ev.home, home), (ev.away, away)) if not m)
                 return None
-            probs = football.market_probabilities(self.params, home, away)
+            probs = football.market_probabilities(self.params, home, away, self.scales.get(ev.match_id, (1.0, 1.0)))
             return apply_calibration(probs, self.scalers) if self.scalers else probs
         if self.ratings is not None:
             home, away = nhl_abbr(ev.home), nhl_abbr(ev.away)
@@ -215,6 +244,26 @@ def scan_league(
         report.notes.append(provider.note)
 
     by_id = {e.match_id: e for e in events}
+    # Kontext (zraneni, pocasi) se nacita pred modelem, aby ovlivnil pravdepodobnosti.
+    absences, checked = _absences(league, events, ledger, now, settings) if live else ([], False)
+    is_football = LEAGUES[league].sport is Sport.FOOTBALL
+    cities: dict[str, str] = {}
+    if live and is_football and ledger.api_football_key():
+        for day in sorted({e.kickoff.date().isoformat() for e in events}):
+            cities.update(context.fetch_venue_cities(league, ingestion.current_season_start_year(now.date()), day, ledger.api_football_key()))
+    weather_by_match: dict[str, str] = {}
+    fcfg = settings.football
+    for ev in events if is_football else []:
+        city = cities.get(match_team(ev.home, cities) or "") or ""
+        text, w_scale = (context.fetch_weather(city, ev.kickoff, effect=fcfg.weather_goal_factor) if city else (None, 1.0))
+        weather_by_match[ev.match_id] = text or ""
+        if fcfg.context_adjust and hasattr(provider, "scales"):
+            outs = context.team_out_counts(context.for_match(absences, ev.home, ev.away))
+            h_out = outs.get(match_team(ev.home, outs) or "", 0)
+            a_out = outs.get(match_team(ev.away, outs) or "", 0)
+            scale = context.football_scale(h_out, a_out, w_scale, fcfg)
+            if scale != (1.0, 1.0):
+                provider.scales[ev.match_id] = scale
     cands_by_match: dict[str, list[Candidate]] = {}
     models_by_match: dict[str, bool] = {}
     model_by_match: dict[str, dict | None] = {}
@@ -261,11 +310,6 @@ def scan_league(
         report.new_tips.append(tip)
 
     # 3) rozbor vsech zapasu pro zobrazeni (vsechny trhy, doporuceni)
-    absences, checked = _absences(league, events, ledger, now, settings) if live else ([], False)
-    cities: dict[str, str] = {}
-    if live and LEAGUES[league].sport is Sport.FOOTBALL and ledger.api_football_key():
-        for day in sorted({e.kickoff.date().isoformat() for e in events}):
-            cities.update(context.fetch_venue_cities(league, ingestion.current_season_start_year(now.date()), day, ledger.api_football_key()))
     views = []
     for mid, cands in cands_by_match.items():
         tips_here = [t for t in ledger.open_tips() if t.match_id == mid]
@@ -276,9 +320,10 @@ def scan_league(
             v.absence_checked = checked
             v.absences = [a.line() for a in context.for_match(absences, ev.home, ev.away)]
             v.news = [f"{t}: {h}" for t in (ev.home, ev.away) for h in context.fetch_news(t)[:2]] if live else []
-            if LEAGUES[league].sport is Sport.FOOTBALL:
-                city = cities.get(match_team(ev.home, cities) or "") or ""
-                v.weather = (context.fetch_weather(city, ev.kickoff) or "") if city else ""
+            v.weather = weather_by_match.get(mid, "")
+            if mid in getattr(provider, "scales", {}):
+                sh, sa = provider.scales[mid]
+                v.absences.append(f"Úprava modelu z kontextu: góly domácích ×{sh:.3f}, hostů ×{sa:.3f}")
             views.append(v)
     views.sort(key=lambda v: v.kickoff)
     ledger.set_analysis(league, analysis.dumps(views))

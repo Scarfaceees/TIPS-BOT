@@ -46,6 +46,10 @@ LEAGUES: dict[str, League] = {
         League("ITA1", "Serie A", Sport.FOOTBALL, Tier.MAJOR, FOOTBALL_MARKETS),
         League("POR1", "Liga Portugal", Sport.FOOTBALL, Tier.MINOR, FOOTBALL_MARKETS),
         League("CZE1", "Chance Liga", Sport.FOOTBALL, Tier.MINOR, FOOTBALL_MARKETS),
+        League("UCL", "Liga mistrů", Sport.FOOTBALL, Tier.MAJOR, FOOTBALL_MARKETS),
+        League("UEL", "Evropská liga", Sport.FOOTBALL, Tier.MAJOR, FOOTBALL_MARKETS),
+        League("UECL", "Konferenční liga", Sport.FOOTBALL, Tier.MINOR, FOOTBALL_MARKETS),
+        League("UNL", "Liga národů UEFA", Sport.FOOTBALL, Tier.MINOR, FOOTBALL_MARKETS),
         League("NHL", "NHL", Sport.NHL, Tier.MAJOR, NHL_MARKETS),
     )
 }
@@ -155,6 +159,13 @@ class FootballModelConfig:
     # Cold-start (bod 15).
     cold_start_matches: int = 8
     cold_start_prior_weight: float = 0.60
+    # Kontext zapasu (zraneni, pocasi). Konzervativni odhady bez historickeho overeni
+    # (neexistuji data o zranenich k backtestu) - proto male a se stropem.
+    context_adjust: bool = True
+    absence_attack_per_player: float = 0.015  # kazdy jisty vypadek snizi utok tymu o 1,5 %
+    absence_defence_per_player: float = 0.010  # a zvysi golove ocekavani souperu o 1 %
+    absence_cap: float = 0.08  # max. celkova uprava na jednu stranu
+    weather_goal_factor: float = 0.05  # tezky dest nebo silny vitr: -5 % golu obou tymu
 
 
 @dataclass(frozen=True)
@@ -210,6 +221,10 @@ class OddsApiConfig:
             "ITA1": "soccer_italy_serie_a",
             "FRA1": "soccer_france_ligue_one",
             "POR1": "soccer_portugal_primeira_liga",
+            "UCL": "soccer_uefa_champs_league",
+            "UEL": "soccer_uefa_europa_league",
+            "UECL": "soccer_uefa_europa_conference_league",
+            "UNL": "soccer_uefa_nations_league",
             "NHL": "icehockey_nhl",
         }
     )

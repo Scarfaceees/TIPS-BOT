@@ -181,6 +181,20 @@ class Ledger:
     def set_football_data_key(self, key: str) -> None:
         self._set("football_data_key", key.strip())
 
+    def save_team_report(self, team: str, report: dict, keep: int = 20) -> None:
+        """Ulozi analyzu tymu; historie poslednich `keep` analyz (nejnovejsi prvni)."""
+        import json
+
+        history = self.team_reports(team)
+        history.insert(0, report)
+        self._set(f"team_report:{team}", json.dumps(history[:keep], ensure_ascii=False, default=str))
+
+    def team_reports(self, team: str) -> list[dict]:
+        import json
+
+        raw = self._get(f"team_report:{team}", "")
+        return json.loads(raw) if raw else []
+
     def highlightly_key(self) -> str:
         return self._get("highlightly_key", "")
 

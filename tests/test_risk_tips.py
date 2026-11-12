@@ -26,7 +26,8 @@ def test_kelly_and_caps():
 def test_exposure_match_limit_and_pause():
     assert risk.size_stake(0.7, 2.5, 10_000, open_exposure_today=1400).stake == 100
     assert not risk.size_stake(0.7, 2.5, 10_000, open_exposure_today=1500).allowed
-    assert not risk.size_stake(0.7, 2.5, 10_000, bets_on_match=1).allowed
+    assert risk.size_stake(0.7, 2.5, 10_000, bets_on_match=1).allowed  # vice tipu na zapas je povoleno
+    assert not risk.size_stake(0.7, 2.5, 10_000, bets_on_match=4).allowed  # pojistka proti korelaci
     assert not risk.size_stake(0.7, 2.5, 10_000, paused=True).allowed
     assert not risk.size_stake(0.4, 2.0, 10_000).allowed
     assert not risk.size_stake(0.5, 2.1, 1_000).allowed  # pod minimalnim vkladem
@@ -139,7 +140,7 @@ def test_best_per_match(ledger):
     a = evaluate(_cand(), ledger, now=NOW)
     b = evaluate(_cand(market="OU_2.5", selection="over", offers=(Offer("betano", 2.20),)), ledger, now=NOW)
     picked = best_per_match([a, b, Rejection(_cand(), ("x",))])
-    assert len(picked) == 1 and picked[0].selection == "over"
+    assert len(picked) == 2 and picked[0].selection == "over"  # od nejvyssiho EV, oba maji vahu
 
 
 def test_recheck_cancels_refreshes_and_expires(ledger):

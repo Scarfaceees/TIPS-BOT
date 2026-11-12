@@ -138,13 +138,20 @@ def evaluate(
     )
 
 
-def best_per_match(results: Sequence[Tip | Rejection]) -> list[Tip]:
-    """Z vice kandidatu na stejne utkani necha jen ten s nejvyssim EV (max 1 sazka na utkani)."""
-    best: dict[str, Tip] = {}
+def best_per_match(results: Sequence[Tip | Rejection], settings: Settings = SETTINGS) -> list[Tip]:
+    """Na utkani necha vsechny tipy s dostatecnou hodnotou (od nejvyssiho EV), nejvyse `max_bets_per_match`.
+
+    Limit slouzi jen jako pojistka proti korelovanym sazkam na jeden zapas; tipu je tolik, kolik jich ma vahu.
+    """
+    per_match: dict[str, list[Tip]] = {}
     for r in results:
-        if isinstance(r, Tip) and (r.match_id not in best or r.ev_percentage > best[r.match_id].ev_percentage):
-            best[r.match_id] = r
-    return sorted(best.values(), key=lambda t: t.kickoff)
+        if isinstance(r, Tip):
+            per_match.setdefault(r.match_id, []).append(r)
+    out: list[Tip] = []
+    for tips in per_match.values():
+        tips.sort(key=lambda t: -t.ev_percentage)
+        out.extend(tips[: settings.risk.max_bets_per_match])
+    return sorted(out, key=lambda t: (t.kickoff, -t.ev_percentage))
 
 
 @dataclass(frozen=True)

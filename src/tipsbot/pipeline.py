@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_data, oddsapi
+from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_data, oddsapi, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -278,6 +278,12 @@ def scan_league(
         model_by_match[ev.match_id] = model
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
+    if is_football and events:
+        try:
+            _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match)
+        except Exception as e:  # noqa: BLE001 - analyza tymu nesmi shodit sken
+            log.warning("analyza tymu selhala: %s", e)
+
     # 1) kontrola otevrenych tipu teto souteze
     for tip in ledger.open_tips():
         if tip.league != league:
@@ -331,6 +337,30 @@ def scan_league(
     if provider.unmatched:
         report.notes.append("tymy bez modelu (jen trh): " + ", ".join(sorted(provider.unmatched)))
     return report
+
+
+def _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match) -> None:
+    """Analyza obou tymu kazdeho zapasu: ulozi se ke kazdemu tymu a prida se do rozboru zapasu."""
+    df = teamreport.load_all_results()
+    known = set(df["home"]) | set(df["away"])
+    key = ledger.api_football_key()
+    players_by_team: dict[str, list[dict]] = {}
+    if live and key and league in context.API_FOOTBALL_LEAGUES:
+        players_by_team = teamreport.fetch_top_players(league, ingestion.current_season_start_year(now.date()), key, known)
+    as_of = now.date()
+    for ev in events:
+        resolved = {"home": match_team(ev.home, known), "away": match_team(ev.away, known)}
+        sections = sections_by_match.setdefault(ev.match_id, [])
+        for side, name, opp_side in (("home", ev.home, "away"), ("away", ev.away, "home")):
+            team = resolved[side]
+            news, rumours = teamreport.collect_news(name) if live else ([], [])
+            abs_team = context.for_match(absences, name, name)
+            rep = teamreport.build_team_report(
+                team or name, name, df if team else df.iloc[0:0], as_of, side, resolved[opp_side],
+                abs_team, players_by_team.get(team or "", []), news, rumours, checked,
+            )
+            ledger.save_team_report(name, rep)
+            sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
 
 
 def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:

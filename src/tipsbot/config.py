@@ -130,7 +130,7 @@ class RiskConfig:
     kelly_fraction: float = 0.125
     max_stake_pct: float = 0.02
     max_daily_exposure_pct: float = 0.15
-    max_bets_per_match: int = 1
+    max_bets_per_match: int = 4  # pojistka proti korelovanym sazkam; tipu je tolik, kolik jich ma vahu
     stop_loss_drawdown: float = 0.15
     # Nejmensi vklad, ktery ma smysl doporucit (v mene bankrollu).
     min_stake: float = 20.0

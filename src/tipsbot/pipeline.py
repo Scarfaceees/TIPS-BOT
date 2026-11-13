@@ -369,6 +369,11 @@ def _attach_team_reports(league, events, ledger, now, absences, checked, live, s
     if live and key and league in context.API_FOOTBALL_LEAGUES:
         players_by_team = teamreport.fetch_top_players(league, ingestion.current_season_start_year(now.date()), key, known)
     as_of = now.date()
+    lineups: dict[str, dict] = {}
+    if live and key and league in context.API_FOOTBALL_LEAGUES:
+        season = ingestion.current_season_start_year(as_of)
+        for day in sorted({e.kickoff.date().isoformat() for e in events}):
+            lineups.update(context.fetch_lineups(league, season, day, key))
     for ev in events:
         resolved = {"home": match_team(ev.home, known), "away": match_team(ev.away, known)}
         sections = sections_by_match.setdefault(ev.match_id, [])
@@ -379,6 +384,7 @@ def _attach_team_reports(league, events, ledger, now, absences, checked, live, s
             rep = teamreport.build_team_report(
                 team or name, name, df if team else df.iloc[0:0], as_of, side, resolved[opp_side],
                 abs_team, players_by_team.get(team or "", []), news, rumours, checked,
+                lineups.get(match_team(name, set(lineups)) or ""),
             )
             ledger.save_team_report(name, rep)
             sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])

@@ -43,3 +43,12 @@ def test_report_without_data_lists_missing():
     rep = nhl_api.build_nhl_report("TOR", "Toronto", {}, date(2026, 11, 8), "away", "MTL")
     lines = " ".join(rep["sections"][-1]["lines"])
     assert "forma" in lines and "střelci" in lines
+
+
+def test_last_starter_hint_on_back_to_back():
+    club = {"games": nhl_api.parse_games(PAYLOAD, "TOR"), "last_starter": ("Anthony Stolarz", date(2026, 11, 7))}
+    rep = nhl_api.build_nhl_report("TOR", "Toronto", club, date(2026, 11, 8), "home", "MTL")
+    line = next(s for s in rep["sections"] if s["title"] == "Kdo chytal naposledy")["lines"][0]
+    assert "Stolarz" in line and "záložník" in line and "nepotvrzeno" in line
+    later = nhl_api.build_nhl_report("TOR", "Toronto", club, date(2026, 11, 10), "home", "MTL")
+    assert "záložník" not in next(s for s in later["sections"] if s["title"] == "Kdo chytal naposledy")["lines"][0]

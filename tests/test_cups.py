@@ -56,3 +56,12 @@ def test_joint_fit_recovers_stronger_league():
     assert offsets["STR"] > offsets["WEA"]
     pr = football.market_probabilities(params, "S0", "W0")
     assert pr["1X2:1"] > pr["1X2:2"]
+
+
+def test_utf8_cup_csv_keeps_accents(tmp_path):
+    import pandas as pd
+    from tipsbot import ingestion
+    p = tmp_path / "UCL_2026.csv"
+    pd.DataFrame([{"Date": "2026-11-04", "HomeTeam": "Bayern München", "AwayTeam": "Baník Ostrava", "FTHG": 2, "FTAG": 0}]
+                 ).to_csv(p, index=False)
+    assert ingestion.parse_football_csv(p, "UCL")["home"].iloc[0] == "Bayern München"

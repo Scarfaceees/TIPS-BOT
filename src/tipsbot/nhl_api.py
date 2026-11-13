@@ -36,7 +36,7 @@ def parse_games(payload: dict, abbr: str) -> list[dict]:
             continue
         home = h["abbrev"] == abbr
         gf, ga = (h["score"], a["score"]) if home else (a["score"], h["score"])
-        out.append({"date": date.fromisoformat(g["gameDate"]), "opp": a["abbrev"] if home else h["abbrev"], "home": home,
+        out.append({"id": g.get("id"), "date": date.fromisoformat(g["gameDate"]), "opp": a["abbrev"] if home else h["abbrev"], "home": home,
                     "gf": int(gf), "ga": int(ga), "win": gf > ga, "end": (g.get("gameOutcome") or {}).get("lastPeriodType", "REG")})
     return sorted(out, key=lambda r: r["date"])
 
@@ -50,12 +50,28 @@ def fetch_club(abbr: str, season: int) -> dict:
         except Exception as e:  # noqa: BLE001
             log.warning("NHL API %s nedostupne: %s", ep, e)
     club["games"].sort(key=lambda r: r["date"])
+    club["last_starter"] = _last_starter(club["games"], abbr)
     try:
         stats = _get(f"club-stats/{abbr}/now")
         club["skaters"], club["goalies"] = stats.get("skaters", []), stats.get("goalies", [])
     except Exception as e:  # noqa: BLE001
         log.warning("NHL API club-stats %s nedostupne: %s", abbr, e)
     return club
+
+
+def _last_starter(games: list[dict], abbr: str) -> tuple[str, date] | None:
+    """Kdo chytal v poslednim odehranem zapase tymu (z boxscore); None, kdyz zdroj nedodal."""
+    if not games or not games[-1].get("id"):
+        return None
+    try:
+        box = _get(f"gamecenter/{games[-1]['id']}/boxscore")
+        side = "homeTeam" if box["homeTeam"]["abbrev"] == abbr else "awayTeam"
+        for gk in box["playerByGameStats"][side]["goalies"]:
+            if gk.get("starter"):
+                return gk["name"]["default"], games[-1]["date"]
+    except Exception as e:  # noqa: BLE001
+        log.warning("NHL API boxscore %s nedostupny: %s", abbr, e)
+    return None
 
 
 def _name(p: dict) -> str:
@@ -137,6 +153,11 @@ def build_nhl_report(abbr: str, display: str, club: dict, as_of: date, venue: st
         sections.append({"title": "Brankáři (kdo chytá, se potvrdí až v den zápasu)", "lines": [
             f"{_name(p)}: {p.get('gamesStarted', 0)} startů, úspěšnost {p.get('savePercentage', 0):.3f}, "
             f"průměr {p.get('goalsAgainstAverage', 0):.2f} gólu" for p in goalies]})
+    last = club.get("last_starter")
+    if last and last[1] < as_of:
+        gap = (as_of - last[1]).days
+        hint = " – včera, back-to-back: dnes často chytá záložník (nepotvrzeno)" if gap <= 1 else ""
+        sections.append({"title": "Kdo chytal naposledy", "lines": [f"{last[0]} ({last[1]:%d.%m.})" + hint]})
     missing.append("základní brankář a sestava na dnešní zápas (potvrdí se těsně před výkopem)")
     if absence_checked:
         lines = [a.line() for a in (absences or [])] or ["žádné nahlášené absence"]

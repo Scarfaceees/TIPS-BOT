@@ -17,7 +17,8 @@ log = logging.getLogger(__name__)
 
 ESPN_NHL_INJURIES = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
 API_FOOTBALL = "https://v3.football.api-sports.io"
-API_FOOTBALL_LEAGUES = {"ENG1": 39, "ESP1": 140, "GER1": 78, "ITA1": 135, "FRA1": 61, "POR1": 94, "CZE1": 345}
+API_FOOTBALL_LEAGUES = {"ENG1": 39, "ESP1": 140, "GER1": 78, "ITA1": 135, "FRA1": 61, "POR1": 94, "CZE1": 345,
+                        "UCL": 2, "UEL": 3, "UECL": 848}
 
 
 @dataclass(frozen=True)
@@ -82,6 +83,36 @@ def fetch_football_injuries(league: str, season: int, day: str, api_key: str, ti
     except Exception as e:  # noqa: BLE001
         log.warning("Zraneni %s nejsou dostupna: %s", league, e)
         return []
+
+
+def parse_lineups(payload: dict) -> dict[str, dict]:
+    """API-Football /fixtures/lineups: tym -> {formace, trener, zakladni jedenactka}. Prazdne, dokud nejsou zverejnene."""
+    out = {}
+    for item in payload.get("response", []):
+        name = item.get("team", {}).get("name")
+        start = [f"{p['player']['name']} ({p['player'].get('pos') or '?'})" for p in item.get("startXI", []) if p.get("player")]
+        if name and start:
+            out[name] = {"formation": item.get("formation") or "?", "coach": (item.get("coach") or {}).get("name") or "?", "start": start}
+    return out
+
+
+def fetch_lineups(league: str, season: int, day: str, api_key: str, timeout: int = 20) -> dict[str, dict]:
+    """Zakladni sestavy zapasu ligy v jeden den (1 pozadavek na rozpis + 1 na zapas). Sestavy chodi ~1 h pred vykopem."""
+    lid = API_FOOTBALL_LEAGUES.get(league)
+    if not api_key or lid is None:
+        return {}
+    head = {"x-apisports-key": api_key}
+    out: dict[str, dict] = {}
+    try:
+        fx = requests.get(f"{API_FOOTBALL}/fixtures", params={"league": lid, "season": season, "date": day}, headers=head, timeout=timeout)
+        for item in fx.json().get("response", []):
+            if item["fixture"]["status"]["short"] in ("FT", "AET", "PEN", "CANC", "PST"):
+                continue
+            r = requests.get(f"{API_FOOTBALL}/fixtures/lineups", params={"fixture": item["fixture"]["id"]}, headers=head, timeout=timeout)
+            out.update(parse_lineups(r.json()))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Sestavy %s nejsou dostupne: %s", league, e)
+    return out
 
 
 def for_match(absences: list[Absence], home: str, away: str) -> list[Absence]:

@@ -71,7 +71,10 @@ def download_football_season(league: str, start_year: int, data_dir: Path | None
 
 def parse_football_csv(path: Path | str, league: str = "") -> pd.DataFrame:
     """Prevede CSV z football-data.co.uk na jednotny format bota."""
-    raw = pd.read_csv(path, encoding="latin-1", on_bad_lines="skip")
+    try:  # pohary uklada bot v UTF-8, stare soubory football-data.co.uk jsou latin-1
+        raw = pd.read_csv(path, encoding="utf-8-sig", on_bad_lines="skip")
+    except UnicodeDecodeError:
+        raw = pd.read_csv(path, encoding="latin-1", on_bad_lines="skip")
     raw = raw.rename(columns={c: c.strip().lstrip("﻿").lstrip("ï»¿") for c in raw.columns})
     needed = ("Date", "HomeTeam", "AwayTeam", "FTHG", "FTAG")
     missing = [c for c in needed if c not in raw.columns]

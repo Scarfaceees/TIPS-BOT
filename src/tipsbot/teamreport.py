@@ -132,7 +132,8 @@ def fetch_top_players(league: str, season: int, api_key: str, team_names: set[st
 
 def build_team_report(team: str, display: str, df: pd.DataFrame, as_of: date, venue: str, opponent: str | None = None,
                       absences: list[Absence] | None = None, players: list[dict] | None = None,
-                      news: list[str] | None = None, rumours: list[str] | None = None, absence_checked: bool = False) -> dict:
+                      news: list[str] | None = None, rumours: list[str] | None = None, absence_checked: bool = False,
+                      lineup: dict | None = None) -> dict:
     """Analyza jednoho tymu. `venue` = kde hraje tento zapas ("home"/"away")."""
     sections: list[dict] = []
     missing: list[str] = []
@@ -168,8 +169,11 @@ def build_team_report(team: str, display: str, df: pd.DataFrame, as_of: date, ve
         sections.append({"title": "Střelci a klíčoví hráči týmu", "lines": [
             f"{p['name']}: {p['goals']} gólů, {p['assists']} asistencí ({p['apps']} zápasů)" for p in players[:6]]})
     else:
-        missing.append("střelci a hodnota hráčů (API-Football: aktuální sezona vyžaduje placený plán)")
-    missing.append("sestavy (potvrzují se až těsně před výkopem)")
+        missing.append("střelci a klíčoví hráči (API-Football je pro tuto ligu nevrátilo)")
+    if lineup:
+        sections.append({"title": f"Základní sestava ({lineup['formation']}, trenér {lineup['coach']})", "lines": [", ".join(lineup["start"])]})
+    else:
+        missing.append("sestava (zveřejňuje se zhruba hodinu před výkopem)")
     if news:
         sections.append({"title": "Zprávy a sestavy z novin", "lines": news[:4]})
     if rumours:

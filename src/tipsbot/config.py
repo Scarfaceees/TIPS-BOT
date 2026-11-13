@@ -107,7 +107,8 @@ class ValueConfig:
     )
     # Casny tip (12-24 h pred zapasem) = dvojnasobek prahu (bod 7).
     early_ev_multiplier: float = 2.0
-    min_odds: float = 1.45
+    # Nizke kurzy (1.15+) davaji smysl jako nohy kombinace: 1.20 x 1.33 x 1.35 = 2.15.
+    min_odds: float = 1.15
     max_odds: float = 4.20
     # Vaha modelu pri michani s trzni ferovou linii; zbytek je trh.
     model_weight: float = 0.50

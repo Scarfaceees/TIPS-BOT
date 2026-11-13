@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_data, oddsapi, teamreport
+from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_api, nhl_data, oddsapi, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -280,9 +280,10 @@ def scan_league(
 
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 
-    if is_football and events:
+    if events:
         try:
-            _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match)
+            attach = _attach_team_reports if is_football else _attach_nhl_reports
+            attach(league, events, ledger, now, absences, checked, live, settings, sections_by_match)
         except Exception as e:  # noqa: BLE001 - analyza tymu nesmi shodit sken
             log.warning("analyza tymu selhala: %s", e)
 
@@ -379,6 +380,28 @@ def _attach_team_reports(league, events, ledger, now, absences, checked, live, s
                 team or name, name, df if team else df.iloc[0:0], as_of, side, resolved[opp_side],
                 abs_team, players_by_team.get(team or "", []), news, rumours, checked,
             )
+            ledger.save_team_report(name, rep)
+            sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
+
+
+def _attach_nhl_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match) -> None:
+    """NHL: analyza obou tymu z oficialniho NHL API, stejne ulozeni a zobrazeni jako u fotbalu."""
+    if not live:
+        return
+    season = nhl_data.current_goalie_season(now.date())
+    clubs: dict[str, dict] = {}
+    for ev in events:
+        abbrs = {"home": nhl_abbr(ev.home), "away": nhl_abbr(ev.away)}
+        sections = sections_by_match.setdefault(ev.match_id, [])
+        for side, name, opp_side in (("home", ev.home, "away"), ("away", ev.away, "home")):
+            abbr = abbrs[side]
+            if not abbr:
+                continue
+            if abbr not in clubs:
+                clubs[abbr] = nhl_api.fetch_club(abbr, season)
+            news, rumours = teamreport.collect_news(name + " NHL")
+            rep = nhl_api.build_nhl_report(abbr, name, clubs[abbr], now.date(), side, abbrs[opp_side],
+                                           context.for_match(absences, name, name), news, rumours, checked)
             ledger.save_team_report(name, rep)
             sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
 

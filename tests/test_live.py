@@ -234,7 +234,7 @@ def test_at_least_ten_markets_per_match(ledger):
              "DNB:home": 0.62, "DNB:away": 0.38, "OU_1.5:over": 0.78, "OU_1.5:under": 0.22, "OU_2.5:over": 0.52,
              "OU_2.5:under": 0.48, "BTTS:yes": 0.55, "BTTS:no": 0.45, "TTH_1.5:over": 0.45}
     rows = analysis.model_rows(probs, set(), "A", "B", 0.025)
-    assert len(rows) >= 10 and all(r.min_odds >= 1.45 and r.status == "model" for r in rows)
+    assert len(rows) >= 10 and all(r.min_odds >= 1.15 and r.status == "model" for r in rows)
     assert rows[0].p_model >= rows[-1].p_model
 
 
@@ -328,7 +328,7 @@ def test_nhl_full_scan_end_to_end(tmp_path, ledger, monkeypatch):
 
 def test_football_full_scan_end_to_end(ledger, monkeypatch):
     """Cely fotbalovy beh se syntetickou ligou: model, kalibrace, rozbor, doplnkove trhy, cilovy tip."""
-    from conftest import simulate_league
+    from tests.conftest import simulate_league
     from tipsbot import analysis, calibration, ingestion
 
     df, truth = simulate_league(n_teams=6, rounds=6, seed=2, start=date(2026, 5, 20))

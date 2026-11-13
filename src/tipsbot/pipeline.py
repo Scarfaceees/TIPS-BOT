@@ -278,6 +278,8 @@ def scan_league(
         model_by_match[ev.match_id] = model
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
+    update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
+
     if is_football and events:
         try:
             _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match)
@@ -337,6 +339,24 @@ def scan_league(
     if provider.unmatched:
         report.notes.append("tymy bez modelu (jen trh): " + ", ".join(sorted(provider.unmatched)))
     return report
+
+
+def update_closing(ledger: Ledger, cands_by_match: dict[str, list[Candidate]]) -> int:
+    """Otevrenym tiketum zapasu, ktere se jeste nehrají, zapise aktualni ferovy kurz jako zaviraci (CLV).
+
+    Zapasy po vykopu uz ve skenu nejsou, takze posledni zapis pred vykopem zustane zaviraci linii.
+    """
+    from sqlalchemy import select
+
+    from .storage import TICKET_OPEN, Ticket
+
+    n = 0
+    for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN)):
+        cand = next((c for c in cands_by_match.get(t.match_id, []) if c.market == t.market and c.selection == t.selection), None)
+        if cand is not None and cand.p_market > 0:
+            ledger.set_closing(t, 1.0 / cand.p_market)
+            n += 1
+    return n
 
 
 def _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match) -> None:

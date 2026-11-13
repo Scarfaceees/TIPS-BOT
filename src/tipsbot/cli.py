@@ -62,6 +62,7 @@ def _parser() -> argparse.ArgumentParser:
     ff.add_argument("--seasons", type=int, default=4)
 
     sub.add_parser("fetch-cups", help="stahne vysledky pohar (LM, EL, ECL)")
+    sub.add_parser("settle-auto", help="stahne vysledky a automaticky vyhodnoti otevrene tikety")
 
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
     ak.add_argument("key")
@@ -185,6 +186,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Stazeno souboru: {len(paths)}")
         return 0 if paths else 1
+    if args.cmd == "settle-auto":
+        from .cups import DOMESTIC, fetch_cups
+        from .ingestion import fetch_football
+        from .settlement import settle_open_tickets
+        from .teamreport import load_all_results
+
+        for lg in DOMESTIC:  # aktualni sezona (football-data.co.uk se dopln jednou denne)
+            fetch_football(lg, seasons=1)
+        with make_session_factory(args.db)() as session:
+            led = Ledger(session)
+            fetch_cups(led.api_football_key(), led.football_data_key(), seasons=1)
+            notes = settle_open_tickets(led, load_all_results())
+            session.commit()
+        print("\n".join(notes) or "Nic k vyhodnocení (výsledky ještě nejsou v datech).")
+        return 0
     if args.cmd == "fetch-cups":
         from .cups import fetch_cups
 

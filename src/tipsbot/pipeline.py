@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, detail, devig, ingestion, nhl_api, nhl_data, oddsapi, teamreport
+from . import analysis, calibration, context, cups, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -119,6 +119,11 @@ class ModelProvider:
                     log.warning("brankari nejsou k dispozici: %s", e)
                     goalies = {}
                 self.ratings = nhl_data.NHLRatings(nhl_data.load_nhl(min_season=today.year - 2), today, settings.nhl, goalies)
+            elif league == "UNL":
+                cfg = replace(settings.football, xi=settings.football.national_xi,
+                              max_history_seasons=settings.football.national_history_seasons)
+                self.df = nations.load_international(neutral=True)
+                self.params = football.fit(self.df, today, cfg=cfg)
             elif league in cups.CUP_API_FOOTBALL_IDS:
                 self.params, self.df, self.league_offsets = _fit_cup_model(today, settings)
             else:
@@ -278,6 +283,7 @@ def scan_league(
         model_by_match[ev.match_id] = model
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
+    modelcheck.log_predictions(ledger, league, {m: c for m, c in cands_by_match.items() if models_by_match[m]}, now)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 
     if events:
@@ -362,7 +368,7 @@ def update_closing(ledger: Ledger, cands_by_match: dict[str, list[Candidate]]) -
 
 def _attach_team_reports(league, events, ledger, now, absences, checked, live, settings, sections_by_match) -> None:
     """Analyza obou tymu kazdeho zapasu: ulozi se ke kazdemu tymu a prida se do rozboru zapasu."""
-    df = teamreport.load_all_results()
+    df = nations.load_international(neutral=True) if league == "UNL" else teamreport.load_all_results()
     known = set(df["home"]) | set(df["away"])
     key = ledger.api_football_key()
     players_by_team: dict[str, list[dict]] = {}

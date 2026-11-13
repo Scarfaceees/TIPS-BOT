@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+
+import pandas as pd
 from datetime import date
 
 from .config import SETTINGS
@@ -62,6 +64,9 @@ def _parser() -> argparse.ArgumentParser:
     ff.add_argument("--seasons", type=int, default=4)
 
     sub.add_parser("fetch-cups", help="stahne vysledky pohar (LM, EL, ECL)")
+    mc = sub.add_parser("model-check", help="porovna model s trhem na ulozenych zapasech (jaka vaha modelu je nejlepsi)")
+    mc.add_argument("--league", default="UNL")
+    sub.add_parser("fetch-intl", help="stahne vysledky mezinarodnich zapasu (model reprezentaci, Liga narodu)")
     sub.add_parser("settle-auto", help="stahne vysledky a automaticky vyhodnoti otevrene tikety")
 
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
@@ -197,9 +202,39 @@ def main(argv: list[str] | None = None) -> int:
         with make_session_factory(args.db)() as session:
             led = Ledger(session)
             fetch_cups(led.api_football_key(), led.football_data_key(), seasons=1)
-            notes = settle_open_tickets(led, load_all_results())
+            results = load_all_results()
+            try:  # reprezentace (Liga narodu), vcetne neutralnich zapasu
+                from .nations import download_results, load_international
+
+                download_results()
+                results = pd.concat([results, load_international(neutral=True)[list(results.columns)]], ignore_index=True)
+            except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
+                print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
+            notes = settle_open_tickets(led, results)
             session.commit()
         print("\n".join(notes) or "Nic k vyhodnocení (výsledky ještě nejsou v datech).")
+        return 0
+    if args.cmd == "model-check":
+        from . import modelcheck
+        from .cups import DOMESTIC
+        from .ingestion import fetch_football
+        from .nations import download_results, load_international
+        from .teamreport import load_all_results
+
+        if args.league == "UNL":
+            download_results()
+            results = load_international(neutral=True)
+        else:
+            for lg in DOMESTIC:
+                fetch_football(lg, seasons=1)
+            results = load_all_results()
+        with make_session_factory(args.db)() as session:
+            print("\n".join(modelcheck.report(Ledger(session), args.league, results)))
+        return 0
+    if args.cmd == "fetch-intl":
+        from .nations import download_results
+
+        print(f"Stazeno: {download_results()}")
         return 0
     if args.cmd == "fetch-cups":
         from .cups import fetch_cups

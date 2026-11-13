@@ -7,7 +7,7 @@ Bot je poradce: sazku nepodava, tikety zapisuje uzivatel rucne.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 
@@ -112,6 +112,9 @@ class ValueConfig:
     max_odds: float = 4.20
     # Vaha modelu pri michani s trzni ferovou linii; zbytek je trh.
     model_weight: float = 0.50
+    # Vaha modelu pro jednotlive souteze (odhad, ne zmereno): model reprezentaci je slabsi nez trh, dokud
+    # se z ulozenych predikci (tipsbot model-check) nezjisti lepsi hodnota.
+    league_model_weight: dict[str, float] = field(default_factory=lambda: {"UNL": 0.25})
     # EV nad touto hranici je podezrele (chyba dat/kurzu) - tip se jen oznaci k rucni kontrole.
     ev_suspicious: float = 0.15
     # Model a trh se nesmi rozchazet o vic nez tolik (absolutne v pravdepodobnosti).
@@ -120,6 +123,11 @@ class ValueConfig:
     min_probability: float = 0.45
     # Arbitraz/hedging se navrhne jen nad timto cistym vynosem (bod 24).
     arb_min_yield: float = 0.03
+
+    def for_league(self, league: str) -> "ValueConfig":
+        """Konfigurace s vahou modelu pro danou soutez."""
+        w = self.league_model_weight.get(league)
+        return self if w is None else replace(self, model_weight=w)
 
     def ev_threshold(self, tier: Tier, early: bool = False) -> float:
         base = self.ev_min[tier]
@@ -152,6 +160,7 @@ class TimingConfig:
 @dataclass(frozen=True)
 class FootballModelConfig:
     xi: float = 0.0038  # polocas ~180 dni
+    ridge: float = 1e-3  # vyhlazeni sil tymu (pritahuje k prumeru)
     max_history_seasons: int = 2
     max_goals: int = 10  # rozmer skorove matice
     # Domaci vyhoda po tymech (bod 9), pritahovana k ligovemu prumeru.
@@ -167,6 +176,9 @@ class FootballModelConfig:
     absence_defence_per_player: float = 0.010  # a zvysi golove ocekavani souperu o 1 %
     absence_cap: float = 0.08  # max. celkova uprava na jednu stranu
     weather_goal_factor: float = 0.05  # tezky dest nebo silny vitr: -5 % golu obou tymu
+    # Reprezentace hraji malo zapasu: delsi historie a pomalejsi utlum (zpetny test na Lize narodu, 48 zapasu).
+    national_xi: float = 0.0019
+    national_history_seasons: int = 4
 
 
 @dataclass(frozen=True)

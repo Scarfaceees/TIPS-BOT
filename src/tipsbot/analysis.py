@@ -96,7 +96,7 @@ def build_view(
         if not offers:
             continue
         best = offers[0]
-        a = devig.assess_value(c.p_model, c.p_market, best.odds, thr, settings.value)
+        a = devig.assess_value(c.p_model, c.p_market, best.odds, thr, settings.value.for_league(c.league))
         if (c.market, c.selection) in tip_keys:
             status, note = "tip", ""
         elif a.is_value:

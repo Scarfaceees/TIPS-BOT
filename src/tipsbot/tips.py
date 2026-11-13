@@ -95,7 +95,7 @@ def evaluate(
     best = offers[0]
     early = win == "early"
     threshold = settings.value.ev_threshold(league.tier, early=early)
-    a = devig.assess_value(cand.p_model, cand.p_market, best.odds, threshold, settings.value)
+    a = devig.assess_value(cand.p_model, cand.p_market, best.odds, threshold, settings.value.for_league(cand.league))
     if not a.is_value:
         return Rejection(cand, a.reasons)
 
@@ -191,7 +191,7 @@ def recheck(
 
     pm = tip.p_model if p_model is None else p_model
     pk = tip.p_market if p_market is None else p_market
-    a = devig.assess_value(pm, pk, current_odds, tip.ev_threshold, settings.value)
+    a = devig.assess_value(pm, pk, current_odds, tip.ev_threshold, settings.value.for_league(tip.league))
     if not a.is_value:
         reason = "; ".join(a.reasons)
         ledger.cancel_tip(tip, reason)
@@ -235,7 +235,7 @@ def remainder(
     for o in _betting_offers(offers, settings):
         if o.bookmaker == tip.bookmaker:
             continue
-        a = devig.assess_value(tip.p_model, tip.p_market, o.odds, tip.ev_threshold, settings.value)
+        a = devig.assess_value(tip.p_model, tip.p_market, o.odds, tip.ev_threshold, settings.value.for_league(tip.league))
         if a.is_value and o.odds >= tip.min_odds:
             return RemainderSuggestion(o.bookmaker, o.odds, float(left))
     return None

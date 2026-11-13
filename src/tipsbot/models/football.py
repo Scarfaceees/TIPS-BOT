@@ -22,6 +22,8 @@ from scipy.stats import poisson
 from ..config import SETTINGS, FootballModelConfig
 
 REQUIRED_COLUMNS = ("date", "home", "away", "home_goals", "away_goals")
+# neutral = zapas na neutralni pude (bez domaci vyhody), match_weight = vaha zapasu (dulezitost souteze)
+OPTIONAL_COLUMNS = ("neutral", "match_weight")
 
 
 class ModelError(ValueError):
@@ -68,11 +70,12 @@ def _prepare(matches: pd.DataFrame, as_of: date, cfg: FootballModelConfig) -> pd
     missing = [c for c in REQUIRED_COLUMNS if c not in matches.columns]
     if missing:
         raise ModelError(f"Chybi sloupce: {missing}")
-    df = matches.loc[:, list(REQUIRED_COLUMNS)].dropna().copy()  # sloupce navic (kurzy, liga) se zahodi
+    optional = [c for c in OPTIONAL_COLUMNS if c in matches.columns]
+    df = matches.loc[:, [*REQUIRED_COLUMNS, *optional]].dropna(subset=list(REQUIRED_COLUMNS)).copy()  # ostatni sloupce se zahodi
     df["date"] = pd.to_datetime(df["date"]).dt.date
     df = df[df["date"] < as_of]
     days = np.array([(as_of - d).days for d in df["date"]], dtype=float)
-    df["weight"] = np.exp(-cfg.xi * days)
+    df["weight"] = np.exp(-cfg.xi * days) * (df["match_weight"] if "match_weight" in df else 1.0)
     df = df[days <= cfg.max_history_seasons * 365]
     if len(df) == 0:
         raise ModelError("Zadne zapasy pro odhad modelu.")
@@ -94,6 +97,7 @@ def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig, team_group: dict[str, i
     x = df["home_goals"].to_numpy(dtype=float)
     y = df["away_goals"].to_numpy(dtype=float)
     w = df["weight"].to_numpy(dtype=float)
+    home_on = (~df["neutral"].astype(bool)).to_numpy(dtype=float) if "neutral" in df else np.ones(len(df))
     use_hta = cfg.team_home_advantage
     shrink = cfg.home_advantage_shrinkage_matches
 
@@ -113,11 +117,11 @@ def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig, team_group: dict[str, i
 
     def nll(p: np.ndarray) -> float:
         mu, gamma, rho, att, de, hta = unpack(p)
-        log_lam = mu + gamma + hta[h] + att[h] - de[a]
+        log_lam = mu + home_on * (gamma + hta[h]) + att[h] - de[a]
         log_mu = mu + att[a] - de[h]
         lam, mu_ = np.exp(log_lam), np.exp(log_mu)
         ll = np.log(_tau(x, y, lam, mu_, rho)) + x * log_lam - lam + y * log_mu - mu_
-        penalty = 0.5 * shrink * float(np.sum(hta**2)) + 1e-3 * float(np.sum(p[3:] ** 2))
+        penalty = 0.5 * shrink * float(np.sum(hta**2)) + cfg.ridge * float(np.sum(p[3:] ** 2))
         return float(-np.sum(w * ll) + penalty)
 
     mean_goals = max((x.mean() + y.mean()) / 2.0, 0.1)

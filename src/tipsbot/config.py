@@ -179,6 +179,7 @@ class FootballModelConfig:
     # Reprezentace hraji malo zapasu: delsi historie a pomalejsi utlum (zpetny test na Lize narodu, 48 zapasu).
     national_xi: float = 0.0019
     national_history_seasons: int = 4
+    national_goal_shrink: float = 0.5  # trhy na goly se pritahuji k prumeru (viz nations.shrink_goal_markets)
 
 
 @dataclass(frozen=True)

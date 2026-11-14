@@ -67,6 +67,10 @@ def _parser() -> argparse.ArgumentParser:
     mc = sub.add_parser("model-check", help="porovna model s trhem na ulozenych zapasech (jaka vaha modelu je nejlepsi)")
     mc.add_argument("--league", default="UNL")
     sub.add_parser("fetch-intl", help="stahne vysledky mezinarodnich zapasu (model reprezentaci, Liga narodu)")
+    co = sub.add_parser("czech-odds", help="ulozi rucne zadane kurzy ceskych kancelari (radky z --file nebo ze stdin)")
+    co.add_argument("--file", default=None, help="textovy soubor s radky 'kancelar | Domaci - Hoste | trh | kurzy'")
+    co.add_argument("--list", action="store_true", help="vypise ulozene kurzy")
+    co.add_argument("--clear", action="store_true", help="smaze ulozene kurzy")
     sub.add_parser("settle-auto", help="stahne vysledky a automaticky vyhodnoti otevrene tikety")
 
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
@@ -213,6 +217,28 @@ def main(argv: list[str] | None = None) -> int:
             notes = settle_open_tickets(led, results)
             session.commit()
         print("\n".join(notes) or "Nic k vyhodnocení (výsledky ještě nejsou v datech).")
+        return 0
+    if args.cmd == "czech-odds":
+        from . import czechodds
+        from .storage import utcnow
+
+        now = utcnow()
+        with make_session_factory(args.db)() as session:
+            led = Ledger(session)
+            if args.clear:
+                czechodds.save(led, [])
+                print("Ulozene kurze smazany.")
+            elif args.list:
+                for e in czechodds.load(led, now):
+                    print(f"{e.book} | {e.home} - {e.away} | {e.market} | {' '.join(f'{o:.2f}' for o in e.odds)}")
+            else:
+                text = open(args.file, encoding="utf-8").read() if args.file else sys.stdin.read()
+                entries, errors = czechodds.parse_text(text, now)
+                czechodds.add(led, entries, now)
+                print(f"Ulozeno kurzu: {len(entries)}")
+                for err in errors:
+                    print(f"Preskoceno - {err}", file=sys.stderr)
+            session.commit()
         return 0
     if args.cmd == "model-check":
         from . import modelcheck

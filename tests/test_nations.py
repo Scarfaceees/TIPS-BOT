@@ -54,3 +54,10 @@ def test_neutral_matches_do_not_inflate_home_advantage(tmp_path):
     with_flag = football.fit(df, date(2026, 11, 1), cfg=cfg)
     no_flag = football.fit(df.assign(neutral=False), date(2026, 11, 1), cfg=cfg)
     assert with_flag.attack["Alpha"] > no_flag.attack["Alpha"]  # neutralni vyhry Alphy nejsou domaci vyhoda, je tedy silnejsi
+
+
+def test_goal_markets_shrink_towards_base_rate():
+    probs = {"OU_2.5:over": 0.80, "OU_2.5:under": 0.20, "BTTS:yes": 0.10, "BTTS:no": 0.90, "1X2:1": 0.6}
+    out = nations.shrink_goal_markets(probs, 0.5)
+    assert 0.496 < out["OU_2.5:over"] < 0.80 and abs(out["OU_2.5:over"] + out["OU_2.5:under"] - 1) < 1e-9
+    assert out["BTTS:yes"] > 0.10 and out["1X2:1"] == 0.6

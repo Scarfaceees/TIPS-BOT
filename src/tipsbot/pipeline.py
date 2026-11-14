@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, teamreport
+from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -142,6 +142,8 @@ class ModelProvider:
                 self.unmatched.update(n for n, m in ((ev.home, home), (ev.away, away)) if not m)
                 return None
             probs = football.market_probabilities(self.params, home, away, self.scales.get(ev.match_id, (1.0, 1.0)))
+            if self.league == "UNL":
+                probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
             return apply_calibration(probs, self.scalers) if self.scalers else probs
         if self.ratings is not None:
             home, away = nhl_abbr(ev.home), nhl_abbr(ev.away)
@@ -244,6 +246,9 @@ def scan_league(
         ledger.set_next_kickoff(league, min(upcoming) if upcoming else now + timedelta(hours=24))
     events = [e for e in events if now < e.kickoff <= horizon]
     report.events = len(events)
+    czech = czechodds.load(ledger, now)
+    if czech:
+        report.notes.extend(czechodds.apply(events, czech))
     provider = provider or ModelProvider(league, now.date(), settings)
     if provider.note:
         report.notes.append(provider.note)

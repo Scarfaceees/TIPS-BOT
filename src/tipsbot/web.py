@@ -22,7 +22,7 @@ def _local(dt: datetime) -> str:
 from flask import Flask, render_template_string, request, url_for
 from sqlalchemy import select
 
-from . import analysis, combo, czechodds, detail, devig, paper, risk
+from . import analysis, combo, czechodds, detail, devig, metrics, paper, risk
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
@@ -250,6 +250,7 @@ td,th{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}tr:las
 <h2>Sledování modelových tipů</h2>
 <div class="card"><div class="muted">Bot sleduje výběry, které model vyhodnotil jako výhodné proti zadaným českým kurzům (hrana od 5 %), jako sázku 1 jednotky bez skutečného vkladu. Po zápase se vyhodnotí z výsledku. Tak se ověří, jestli model na trzích bez férové linie (góly, BTTS) opravdu vydělává. Můžeš přidat i vlastní výběr.</div>
 {% if pst.settled %}<div style="margin-top:10px">Vyhodnoceno <b>{{ pst.settled }}</b> · úspěšnost <b>{{ '%.0f'|format(pst.hit * 100) }} %</b> · průměrný kurz <b>{{ '%.2f'|format(pst.avg_odds) }}</b> · zisk <b class="{{ 'pos' if pst.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(pst.profit) }} j.</b> · ROI <b class="{{ 'pos' if pst.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(pst.roi * 100) }} %</b>{% if pst.avg_ev is not none %} (model očekával {{ '%+.1f'|format(pst.avg_ev * 100) }} %){% endif %}
+{% if prec.n %}<div class="muted">Největší propad {{ '%.2f'|format(prec.max_drawdown) }} j. · nejdelší série proher {{ prec.longest_losing }}{% if prec.current_losing %} (teď {{ prec.current_losing }}){% endif %}</div>{% endif %}
 {% if pst.settled < 30 %}<div class="muted">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
 {% for m, v in pst.by_market.items() %}<div class="muted">{{ m }}: {{ v[0] }} výběrů, {{ '%+.2f'|format(v[1]) }} j., ROI {{ '%+.1f'|format(v[2] * 100) }} %</div>{% endfor %}
 </div>{% else %}<div class="muted" style="margin-top:10px">Zatím nic vyhodnoceno ({{ pst.open }} čeká na výsledek).</div>{% endif %}
@@ -280,6 +281,8 @@ td,th{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}tr:las
 
 {% elif tab == 'historie' %}
 <h2>Vyhodnocené sázky</h2>
+{% if rec.n %}<div class="card"><b>Výsledky ({{ rec.n }} sázek):</b> zisk {{ '%+.0f'|format(rec.profit) }} {{ cur }}{% if rec.yield_pct is not none %} · yield {{ '%+.1f'|format(rec.yield_pct) }} %{% endif %} · největší propad {{ '%.0f'|format(rec.max_drawdown) }} {{ cur }} · nejdelší série proher {{ rec.longest_losing }}{% if rec.current_losing %} (teď {{ rec.current_losing }}){% endif %}
+{% if rec.n < 30 %}<div class="muted">Při {{ rec.n }} sázkách jsou čísla jen orientační (potřeba desítky až stovky).</div>{% endif %}</div>{% endif %}
 <div class="card"><table><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th class="num">Zisk / ztráta</th><th class="num">CLV</th></tr>
 {% for k in settled %}<tr><td>{{ k.match_day.strftime('%d.%m.%Y') }}</td><td>{{ k.match_name or k.match_id }}</td>
 <td>{{ k.market }} {{ k.selection }}</td><td>{{ k.bookmaker }}</td><td class="num">{{ '%.2f'|format(k.odds) }}</td><td class="num">{{ '%.0f'|format(k.stake) }}</td>
@@ -319,6 +322,8 @@ def create_app(database_url: str | None = None) -> Flask:
     def render(session, msg: str = "", err: bool = False, calc: dict | None = None, tab: str = "prehled"):
         led = Ledger(session)
         picks = paper.load(led)
+        done_picks = sorted((p for p in picks if p.result is not None), key=lambda p: p.kickoff)
+        settled = list(session.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN).order_by(Ticket.settled_at.desc()).limit(200)))
         s = led.summary()
         s["test_mode"] = led.test_mode()
         today = date.today()
@@ -367,11 +372,7 @@ def create_app(database_url: str | None = None) -> Flask:
             tips_by_match=tips_by_match,
             orphan_tips=[t for t in open_tips if t.match_id not in {v.match_id for v in views}],
             open_tickets=list(session.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN).order_by(Ticket.match_day))),
-            settled=list(
-                session.scalars(
-                    select(Ticket).where(Ticket.status != TICKET_OPEN).order_by(Ticket.settled_at.desc()).limit(200)
-                )
-            ),
+            settled=settled,
             books=SETTINGS.bookmakers.betting_books,
             leagues=LEAGUES,
             exposure=led.open_exposure(today),
@@ -381,6 +382,8 @@ def create_app(database_url: str | None = None) -> Flask:
             kelly_fraction=SETTINGS.risk.kelly_fraction,
             stake_cap=SETTINGS.risk.max_stake_pct,
             pst=paper.stats(picks),
+            rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
+            prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),

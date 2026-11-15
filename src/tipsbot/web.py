@@ -93,11 +93,11 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 .ms{grid-template-columns:44px 1fr 14px}.ms .rc{grid-column:2;text-align:left}.chips{margin-left:0;width:100%}}
 </style></head><body>
 
-{% macro score_form(back) %}
-{% if pending %}<div class="card"><b>Zadat výsledek zápasu</b>
+{% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
+{% if rows %}<div class="card"><b>Zadat výsledek zápasu</b>
 <div class="muted">Napiš skóre po 90 minutách (např. 1:4). Bot podle něj vyhodnotí všechny otevřené tikety i sledované výběry toho zápasu.</div>
 <form class="scorebox" style="margin-top:10px" method="post" action="{{ url_for('score') }}"><input type="hidden" name="tab" value="{{ back }}">
-<label>Zápas<select name="match">{% for p in pending %}<option value="{{ p.key }}">{{ p.day_label }} · {{ p.name }} ({{ p.what }})</option>{% endfor %}</select></label>
+<label>Zápas<select name="match">{% for p in rows %}<option value="{{ p.key }}">{{ p.day_label }} · {{ p.name }} ({{ p.what }})</option>{% endfor %}</select></label>
 <label class="sc">Skóre<input name="score" placeholder="1:4" required></label>
 <button class="ok">Vyhodnotit</button></form></div>{% endif %}
 {% endmacro %}
@@ -108,7 +108,7 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 {% if s.paused %}<span class="badge bad">STOP-LOSS</span>{% endif %}
 <div class="chips"><span>Bankroll <b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b></span>
 <span>Zisk <b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b></span></div></div>
-<nav>{% for key, label in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ label }}{% if key == 'tikety' and pending %}<span class="cnt">{{ pending|length }}</span>{% endif %}</a>{% endfor %}</nav>
+<nav>{% for key, label in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ label }}{% set n = (pending|selectattr('tikety')|list|length) if key == 'tikety' else (pending|selectattr('vybery')|list|length) if key == 'sledovani' else 0 %}{% if n %}<span class="cnt" title="zápasy čekající na výsledek">{{ n }}</span>{% endif %}</a>{% endfor %}</nav>
 </div></header>
 <main><div class="wrap">
 {% if msg %}<div class="msg {{ 'err' if err else '' }}">{{ msg }}</div>{% endif %}
@@ -127,7 +127,10 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 <button>Uložit</button></form></div>{% endif %}
 {% if s.paused %}<div class="card note">Propad dosáhl limitu, tipy jsou pozastavené do re-kalibrace.
 <form class="row" method="post" action="{{ url_for('resume') }}"><button>Obnovit vydávání tipů</button></form></div>{% endif %}
-{% if pending %}<div class="card note">Na výsledek čeká {{ pending|length }} zápasů s tvými tikety nebo sledovanými výběry. <a href="{{ url_for('index', tab='tikety') }}">Zadat skóre →</a></div>{% endif %}
+{% set nt = pending|selectattr('tikety')|list|length %}{% set nv = pending|selectattr('vybery')|list|length %}
+{% if nt or nv %}<div class="card note">Na výsledek čeká:
+{% if nt %}<a href="{{ url_for('index', tab='tikety') }}">{{ nt }} zápasů s tvými tikety →</a>{% endif %}
+{% if nv %}<a href="{{ url_for('index', tab='sledovani') }}">{{ nv }} zápasů se sledovanými výběry modelu →</a>{% endif %}</div>{% endif %}
 
 <div class="card"><div class="bar">
 {% if has_key %}<form class="row" style="margin:0;flex:1" method="post" action="{{ url_for('scan') }}">
@@ -208,7 +211,7 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 </script>
 
 {% elif tab == 'tikety' %}
-{{ score_form('tikety') }}
+{{ score_form('tikety', 'tikety') }}
 <h2>Otevřené tikety ({{ open_tickets|length }})</h2>
 <div class="card tablewrap"><table><tr><th>Den</th><th>Zápas</th><th>Sázka</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th></th></tr>
 {% for k in open_tickets %}<tr><td>{{ k.match_day.strftime('%d.%m.') }}</td><td>{{ k.match_name or k.match_id }}</td><td><b>{{ k.market }} {{ k.selection }}</b></td><td>{{ k.bookmaker }}</td>
@@ -233,7 +236,7 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 </div><div class="row"><button>Zapsat sázku</button></div></form></div>
 
 {% elif tab == 'sledovani' %}
-{{ score_form('sledovani') }}
+{{ score_form('sledovani', 'vybery') }}
 <div class="card"><b>Jak model vydělává</b> <span class="muted">(výběry s hranou od 5 % proti českým kurzům, sázka 1 jednotky bez peněz)</span>
 {% if pst.settled %}<div class="kv"><span>Vyhodnoceno <b>{{ pst.settled }}</b></span><span>Úspěšnost <b>{{ '%.0f'|format(pst.hit * 100) }} %</b></span><span>Průměrný kurz <b>{{ '%.2f'|format(pst.avg_odds) }}</b></span>
 <span>Zisk <b class="{{ 'pos' if pst.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(pst.profit) }} j.</b></span><span>ROI <b class="{{ 'pos' if pst.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(pst.roi * 100) }} %</b>{% if pst.avg_ev is not none %} (model čekal {{ '%+.1f'|format(pst.avg_ev * 100) }} %){% endif %}</span></div>
@@ -372,18 +375,18 @@ def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
 def _pending(open_tickets, open_picks) -> list[dict]:
     """Zapasy, u kterych neco ceka na vysledek (tikety i sledovane vybery), jeden radek na zapas."""
     out: dict[tuple, dict] = {}
-    items = [(t.match_name, t.match_day, "tiket") for t in open_tickets if t.match_name and t.match_day]
-    items += [(p.name, date.fromisoformat(p.day), "výběr") for p in open_picks]
+    items = [(t.match_name, t.match_day, "tikety") for t in open_tickets if t.match_name and t.match_day]
+    items += [(p.name, date.fromisoformat(p.day), "vybery") for p in open_picks]
     for name, day, what in items:
         if " - " not in name or day > date.today():  # budouci zapas jeste nema vysledek
             continue
         key = (*(czechodds._en(x.strip()) for x in name.split(" - ", 1)), day)
         row = out.setdefault(key, {"key": f"{day.isoformat()}|{name}", "name": name, "day": day,
-                                   "day_label": day.strftime("%d.%m."), "tiket": 0, "výběr": 0})
+                                   "day_label": day.strftime("%d.%m."), "tikety": 0, "vybery": 0})
         row[what] += 1
     rows = sorted(out.values(), key=lambda r: r["day"])
     for r in rows:
-        r["what"] = ", ".join(f"{r[w]}× {w}" for w in ("tiket", "výběr") if r[w])
+        r["what"] = ", ".join(f"{r[w]}× {label}" for w, label in (("tikety", "tiket"), ("vybery", "sledovaný výběr")) if r[w])
     return rows
 
 

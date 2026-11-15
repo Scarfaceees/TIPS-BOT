@@ -124,3 +124,15 @@ def test_quick_value_calculator_rendered(client):
     c.post("/deposit", data={"amount": "10000", "test": "1"})
     html = c.get("/?tab=kalkulacka").get_data(as_text=True)
     assert "Rychlá value kalkulačka" in html and "K=0.125" in html and "CAP=0.02" in html
+
+
+def test_history_shows_track_record(client):
+    c, _ = client
+    c.post("/deposit", data={"amount": "10000", "test": "1"})
+    for odds, res in (("2.0", "won"), ("2.0", "lost"), ("2.0", "lost")):
+        r = c.post("/tickets", data={"match_name": "A - B", "match_day": "2026-11-14", "market": "1X2", "selection": "1",
+                                     "bookmaker": "tipsport", "odds": odds, "stake": "100"})
+        tid = __import__("re").findall(r"/tickets/(\d+)/settle", r.get_data(as_text=True))[-1]
+        c.post(f"/tickets/{tid}/settle", data={"result": res})
+    html = c.get("/?tab=historie").get_data(as_text=True)
+    assert "3 sázek" in html and "nejdelší série proher 2" in html and "největší propad 200" in html

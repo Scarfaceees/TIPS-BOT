@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, teamreport
+from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -289,6 +289,13 @@ def scan_league(
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
     modelcheck.log_predictions(ledger, league, {m: c for m, c in cands_by_match.items() if models_by_match[m]}, now)
+    if czech and is_football:
+        by_ev = {ev.match_id: (ev, model_by_match.get(ev.match_id), []) for ev in events}
+        for e in czech:
+            hit = czechodds.find_event(e, events)
+            if hit is not None:
+                by_ev[hit.match_id][2].append(e)
+        paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 
     if events:

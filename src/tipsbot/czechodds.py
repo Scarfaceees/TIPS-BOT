@@ -119,18 +119,18 @@ def add(ledger: Ledger, new: list[Entry], now: datetime) -> None:
     save(ledger, [e for e in load(ledger, now) if key(e) not in fresh] + new)
 
 
+def find_event(entry: Entry, events: list[Event]) -> Event | None:
+    return next(
+        (v for v in events if match_team(_en(entry.home), [v.home]) and match_team(_en(entry.away), [v.away])),
+        None,
+    )
+
+
 def apply(events: list[Event], entries: list[Entry]) -> list[str]:
     """Prida ceske kurzy k udalostem (na miste). Vraci poznamky o nepouzitych radcich."""
     notes: list[str] = []
     for e in entries:
-        ev = next(
-            (
-                v
-                for v in events
-                if match_team(_en(e.home), [v.home]) and match_team(_en(e.away), [v.away])
-            ),
-            None,
-        )
+        ev = find_event(e, events)
         if ev is None:
             continue  # zapas neni v dnesnim skenu (jina liga, jiny den)
         market = ev.markets.get(e.market)

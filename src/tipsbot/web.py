@@ -22,12 +22,12 @@ def _local(dt: datetime) -> str:
 from flask import Flask, render_template_string, request, url_for
 from sqlalchemy import select
 
-from . import analysis, combo, czechodds, detail, devig, risk
+from . import analysis, combo, czechodds, detail, devig, paper, risk
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
 TABS = (("prehled", "Přehled"), ("kalkulacka", "Kalkulačka"), ("sazka", "Zapsat sázku"),
-        ("historie", "Historie"), ("nastaveni", "Nastavení"))
+        ("sledovani", "Sledování modelu"), ("historie", "Historie"), ("nastaveni", "Nastavení"))
 
 PAGE = """<!doctype html>
 <html lang="cs"><head><meta charset="utf-8">
@@ -216,6 +216,38 @@ td,th{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}tr:las
   <label>Vklad ({{ cur }})<input name="stake" type="number" step="1" min="1" required></label>
 </div><div class="row"><button>Zapsat sázku</button></div></form></div>
 
+{% elif tab == 'sledovani' %}
+<h2>Sledování modelových tipů</h2>
+<div class="card"><div class="muted">Bot sleduje výběry, které model vyhodnotil jako výhodné proti zadaným českým kurzům (hrana od 5 %), jako sázku 1 jednotky bez skutečného vkladu. Po zápase se vyhodnotí z výsledku. Tak se ověří, jestli model na trzích bez férové linie (góly, BTTS) opravdu vydělává. Můžeš přidat i vlastní výběr.</div>
+{% if pst.settled %}<div style="margin-top:10px">Vyhodnoceno <b>{{ pst.settled }}</b> · úspěšnost <b>{{ '%.0f'|format(pst.hit * 100) }} %</b> · průměrný kurz <b>{{ '%.2f'|format(pst.avg_odds) }}</b> · zisk <b class="{{ 'pos' if pst.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(pst.profit) }} j.</b> · ROI <b class="{{ 'pos' if pst.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(pst.roi * 100) }} %</b>{% if pst.avg_ev is not none %} (model očekával {{ '%+.1f'|format(pst.avg_ev * 100) }} %){% endif %}
+{% if pst.settled < 30 %}<div class="muted">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
+{% for m, v in pst.by_market.items() %}<div class="muted">{{ m }}: {{ v[0] }} výběrů, {{ '%+.2f'|format(v[1]) }} j., ROI {{ '%+.1f'|format(v[2] * 100) }} %</div>{% endfor %}
+</div>{% else %}<div class="muted" style="margin-top:10px">Zatím nic vyhodnoceno ({{ pst.open }} čeká na výsledek).</div>{% endif %}
+<form class="row" method="post" action="{{ url_for('settle_all') }}"><input type="hidden" name="tab" value="sledovani"><button>Stáhnout výsledky a vyhodnotit</button><span class="muted">vyhodnotí i tvoje tikety</span></form></div>
+<h2>Čeká na výsledek ({{ paper_open|length }})</h2>
+<div class="card"><table><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th class="num">Model</th><th class="num">Hrana</th><th>Zdroj</th><th></th></tr>
+{% for p in paper_open %}<tr><td>{{ p.name }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market }} {{ p.selection }}<div class="muted">{{ p.book }}</div></td><td class="num">{{ '%.2f'|format(p.odds) }}</td>
+<td class="num">{{ '%.0f %%'|format(p.p_model * 100) if p.p_model else '–' }}</td><td class="num">{{ '%+.1f %%'|format(p.ev * 100) if p.ev is not none else '–' }}</td>
+<td>{{ p.source }}{% for f in p.flags %}<div class="muted">{{ f }}</div>{% endfor %}</td>
+<td><form method="post" action="{{ url_for('paper_result', pick_id=p.id) }}" class="row" style="margin:0"><input type="hidden" name="tab" value="sledovani">
+<select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button>Zapsat</button></form>
+<form method="post" action="{{ url_for('paper_delete', pick_id=p.id) }}" style="margin:0"><input type="hidden" name="tab" value="sledovani"><button>Smazat</button></form></td></tr>
+{% else %}<tr><td colspan="7" class="muted">Nic nesledováno. Vlož české kurzy (Nastavení) a spusť sken.</td></tr>{% endfor %}</table></div>
+<h2>Vyhodnoceno</h2>
+<div class="card"><table><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
+{% for p in paper_done %}<tr><td>{{ p.name }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market }} {{ p.selection }}</td><td class="num">{{ '%.2f'|format(p.odds) }}</td><td>{{ p.score or '–' }}</td><td>{{ p.result }}</td>
+<td class="num {{ 'pos' if p.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p.profit) }}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div>
+<h2>Přidat vlastní výběr</h2>
+<div class="card"><form method="post" action="{{ url_for('paper_add') }}"><input type="hidden" name="tab" value="sledovani"><div class="grid2">
+  <label>Zápas<input name="name" placeholder="Sparta - Slavia" required></label>
+  <label>Den zápasu<input name="day" type="date" value="{{ today }}" required></label>
+  <label>Trh (1X2, OU_2.5, BTTS)<input name="market" value="OU_2.5" required></label>
+  <label>Výběr (1/X/2, over/under, yes/no)<input name="selection" placeholder="under" required></label>
+  <label>Kancelář<select name="book">{% for b in books %}<option>{{ b }}</option>{% endfor %}</select></label>
+  <label>Kurz<input name="odds" type="number" step="0.01" min="1.01" required></label>
+</div><div class="row"><button>Přidat do sledování</button></div></form></div>
+
 {% elif tab == 'historie' %}
 <h2>Vyhodnocené sázky</h2>
 <div class="card"><table><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th class="num">Zisk / ztráta</th><th class="num">CLV</th></tr>
@@ -256,6 +288,7 @@ def create_app(database_url: str | None = None) -> Flask:
 
     def render(session, msg: str = "", err: bool = False, calc: dict | None = None, tab: str = "prehled"):
         led = Ledger(session)
+        picks = paper.load(led)
         s = led.summary()
         s["test_mode"] = led.test_mode()
         today = date.today()
@@ -315,6 +348,9 @@ def create_app(database_url: str | None = None) -> Flask:
             exposure_cap=s["bankroll"] * SETTINGS.risk.max_daily_exposure_pct,
             today=today.isoformat(),
             czech_entries=czechodds.load(led, now),
+            pst=paper.stats(picks),
+            paper_open=[p for p in picks if p.result is None],
+            paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),
             has_football_key=bool(led.api_football_key()),
             scan_leagues=list(SETTINGS.odds_api.sport_keys),
@@ -377,6 +413,39 @@ def create_app(database_url: str | None = None) -> Flask:
     @app.post("/czech-odds/clear")
     def clear_czech_odds():
         return action(lambda led, _: czechodds.save(led, []), "České kurzy smazány.", tab="nastaveni")
+
+    @app.post("/paper")
+    def paper_add():
+        def fn(led: Ledger, _):
+            f = request.form
+            p = paper.add_manual(led, league=f.get("league", ""), name=f["name"].strip(), day=f["day"], market=f["market"],
+                                 selection=f["selection"], odds=float(f["odds"]), book=f["book"], now=utcnow())
+            return f"Přidáno do sledování: {p.name} {p.market} {p.selection} @ {p.odds:.2f}."
+
+        return action(fn, "", tab="sledovani")
+
+    @app.post("/paper/<pick_id>/result")
+    def paper_result(pick_id: str):
+        def fn(led: Ledger, _):
+            result = request.form["result"]
+            if result not in ("won", "lost", "void"):
+                raise ValueError("Neznámý výsledek.")
+            paper.set_result(led, pick_id, result)
+
+        return action(fn, "Výsledek zapsán.", tab="sledovani")
+
+    @app.post("/paper/<pick_id>/delete")
+    def paper_delete(pick_id: str):
+        return action(lambda led, _: paper.remove(led, pick_id), "Smazáno.", tab="sledovani")
+
+    @app.post("/settle")
+    def settle_all():
+        def fn(led: Ledger, _):
+            from .settlement import settle_everything
+
+            return " · ".join(settle_everything(led)) or "Nic k vyhodnocení, výsledky ještě nejsou v datech."
+
+        return action(fn, "", tab="sledovani")
 
     @app.post("/resume")
     def resume():

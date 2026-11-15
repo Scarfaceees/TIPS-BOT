@@ -102,3 +102,26 @@ def settle_open_tickets(ledger, df: pd.DataFrame) -> list[str]:
         ledger.settle_ticket(t.id, outcome, fair_closing_odds=t.closing_odds)
         notes.append(f"Tiket {t.id}: {t.match_name} {res[0]}:{res[1]} -> {outcome}")
     return notes
+
+
+def settle_everything(ledger) -> list[str]:
+    """Stahne aktualni vysledky (ligy, poharty, reprezentace) a vyhodnoti tikety i sledovane vybery."""
+    import sys
+
+    from . import paper
+    from .cups import DOMESTIC, fetch_cups
+    from .ingestion import fetch_football
+    from .teamreport import load_all_results
+
+    for lg in DOMESTIC:  # aktualni sezona (football-data.co.uk se dopln jednou denne)
+        fetch_football(lg, seasons=1)
+    fetch_cups(ledger.api_football_key(), ledger.football_data_key(), seasons=1)
+    results = load_all_results()
+    try:  # reprezentace (Liga narodu), vcetne neutralnich zapasu
+        from .nations import download_results, load_international
+
+        download_results()
+        results = pd.concat([results, load_international(neutral=True)[list(results.columns)]], ignore_index=True)
+    except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
+        print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
+    return settle_open_tickets(ledger, results) + paper.settle(ledger, results)

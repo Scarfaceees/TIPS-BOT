@@ -104,3 +104,16 @@ def test_czech_odds_form(client):
     assert "Smazat všechny" in c.get("/?tab=nastaveni").get_data(as_text=True)
     assert "Smazat všechny" not in c.post("/czech-odds/clear", data={"tab": "nastaveni"}).get_data(as_text=True)
     assert c.post("/czech-odds", data={"text": "x"}).status_code == 400
+
+
+def test_paper_tab_flow(client):
+    c, _ = client
+    c.post("/deposit", data={"amount": "10000", "test": "1"})
+    r = c.post("/paper", data={"name": "Sparta - Slavia", "day": "2026-11-20", "market": "OU_2.5", "selection": "under",
+                               "book": "tipsport", "odds": "2.1", "tab": "sledovani"})
+    assert "Sparta - Slavia" in r.get_data(as_text=True)
+    pid = __import__("re").search(r"/paper/(\w+)/result", r.get_data(as_text=True)).group(1)
+    html = c.post(f"/paper/{pid}/result", data={"result": "won", "tab": "sledovani"}).get_data(as_text=True)
+    assert "+1.10" in html
+    assert c.post("/paper", data={"name": "x", "day": "2026-11-20", "market": "OU_2.5", "selection": "1", "book": "t", "odds": "2"}).status_code == 400
+    assert c.get("/?tab=sledovani").status_code == 200

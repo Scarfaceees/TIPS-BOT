@@ -196,25 +196,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Stazeno souboru: {len(paths)}")
         return 0 if paths else 1
     if args.cmd == "settle-auto":
-        from .cups import DOMESTIC, fetch_cups
-        from .ingestion import fetch_football
-        from .settlement import settle_open_tickets
-        from .teamreport import load_all_results
+        from .settlement import settle_everything
 
-        for lg in DOMESTIC:  # aktualni sezona (football-data.co.uk se dopln jednou denne)
-            fetch_football(lg, seasons=1)
         with make_session_factory(args.db)() as session:
-            led = Ledger(session)
-            fetch_cups(led.api_football_key(), led.football_data_key(), seasons=1)
-            results = load_all_results()
-            try:  # reprezentace (Liga narodu), vcetne neutralnich zapasu
-                from .nations import download_results, load_international
-
-                download_results()
-                results = pd.concat([results, load_international(neutral=True)[list(results.columns)]], ignore_index=True)
-            except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
-                print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
-            notes = settle_open_tickets(led, results)
+            notes = settle_everything(Ledger(session))
             session.commit()
         print("\n".join(notes) or "Nic k vyhodnocení (výsledky ještě nejsou v datech).")
         return 0

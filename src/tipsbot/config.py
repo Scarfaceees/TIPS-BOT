@@ -149,6 +149,8 @@ class RiskConfig:
 @dataclass(frozen=True)
 class TimingConfig:
     early_window_hours: tuple[int, int] = (12, 24)
+    # Rozbor zapasu (bez tipu) dopredu; stahovani kurzu se ridi oknem vyse, takze kredity to nestoji navic.
+    analysis_hours: int = 48
     # Bez prubezne obnovy: bezny tip lze vydat kdykoli od 12 h do 15 min pred vykopem.
     main_window_minutes: tuple[int, int] = (15, 720)
     # Bez prubezne obnovy: sken se spousti rucne nebo par krat za hraci den.

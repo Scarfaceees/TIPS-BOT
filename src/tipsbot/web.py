@@ -92,6 +92,8 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 .czgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px}
 .czgrid fieldset{border:1px solid var(--line);border-radius:8px;padding:6px 10px 10px;margin:0;display:flex;gap:8px}
 .czgrid legend{font-size:13px;font-weight:600;padding:0 4px}.czgrid label{flex:1 1 0;min-width:0}.czgrid input{padding:6px 8px}
+.betrow{display:flex;gap:6px;align-items:center;margin:0}.betrow input{width:78px;padding:5px 7px}.betrow .muted{min-width:56px}
+table.bets td{vertical-align:middle}
 @media(max-width:720px){.stats{grid-template-columns:repeat(2,1fr)}.tip{grid-template-columns:1fr}.big{text-align:left}
 .ms{grid-template-columns:44px 1fr 14px}.ms .rc{grid-column:2;text-align:left}.chips{margin-left:0;width:100%}}
 </style></head><body>
@@ -151,7 +153,23 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 </div>
 <details class="fold" style="margin-top:8px"><summary>Co znamenají štítky</summary><div class="legend"><span class="badge tipb">TIP</span> ověřená hodnota, vsadit &nbsp; <span class="badge tipb">CÍL</span> sázet jen při kurzu od uvedené hranice &nbsp; <span class="badge">VALUE</span> hodnota je, ale tip nevznikl &nbsp; <span class="badge bad">BEZ VALUE</span> nesázet</div></details></div>
 
-<h2>Doporučený tiket</h2>
+<h2>Co vsadit</h2>
+{% if bets %}<div class="card tablewrap" style="padding:6px 10px"><table class="bets"><tr><th>Výkop</th><th>Zápas</th><th>Sázka</th><th class="num">Šance</th><th class="num">EV</th><th>Kurz · kancelář</th><th>Vklad</th><th></th></tr>
+{% for b in bets %}{% set v = b.view %}{% set r = b.row %}<tr>
+<td>{{ v.local }}</td><td><b>{{ v.name }}</b>{% if r.status == 'model' %}<div class="muted">jen model (bez férové linie trhu)</div>{% endif %}</td><td><b>{{ r.label }}</b></td>
+<td class="num">{{ '%.0f'|format(r.p_final * 100) }} %</td><td class="num pos">{{ '%+.1f'|format(r.cz_ev * 100) }} %</td>
+<td colspan="3"><form class="betrow" method="post" action="{{ url_for('ticket_add') }}">
+<input type="hidden" name="match_name" value="{{ v.name }}"><input type="hidden" name="match_day" value="{{ b.day }}">
+<input type="hidden" name="market" value="{{ r.market }}"><input type="hidden" name="selection" value="{{ r.selection }}"><input type="hidden" name="bookmaker" value="{{ r.cz[1] }}">
+<input name="odds" type="number" step="0.01" min="1.01" value="{{ '%.2f'|format(r.cz[0]) }}" title="kurz, za který jsi vsadil" required><span class="muted">{{ r.cz[1] }}</span>
+<input name="stake" type="number" step="10" min="1" value="{{ '%.0f'|format(b.stake) if b.stake else '' }}" placeholder="vklad" required><button class="ok sm">Vsazeno</button></form></td></tr>{% endfor %}</table>
+<div class="muted" style="margin:6px 4px">Sázej jen za uvedený kurz nebo vyšší. Klikem na „Vsazeno“ se sázka zapíše do Moje tikety.</div></div>
+{% else %}<div class="card muted">Na zadaných českých kurzech teď nic nemá hodnotu. Zadej kurzy u zápasů (rozbal zápas → Zadat kurzy z české kanceláře).</div>{% endif %}
+{% if check %}<details class="fold card"><summary>Ověř kurz ({{ check|length }}) – hrana nad 15 %, nejspíš chyba v kurzu nebo modelu</summary>
+<table>{% for b in check %}<tr><td>{{ b.view.local }}</td><td>{{ b.view.name }}</td><td>{{ b.row.label }}</td><td class="num">{{ '%.2f'|format(b.row.cz[0]) }}</td><td class="num">{{ '%+.1f'|format(b.row.cz_ev * 100) }} %</td></tr>{% endfor %}</table>
+<div class="muted">Model na trzích s góly zatím nemá ověřenou přesnost (Sledování modelu). Takhle velká hrana proti kanceláři bývá spíš chyba než příležitost.</div></details>{% endif %}
+
+<h2>Doporučený tiket <span class="muted" style="font-weight:400">(ze zahraničních kurzů)</span></h2>
 {% for c in combos[:1] %}<div class="card"><div class="tip"><div>
   <div class="title">{{ c.legs|length }}× kombinace <span class="badge tipb">nejlepší</span></div>
   {% for lg in c.legs %}<div class="pick">{{ loop.index }}. <b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">({{ lg.row.best_book }}, výkop {{ lg.local }})</span></div>{% endfor %}
@@ -419,6 +437,30 @@ def _decorate(v, czech_entries) -> None:
         v.tags = ["none"]
 
 
+def _to_bet(views, led, bank: float, expo: float) -> tuple[list[dict], list[dict]]:
+    """Souhrn napric zapasy: sazky s hodnotou na zadanych ceskych kurzech (s vkladem) a podezrele kurzy k overeni."""
+    bets, check = [], []
+    for v in views:
+        k = datetime.fromisoformat(v.kickoff)
+        day = (k.replace(tzinfo=timezone.utc).astimezone(_TZ) if _TZ else k).date()
+        for r in v.rows:
+            if not (r.cz_ok or r.cz_suspect):
+                continue
+            item = {"view": v, "row": r, "day": day.isoformat(), "stake": 0.0}
+            if r.cz_suspect:
+                check.append(item)
+                continue
+            p = r.p_final * (0.97 if r.status == "model" else 1.0)  # u trhu jen z modelu opatrneji
+            st = risk.size_stake(p, r.cz[0], bank, expo, paused=led.paused())
+            stake = st.stake if st.allowed else 0.0
+            if r.status == "model":  # neovereny trh: polovicni vklad, zaokrouhleny na desitky
+                stake = max(round(stake / 2 / 10) * 10, SETTINGS.risk.min_stake) if stake else 0.0
+            item["stake"] = stake
+            bets.append(item)
+    bets.sort(key=lambda b: b["view"].kickoff)
+    return bets, check
+
+
 def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
     """Trh z formulare -> tvar pro automaticke vyhodnoceni; nesrozumitelny vyber u znameho trhu je chyba."""
     from .settlement import grade, normalize_bet
@@ -494,7 +536,11 @@ def create_app(database_url: str | None = None) -> Flask:
         local = {v.name: v.local for v in views}
         bank = led.bankroll()
         expo = led.open_exposure(today)
-        combos = combo.best_combos(views, bank, expo)
+        bets, check = _to_bet(views, led, bank, expo)
+        # kombinace, jejiz noha ma zadany cesky kurz pod hranici, by byla klamava
+        combos = [c for c in combo.best_combos(views, bank, expo)
+                  if not any(lg.row.status == "model" and getattr(lg.row, "cz", None) and lg.row.cz[0] < lg.row.min_odds
+                             for lg in c.legs)]
         for c in combos:
             for lg in c.legs:
                 object.__setattr__(lg, "local", local.get(lg.match, ""))
@@ -529,6 +575,8 @@ def create_app(database_url: str | None = None) -> Flask:
             czech_books=sorted(czechodds._BOOKS, key=lambda b: (b != "tipsport", b)),
             form_markets=czechodds.FORM_MARKETS,
             market_names=MARKET_NAMES,
+            bets=bets,
+            check=check,
             tag_counts={t: sum(t in v.tags for v in views) for t in ("cz", "tip", "cil", "value", "none")},
             kelly_fraction=SETTINGS.risk.kelly_fraction,
             stake_cap=SETTINGS.risk.max_stake_pct,

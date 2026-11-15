@@ -153,3 +153,19 @@ def test_score_entry_settles_ticket(client):
                                     "selection": "over", "bookmaker": "tipsport", "odds": "2", "stake": "10"}).status_code == 400
     for t in ("prehled", "tikety", "sledovani", "historie", "kalkulacka", "nastaveni", "sazka"):
         assert c.get(f"/?tab={t}").status_code == 200
+
+
+def test_overview_lists_bets_on_czech_odds(client):
+    from types import SimpleNamespace
+
+    from tipsbot import web
+
+    row = SimpleNamespace(market="1X2", selection="2", label="Výhra B", p_final=0.3, status="none", cz=(3.9, "tipsport"),
+                          cz_ev=0.17, cz_ok=False, cz_suspect=True)
+    ok = SimpleNamespace(market="OU_2.5", selection="over", label="Over 2.5", p_final=0.55, status="model", cz=(2.07, "tipsport"),
+                         cz_ev=0.14, cz_ok=True, cz_suspect=False)
+    v = SimpleNamespace(kickoff="2026-11-16T19:45:00", rows=[row, ok], name="A - B")
+    led = SimpleNamespace(paused=lambda: False)
+    bets, check = web._to_bet([v], led, 10000.0, 0.0)
+    assert [b["row"] for b in bets] == [ok] and [c["row"] for c in check] == [row]
+    assert bets[0]["day"] == "2026-11-16" and 0 < bets[0]["stake"] <= 100

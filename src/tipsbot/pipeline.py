@@ -248,7 +248,7 @@ def scan_league(
                 ledger.set_odds_cache(league, now, fetched.payload, fetched.credits_remaining)
         upcoming = [e.kickoff for e in events if e.kickoff > now]
         ledger.set_next_kickoff(league, min(upcoming) if upcoming else now + timedelta(hours=24))
-    events = [e for e in events if now < e.kickoff <= horizon]
+    events = [e for e in events if now < e.kickoff <= now + timedelta(hours=settings.timing.analysis_hours)]
     report.events = len(events)
     czech = czechodds.load(ledger, now)
     if czech:

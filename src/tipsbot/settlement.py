@@ -43,7 +43,7 @@ def normalize_bet(market: str, selection: str) -> tuple[str, str]:
     words = set(f"{m} {s}".split())
     side = "over" if words & {"over", "nad", "vice"} else "under" if words & {"under", "pod", "mene"} else None
     num = _NUM.search(f"{market} {selection}")
-    if side and num:
+    if side and num and not market.strip().upper().startswith(("TTH_", "TTA_", "AH_")):  # goly jen jednoho tymu
         return f"OU_{float(num.group().replace(',', '.')):g}", side
     if m in _BTTS:
         return "BTTS", {"ano": "yes", "a": "yes", "ne": "no", "n": "no"}.get(s, s)
@@ -84,6 +84,12 @@ def grade(market: str, selection: str, hg: int, ag: int) -> str | None:
         both = hg > 0 and ag > 0
         return "won" if (low in ("yes", "ano") and both) or (low in ("no", "ne") and not both) else (
             "lost" if low in ("yes", "ano", "no", "ne") else None)
+    if market.startswith(("TTH_", "TTA_")) and low in ("over", "under"):  # goly jednoho tymu
+        try:
+            line = float(market[4:])
+        except ValueError:
+            return None
+        return _ou_single(hg if market.startswith("TTH_") else ag, line, low == "over")
     if market.startswith("OU_") and low in ("over", "under"):
         try:
             line = float(market[3:])

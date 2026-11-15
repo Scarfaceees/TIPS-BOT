@@ -21,11 +21,11 @@ from .settlement import find_result, grade
 KEY = "paper_picks"
 KEEP = 2000
 MIN_EV = 0.05  # od teto hrany (podle modelu) se vyber sleduje
-SELECTIONS = {"1X2": ("1", "X", "2"), "BTTS": ("yes", "no")}
+SELECTIONS = {"1X2": ("1", "X", "2"), "BTTS": ("yes", "no"), "DC": ("1X", "12", "X2"), "DNB": ("home", "away")}
 
 
 def selections(market: str) -> tuple[str, ...] | None:
-    if market.startswith("OU_"):
+    if market.startswith(("OU_", "TTH_", "TTA_")):
         return ("over", "under")
     return SELECTIONS.get(market)
 

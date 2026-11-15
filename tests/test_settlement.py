@@ -81,3 +81,8 @@ def test_nothing_to_settle_explains(ledger):
                       match_day=date(2026, 11, 15), match_name="A - B")
     msg = settlement.nothing_to_settle(ledger, date(2026, 10, 6))
     assert "čeká 1 tiketů" in msg and "06.10.2026" in msg
+
+
+def test_grade_team_totals():
+    assert settlement.grade("TTH_0.5", "over", 1, 4) == "won" and settlement.grade("TTA_0.5", "under", 3, 0) == "won"
+    assert settlement.grade("TTA_1.5", "over", 0, 1) == "lost"

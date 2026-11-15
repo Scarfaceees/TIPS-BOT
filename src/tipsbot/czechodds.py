@@ -95,6 +95,60 @@ def parse_text(text: str, now: datetime) -> tuple[list[Entry], list[str]]:
     return entries, errors
 
 
+# Trhy ve formulari u zapasu: (trh, vybery v poradi ulozeni, popisky).
+FORM_MARKETS = (
+    ("1X2", ("1", "X", "2"), ("1", "X", "2")),
+    ("DC", ("1X", "12", "X2"), ("1X", "12", "X2")),
+    ("DNB", ("home", "away"), ("domácí", "hosté")),
+    ("OU_1.5", ("over", "under"), ("víc než 1.5", "míň než 1.5")),
+    ("OU_2.5", ("over", "under"), ("víc než 2.5", "míň než 2.5")),
+    ("OU_3.5", ("over", "under"), ("víc než 3.5", "míň než 3.5")),
+    ("BTTS", ("yes", "no"), ("oba dají gól: ano", "ne")),
+    ("TTH_0.5", ("over", "under"), ("domácí dají gól: ano", "ne")),
+    ("TTA_0.5", ("over", "under"), ("hosté dají gól: ano", "ne")),
+)
+
+
+def from_form(book: str, match_name: str, values: dict[str, str], now: datetime) -> tuple[list[Entry], list[str]]:
+    """Kurzy z formulare u zapasu (`values`: {"OU_2.5:over": "1.85", ...}). Trh se ulozi, jen kdyz je vyplneny cely."""
+    book = normalize(book).replace(" ", "")
+    if book not in _BOOKS:
+        raise ValueError(f"Neznámá kancelář '{book}'.")
+    home, away = (p.strip() for p in match_name.split(" - ", 1))
+    entries, errors = [], []
+    for market, sels, _ in FORM_MARKETS:
+        raw = [(values.get(f"{market}:{s}") or "").strip().replace(",", ".") for s in sels]
+        if not any(raw):
+            continue
+        try:
+            odds = tuple(float(x) for x in raw)
+        except ValueError:
+            errors.append(f"{market}: vyplň všechny kurzy trhu čísly")
+            continue
+        if any(o <= 1.0 for o in odds):
+            errors.append(f"{market}: kurz musí být větší než 1.00")
+            continue
+        entries.append(Entry(book, home, away, market, odds, now))
+    return entries, errors
+
+
+def for_match(entries: list[Entry], match_name: str) -> dict[tuple[str, str], tuple[float, str]]:
+    """Nejlepsi cesky kurz pro kazdy (trh, vyber) zapasu: {(trh, vyber): (kurz, kancelar)}."""
+    home, away = (p.strip() for p in match_name.split(" - ", 1))
+    sels = {m: s for m, s, _ in FORM_MARKETS}
+    out: dict[tuple[str, str], tuple[float, str]] = {}
+    for e in entries:
+        if not (match_team(_en(e.home), [home]) and match_team(_en(e.away), [away])):
+            continue
+        names = sels.get(e.market) or (("over", "under") if e.market.startswith(("OU_", "TTH_", "TTA_")) else None)
+        if not names or len(names) != len(e.odds):
+            continue
+        for s, o in zip(names, e.odds):
+            if (e.market, s) not in out or o > out[(e.market, s)][0]:
+                out[(e.market, s)] = (o, e.book)
+    return out
+
+
 def load(ledger: Ledger, now: datetime) -> list[Entry]:
     raw = ledger._get(STATE_KEY, "")
     out = []

@@ -347,3 +347,12 @@ def test_football_full_scan_end_to_end(ledger, monkeypatch):
     assert any("Forma" in s["title"] for s in v.sections) and any("vzájemné" in s["title"] for s in v.sections)
     p = provider.probabilities(events[0])
     assert abs(p["1X2:1"] + p["1X2:X"] + p["1X2:2"] - 1) < 1e-9
+
+
+def test_cache_only_rescan_never_spends_credits(ledger, monkeypatch):
+    monkeypatch.setattr(oddsapi, "fetch_events", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fetch")))
+    rep = pipeline.scan_league("ENG1", ledger, now=NOW, provider=_NoModel(), cache_only=True)
+    assert "žádné uložené kurzy" in rep.summary()
+    ledger.set_odds_cache("ENG1", NOW, _payload(kick=NOW + timedelta(hours=10)), 400)
+    rep = pipeline.scan_league("ENG1", ledger, now=NOW + timedelta(hours=2), provider=_NoModel(), cache_only=True)
+    assert "z cache" in rep.summary() and rep.events == 1

@@ -89,9 +89,20 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 .det h4{margin:12px 0 4px}.det ul{margin:0;padding-left:18px}.det textarea{font:13px/1.4 monospace}
 .tipbox{margin-top:10px;padding:12px;border-radius:8px;background:#f3faf5;border:1px solid #cfe9d9}.tipbox.alt{background:#f4f9ff;border-color:#d6e4fb}
 .scorebox{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.scorebox label{flex:2 1 240px}.scorebox label.sc{flex:0 0 110px}
+.czgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px}
+.czgrid fieldset{border:1px solid var(--line);border-radius:8px;padding:6px 10px 10px;margin:0;display:flex;gap:8px}
+.czgrid legend{font-size:13px;font-weight:600;padding:0 4px}.czgrid label{flex:1 1 0;min-width:0}.czgrid input{padding:6px 8px}
 @media(max-width:720px){.stats{grid-template-columns:repeat(2,1fr)}.tip{grid-template-columns:1fr}.big{text-align:left}
 .ms{grid-template-columns:44px 1fr 14px}.ms .rc{grid-column:2;text-align:left}.chips{margin-left:0;width:100%}}
 </style></head><body>
+
+{% macro mrow(r, v) %}<tr class="{{ 'best' if r is sameas v.rows[v.recommended] or (v.target is not none and r is sameas v.rows[v.target]) }}">
+<td>{{ r.label }}</td><td class="num">{{ '%.0f'|format(r.p_final * 100) }} %</td><td class="num">{{ '%.2f'|format(r.fair_odds) }}</td>
+<td class="num">{% if r.status == 'model' %}<b>{{ '%.2f'|format(r.min_odds) }}</b>{% else %}<span class="muted">–</span>{% endif %}</td>
+<td class="num">{% if r.status != 'model' %}{{ '%.2f'|format(r.best_odds) }} <span class="muted">{{ r.best_book }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+<td class="num">{% if r.cz %}<b>{{ '%.2f'|format(r.cz[0]) }}</b> <span class="muted">{{ r.cz[1] }}</span>{% else %}<span class="muted">nezadáno</span>{% endif %}</td>
+<td class="num {{ 'pos' if r.cz_ev is not none and r.cz_ev > 0 else 'neg' if r.cz_ev is not none else '' }}">{{ '%+.1f %%'|format(r.cz_ev * 100) if r.cz_ev is not none else ('%+.1f %%'|format(r.ev_pct) if r.status != 'model' else '–') }}</td>
+<td>{% if r.cz_ok %}<span class="badge tipb">VSADIT</span>{% elif r.cz_suspect %}<span class="badge warn" title="hrana nad 15 % – zkontroluj, že kurz patří k tomuto trhu">ověř kurz</span>{% elif r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VALUE</span>{% elif r.cz %}<span class="badge bad">nízký kurz</span>{% endif %}</td></tr>{% endmacro %}
 
 {% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
 {% if rows %}<div class="card"><b>Zadat výsledek zápasu</b>
@@ -154,27 +165,22 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 <td class="num"><b>{{ '%.2f'|format(c.odds) }}</b></td><td class="num">{{ '%.1f'|format(c.prob * 100) }} %</td><td class="num">{{ '%+.1f'|format(c.ev_pct) }} %</td><td class="num">{{ '%.2f'|format(c.min_odds) }}</td><td class="num">{{ '%.0f'|format(c.stake) }}</td></tr>{% endfor %}
 </table></div></details>{% endif %}
 
-<h2>Zápasy ({{ views|length }})
-<span class="filters" id="flt"><button type="button" data-f="all" class="sm on">Vše</button><button type="button" data-f="tip" class="sm">Tipy ({{ views|selectattr('kind', 'equalto', 'tip')|list|length }})</button><button type="button" data-f="value" class="sm">S hodnotou ({{ views|rejectattr('kind', 'equalto', 'none')|list|length }})</button></span></h2>
+
+<h2>Zápasy ({{ views|length }})</h2>
+<div class="filters" id="flt" style="margin-bottom:6px">
+{% for key, name in (('all', 'Vše'), ('cz', 'Vsadit podle českých kurzů'), ('tip', 'Tipy'), ('cil', 'Cíle – ověř kurz'), ('value', 'S hodnotou'), ('none', 'Bez hodnoty')) %}
+{% set n = views|length if key == 'all' else tag_counts.get(key, 0) %}
+{% if n %}<button type="button" data-f="{{ key }}" class="sm {{ 'on' if key == 'all' }}">{{ name }} ({{ n }})</button>{% endif %}{% endfor %}</div>
 {% for v in views %}{% set rec = v.rows[v.recommended] %}{% set tip = tips_by_match.get(v.match_id) %}
 {% if loop.changed(v.local[:6]) %}<div class="day" data-day>{{ v.local[:6] }}</div>{% endif %}
-<details class="card match k-{{ v.kind }}" data-kind="{{ v.kind }}" {{ 'open' if tip }}>
+<details class="card match k-{{ 'tip' if 'tip' in v.tags or 'cz' in v.tags or 'cil' in v.tags else 'value' if 'value' in v.tags else 'none' }}" data-tags="{{ v.tags|join(' ') }}" {{ 'open' if tip }}>
   <summary class="ms"><span class="time">{{ v.local[7:] }}</span>
-    <span class="nm">{{ v.name }}<small>{{ leagues[v.league].name if v.league in leagues else v.league }}{% if not v.has_model %} · <span class="neg">bez modelu, jen trh</span>{% endif %}</small></span>
-    {% if v.verdict == 'CÍL' %}{% set tg = v.rows[v.target] %}<span class="rc"><b>{{ tg.label }}</b> <span class="badge tipb">CÍL</span><small>od kurzu {{ '%.2f'|format(tg.min_odds) }} · šance {{ '%.0f'|format(tg.p_model * 100) }} %</small></span>
+    <span class="nm">{{ v.name }}<small>{{ leagues[v.league].name if v.league in leagues else v.league }}{% if not v.has_model %} · <span class="neg">bez modelu, jen trh</span>{% endif %}{% if v.cz_count %} · české kurzy: {{ v.cz_count }}{% endif %}</small></span>
+    {% if v.cz_best %}<span class="rc"><b>{{ v.cz_best.label }}</b> @ {{ '%.2f'|format(v.cz_best.cz[0]) }} <span class="badge tipb">VSADIT</span><small>{{ v.cz_best.cz[1] }} · EV {{ '%+.1f'|format(v.cz_best.cz_ev * 100) }} %</small></span>
+    {% elif v.verdict == 'CÍL' %}{% set tg = v.rows[v.target] %}<span class="rc"><b>{{ tg.label }}</b> <span class="badge tipb">CÍL</span><small>sázet od kurzu {{ '%.2f'|format(tg.min_odds) }} · šance {{ '%.0f'|format(tg.p_model * 100) }} %</small></span>
     {% else %}<span class="rc"><b>{{ rec.label }}</b> @ {{ '%.2f'|format(rec.best_odds) }} <span class="badge {{ 'tipb' if v.verdict == 'TIP' else ('bad' if v.verdict.startswith('BEZ') else '') }}">{{ v.verdict }}</span><small>EV {{ '%+.1f'|format(rec.ev_pct) }} % · {{ rec.best_book }}</small></span>{% endif %}
     <span class="arr">›</span></summary>
   <div class="mbody">
-  {% if v.verdict == 'CÍL' %}{% set tg = v.rows[v.target] %}<div class="muted" style="margin:8px 0">Tip (cíl): <b>{{ tg.label }}</b> – ověř kurz u kanceláře, sázet od <b>{{ '%.2f'|format(tg.min_odds) }}</b> · férový {{ '%.2f'|format(tg.fair_odds) }}{% if v.target_stake %} · vklad ~{{ '%.0f'|format(v.target_stake) }} {{ cur }}{% endif %}</div>{% endif %}
-  <div class="tablewrap"><table class="mk"><tr><th>Trh</th><th class="num">Model</th><th class="num">Trh (fér.)</th><th class="num">Fér. kurz</th><th class="num">Kurz (medián / česká)</th><th class="num">EV</th><th></th></tr>
-  {% for r in v.rows %}<tr class="{{ 'best' if loop.index0 == v.recommended }}"><td>{{ r.label }}</td>
-    <td class="num">{{ '%.1f'|format(r.p_model * 100) }} %</td>
-    {% if r.status == 'model' %}<td class="num muted">–</td><td class="num">{{ '%.2f'|format(r.fair_odds) }}</td><td class="num muted" colspan="2">sázet od kurzu <b>{{ '%.2f'|format(r.min_odds) }}</b></td>
-    <td><span class="muted">jen model</span></td>
-    {% else %}<td class="num">{{ '%.1f'|format(r.p_market * 100) }} %</td>
-    <td class="num">{{ '%.2f'|format(r.fair_odds) }}</td><td class="num"><b>{{ '%.2f'|format(r.best_odds) }}</b> <span class="muted">{{ r.best_book }}</span></td>
-    <td class="num {{ 'pos' if r.ev_pct > 0 else 'neg' }}">{{ '%+.1f'|format(r.ev_pct) }} %</td>
-    <td>{% if r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VALUE</span>{% else %}<span class="muted">{{ r.note }}</span>{% endif %}</td>{% endif %}</tr>{% endfor %}</table></div>
   {% if tip %}<div class="tipbox"><b>Tip: {{ tip.market }} → {{ tip.selection }}</b>{% if tip.needs_review %} <span class="badge warn">zkontrolovat kurz</span>{% endif %}{% if tip.early %} <span class="badge">časný</span>{% endif %}
     <div class="muted">Sázet jen při kurzu alespoň <b>{{ '%.2f'|format(tip.min_odds) }}</b> · doporučený vklad <b>{{ '%.0f'|format(tip.kelly_stake) }} {{ cur }}</b> · platí do {{ tip.valid_until.strftime('%H:%M') }} UTC</div>
   <form class="row" method="post" action="{{ url_for('ticket_add') }}"><input type="hidden" name="tip_id" value="{{ tip.id }}">
@@ -185,9 +191,25 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
   {% if partners.get(v.name) %}{% set pc = partners[v.name] %}<div class="tipbox alt"><b>Doplnit tiket o:</b>
     {% for lg in pc.legs if lg.match != v.name %}<b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }}{% endfor %}
     <span class="muted">→ celkový kurz {{ '%.2f'|format(pc.odds) }}, šance {{ '%.1f'|format(pc.prob * 100) }} %, EV {{ '%+.1f'|format(pc.ev_pct) }} %, vklad {{ '%.0f'|format(pc.stake) }} {{ cur }}</span></div>{% endif %}{% endif %}
-  <details class="fold det" style="margin-top:8px"><summary>Podrobná analýza a podklady</summary>
+
+  <div class="tablewrap" style="margin-top:8px"><table class="mk"><tr><th>Trh</th><th class="num">Šance</th><th class="num">Fér. kurz</th><th class="num">Sázet od</th><th class="num">Zahraničí</th><th class="num">Česká kancelář</th><th class="num">EV</th><th></th></tr>
+  {% for r in v.main_rows %}{{ mrow(r, v) }}{% endfor %}</table></div>
+  {% if v.more_rows %}<details class="fold"><summary>Další trhy podle modelu ({{ v.more_rows|length }})</summary>
+  <div class="tablewrap"><table class="mk"><tr><th>Trh</th><th class="num">Šance</th><th class="num">Fér. kurz</th><th class="num">Sázet od</th><th class="num">Zahraničí</th><th class="num">Česká kancelář</th><th class="num">EV</th><th></th></tr>
+  {% for r in v.more_rows %}{{ mrow(r, v) }}{% endfor %}</table></div></details>{% endif %}
+
+  <details class="fold" {{ 'open' if not v.cz_count }}><summary>Zadat kurzy z české kanceláře</summary>
+  <form method="post" action="{{ url_for('czech_odds_match') }}" class="czf" data-prefill='{{ v.cz_books|tojson }}'>
+  <input type="hidden" name="match" value="{{ v.name }}"><input type="hidden" name="league" value="{{ v.league }}">
+  <div class="row" style="margin-top:4px"><label style="flex:0 1 200px">Kancelář<select name="book">{% for b in czech_books %}<option value="{{ b }}">{{ b }}</option>{% endfor %}</select></label>
+  <span class="muted" style="flex:1 1 260px">Vyplň jen trhy, které chceš (trh vždy celý). Desetinná čárka i tečka fungují. Po uložení bot zápas hned přepočítá, kredity to nestojí.</span></div>
+  <div class="czgrid">{% for m, sels, names in form_markets %}<fieldset><legend>{{ market_names[m] }}</legend>
+    {% for s in sels %}<label>{{ names[loop.index0] }}<input name="{{ m }}:{{ s }}" inputmode="decimal" autocomplete="off"></label>{% endfor %}</fieldset>{% endfor %}</div>
+  <div class="row"><button class="ok">Uložit kurzy a přepočítat</button></div></form></details>
+
+  <details class="fold det"><summary>Podrobná analýza a podklady</summary>
     {% for sec in v.sections %}<h4>{{ sec.title }}</h4><ul>{% for l in sec.lines %}<li>{{ l }}</li>{% endfor %}</ul>{% endfor %}
-    {% if not v.sections %}<p class="muted">Model nemá pro tento zápas data (stáhni je: tipsbot fetch-nhl / fetch-football).</p>{% endif %}
+    {% if not v.sections %}<p class="muted">Model nemá pro tento zápas data (Nastavení → Aktualizovat data).</p>{% endif %}
     <h4>Absence a zranění</h4>
     {% if v.absences %}<ul>{% for l in v.absences %}<li>{{ l }}</li>{% endfor %}</ul>
     {% else %}<p class="muted">{{ 'Žádné nahlášené absence u těchto týmů.' if v.absence_checked else 'Zdroj absencí nedostupný (u fotbalu zadej API-Football klíč v Nastavení).' }} Sestavy se zveřejňují až těsně před zápasem – model je zatím nezapočítává.</p>{% endif %}
@@ -200,14 +222,19 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 {% for t in orphan_tips %}<div class="card"><b>{{ t.match_name }}</b> – tip {{ t.market }} → {{ t.selection }} @ {{ '%.2f'|format(t.raw_odds) }}
 <form class="row" method="post" action="{{ url_for('tip_cancel', tip_id=t.id) }}"><button class="ghost">Zrušit tip</button></form></div>{% endfor %}
 <script>
-(function(){var f=document.getElementById('flt');if(!f)return;
- f.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var k=b.dataset.f;
+(function(){var f=document.getElementById('flt');
+ if(f)f.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;var k=b.dataset.f;
   f.querySelectorAll('button').forEach(function(x){x.classList.toggle('on',x===b)});
-  document.querySelectorAll('details.match').forEach(function(m){var d=m.dataset.kind;
-   m.style.display=(k=='all'||(k=='tip'&&d=='tip')||(k=='value'&&d!='none'))?'':'none'});
+  document.querySelectorAll('details.match').forEach(function(m){
+   m.style.display=(k=='all'||m.dataset.tags.split(' ').indexOf(k)>=0)?'':'none'});
   document.querySelectorAll('[data-day]').forEach(function(h){var n=h.nextElementSibling,vis=false;
    while(n&&!n.hasAttribute('data-day')){if(n.matches('details.match')&&n.style.display!='none')vis=true;n=n.nextElementSibling}
-   h.style.display=vis?'':'none'});});})();
+   h.style.display=vis?'':'none'});});
+ document.querySelectorAll('form.czf').forEach(function(form){var data=JSON.parse(form.dataset.prefill||'{}'),sel=form.elements.book;
+  var books=Object.keys(data);if(books.length)sel.value=books[0];
+  function fill(){var d=data[sel.value]||{};form.querySelectorAll('.czgrid input').forEach(function(i){i.value=d[i.name]||''})}
+  sel.addEventListener('change',fill);fill();});
+})();
 </script>
 
 {% elif tab == 'tikety' %}
@@ -332,12 +359,17 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 </div>{% endif %}</div>
 
 {% elif tab == 'nastaveni' %}
-<h2>České kurzy (ruční zadání)</h2>
-<div class="card">Jeden řádek na trh: <code>kancelář | Domácí - Hosté | trh | kurzy</code>, např. <code>tipsport | Německo - Itálie | 1X2 | 2.10 3.30 3.40</code> nebo <code>OU_2.5 | 1.90 1.95</code> (over under). Kancelář: tipsport, fortuna, chance, betano, betarena. Kurzy platí 48 h a bot je použije při dalším skenu.
-<form method="post" action="{{ url_for('set_czech_odds') }}"><textarea name="text" rows="5" required style="margin-top:8px"></textarea><div class="row" style="margin-top:8px"><button>Uložit kurzy</button></div></form>
-{% if czech_entries %}<details class="fold" style="margin-top:10px"><summary>Uložené kurzy ({{ czech_entries|length }})</summary><div class="tablewrap"><table><tr><th>Kancelář</th><th>Zápas</th><th>Trh</th><th>Kurzy</th></tr>
-{% for e in czech_entries %}<tr><td>{{ e.book }}</td><td>{{ e.home }} - {{ e.away }}</td><td>{{ e.market }}</td><td>{{ e.odds|join(' · ') }}</td></tr>{% endfor %}</table></div>
-<form method="post" action="{{ url_for('clear_czech_odds') }}"><button class="bad sm">Smazat všechny</button></form></details>{% endif %}</div>
+<h2>Data pro model</h2>
+<div class="card">Stáhne nejnovější výsledky lig, pohárů, reprezentací a NHL (zdarma, trvá zhruba minutu). Dělej to jednou denně před načtením kurzů.
+<form class="row" method="post" action="{{ url_for('refresh_data') }}"><button>Aktualizovat data</button></form></div>
+<h2>České kurzy</h2>
+<div class="card">Kurzy se nejpohodlněji zadávají přímo u zápasu: <b>Přehled → rozbal zápas → Zadat kurzy z české kanceláře</b>. Platí 48 hodin.
+{% if czech_entries %}<details class="fold" style="margin-top:8px"><summary>Uložené kurzy ({{ czech_entries|length }})</summary><div class="tablewrap"><table><tr><th>Kancelář</th><th>Zápas</th><th>Trh</th><th>Kurzy</th></tr>
+{% for e in czech_entries %}<tr><td>{{ e.book }}</td><td>{{ e.home }} - {{ e.away }}</td><td>{{ market_names.get(e.market, e.market) }}</td><td>{{ e.odds|join(' · ') }}</td></tr>{% endfor %}</table></div>
+<form method="post" action="{{ url_for('clear_czech_odds') }}"><button class="bad sm">Smazat všechny</button></form></details>{% endif %}
+<details class="fold" style="margin-top:6px"><summary>Hromadné vložení textem</summary>
+<div class="muted">Jeden řádek na trh: <code>kancelář | Domácí - Hosté | trh | kurzy</code>, např. <code>tipsport | Německo - Itálie | 1X2 | 2.10 3.30 3.40</code>.</div>
+<form method="post" action="{{ url_for('set_czech_odds') }}"><textarea name="text" rows="5" required style="margin-top:8px"></textarea><div class="row" style="margin-top:8px"><button>Uložit kurzy</button></div></form></details></div>
 <h2>Bankroll</h2>
 <div class="card">Aktuální stav: <b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b> · režim: <b>{{ 'testovací' if s.test_mode else 'ostrý' }}</b>
 <form class="row" method="post" action="{{ url_for('deposit') }}"><input type="hidden" name="tab" value="nastaveni">
@@ -353,6 +385,38 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 <form class="row" method="post" action="{{ url_for('set_football_key') }}"><label>Klíč<input name="key" type="password" autocomplete="off" required></label><button>Uložit klíč</button></form></details>
 {% endif %}
 </div></main></body></html>"""
+
+
+MARKET_NAMES = {"1X2": "Výsledek", "DC": "Dvojitá šance", "DNB": "Sázka bez remízy", "OU_1.5": "Góly 1.5",
+                "OU_2.5": "Góly 2.5", "OU_3.5": "Góly 3.5", "BTTS": "Oba týmy dají gól", "TTH_0.5": "Domácí dají gól",
+                "TTA_0.5": "Hosté dají gól"}
+
+
+def _decorate(v, czech_entries) -> None:
+    """Doplni k zapasu ceske kurzy (EV, zda vsadit), hlavni/dalsi trhy a stitky pro filtr."""
+    league = LEAGUES.get(v.league)
+    thr = SETTINGS.value.ev_threshold(league.tier) if league else 0.03
+    best = czechodds.for_match(czech_entries, v.name)
+    for r in v.rows:
+        r.cz = best.get((r.market, r.selection))
+        r.cz_ev = r.p_final * r.cz[0] - 1.0 if r.cz else None
+        good = bool(r.cz) and (r.cz[0] >= r.min_odds if r.status == "model" else r.cz_ev >= thr)
+        r.cz_suspect = good and r.cz_ev > 0.15  # tak velka hrana byva spis chybne opsany kurz
+        r.cz_ok = good and not r.cz_suspect
+    key = {id(v.rows[v.recommended])} | ({id(v.rows[v.target])} if v.target is not None else set())
+    v.main_rows = [r for r in v.rows if r.status != "model" or r.cz or id(r) in key]
+    v.more_rows = [r for r in v.rows if r not in v.main_rows]
+    ok = [r for r in v.rows if r.cz_ok]
+    v.cz_best = max(ok, key=lambda r: r.cz_ev) if ok else None
+    v.cz_count = sum(1 for r in v.rows if r.cz)
+    v.cz_books = {}
+    for b in sorted({e.book for e in czech_entries}):
+        vals = czechodds.for_match([e for e in czech_entries if e.book == b], v.name)
+        if vals:
+            v.cz_books[b] = {f"{m}:{sel}": f"{o:.2f}" for (m, sel), (o, _) in vals.items()}
+    v.tags = (["cz"] if ok else []) + (["tip"] if v.verdict == "TIP" or v.has_tip else [])         + (["cil"] if v.verdict == "CÍL" else []) + (["value"] if v.verdict.startswith("VALUE") else [])
+    if not v.tags:
+        v.tags = ["none"]
 
 
 def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
@@ -421,10 +485,12 @@ def create_app(database_url: str | None = None) -> Flask:
                     ctx_lines = v.absences + ([f"Počasí: {v.weather}"] if v.weather else [])
                     v.post = detail.post_text(v.name, v.local, LEAGUES[v.league].name if v.league in LEAGUES else v.league,
                                               rec.label, rec.best_odds, rec.ev_pct, rec.p_final, rec.p_market, v.sections, ctx_lines)
-                    v.kind = ("tip" if v.verdict in ("TIP", "CÍL") or v.match_id in tips_by_match
-                              else "value" if v.verdict == "VALUE" else "none")
+                    v.has_tip = v.match_id in tips_by_match
                     views.append(v)
         views.sort(key=lambda v: v.kickoff)
+        czech_entries = czechodds.load(led, now)
+        for v in views:
+            _decorate(v, czech_entries)
         local = {v.name: v.local for v in views}
         bank = led.bankroll()
         expo = led.open_exposure(today)
@@ -459,7 +525,11 @@ def create_app(database_url: str | None = None) -> Flask:
             exposure=led.open_exposure(today),
             exposure_cap=s["bankroll"] * SETTINGS.risk.max_daily_exposure_pct,
             today=today.isoformat(),
-            czech_entries=czechodds.load(led, now),
+            czech_entries=czech_entries,
+            czech_books=sorted(czechodds._BOOKS, key=lambda b: (b != "tipsport", b)),
+            form_markets=czechodds.FORM_MARKETS,
+            market_names=MARKET_NAMES,
+            tag_counts={t: sum(t in v.tags for v in views) for t in ("cz", "tip", "cil", "value", "none")},
             kelly_fraction=SETTINGS.risk.kelly_fraction,
             stake_cap=SETTINGS.risk.max_stake_pct,
             pst=paper.stats(picks),
@@ -523,6 +593,32 @@ def create_app(database_url: str | None = None) -> Flask:
                 raise ValueError("; ".join(errors))
             czechodds.add(led, entries, now)
             return f"Uloženo kurzů: {len(entries)}." + (f" Přeskočeno: {'; '.join(errors)}" if errors else "")
+
+        return action(fn, "", tab="nastaveni")
+
+    @app.post("/czech-odds/match")
+    def czech_odds_match():
+        def fn(led: Ledger, _):
+            from .pipeline import scan_all
+
+            f = request.form
+            now = utcnow()
+            entries, errors = czechodds.from_form(f["book"], f["match"], f, now)
+            if not entries:
+                raise ValueError("; ".join(errors) or "Nevyplnil jsi žádný kurz.")
+            czechodds.add(led, entries, now)
+            scan_all(led, [f["league"]], cache_only=True)
+            return (f"Uloženo {len(entries)} trhů ({f['book']}, {f['match']}), zápas přepočítán."
+                    + (f" Přeskočeno: {'; '.join(errors)}" if errors else ""))
+
+        return action(fn, "")
+
+    @app.post("/refresh-data")
+    def refresh_data():
+        def fn(led: Ledger, _):
+            from .pipeline import refresh_data as run_refresh
+
+            return " · ".join(run_refresh(led))
 
         return action(fn, "", tab="nastaveni")
 

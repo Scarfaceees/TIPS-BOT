@@ -220,6 +220,7 @@ def scan_league(
     events: list[oddsapi.Event] | None = None,
     provider: ModelProvider | None = None,
     force: bool = False,
+    cache_only: bool = False,
 ) -> ScanReport:
     """Jeden pruchod jednou soutezi. `events` lze predat primo (testy, vlastni zdroj kurzu)."""
     now = now or utcnow()
@@ -233,7 +234,10 @@ def scan_league(
             report.notes.append(f"preskoceno, dalsi zapas {nxt:%d.%m. %H:%M} UTC")
             return report
         cached = ledger.odds_cache(league)
-        if cached and not force and (now - cached[0]).total_seconds() < settings.odds_api.cache_seconds:
+        if cache_only and not cached:
+            report.notes.append("žádné uložené kurzy, nejdřív načti kurzy")
+            return report
+        if cached and not force and (cache_only or (now - cached[0]).total_seconds() < settings.odds_api.cache_seconds):
             events = oddsapi.parse_events(cached[1], league, settings)
             report.credits_remaining = cached[2]
             report.notes.append(f"kurzy z cache ({int((now - cached[0]).total_seconds() / 60)} min staré, kredity se nespotřebovaly)")
@@ -448,12 +452,14 @@ def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:
 
 
 def scan_all(
-    ledger: Ledger, leagues: list[str] | None = None, settings: Settings = SETTINGS, force: bool = False
+    ledger: Ledger, leagues: list[str] | None = None, settings: Settings = SETTINGS, force: bool = False,
+    cache_only: bool = False,
 ) -> list[ScanReport]:
+    """`cache_only`: prepocet z naposledy stazenych kurzu (napr. po zadani ceskych kurzu), bez kreditu."""
     reports = []
     for league in leagues or list(settings.odds_api.sport_keys):
         try:
-            reports.append(scan_league(league, ledger, settings=settings, force=force))
+            reports.append(scan_league(league, ledger, settings=settings, force=force, cache_only=cache_only))
         except oddsapi.OddsApiError as e:
             rep = ScanReport(league)
             rep.notes.append(str(e))
@@ -464,3 +470,21 @@ def scan_all(
             rep.notes.append(f"chyba skenu: {e!r}")
             reports.append(rep)
     return reports
+
+
+def refresh_data(ledger: Ledger) -> list[str]:
+    """Stahne aktualni data pro modely (ligy, poharty, reprezentace, NHL). Chyba jednoho zdroje nevadi ostatnim."""
+    notes = []
+    steps = [
+        ("ligy", lambda: f"{sum(len(ingestion.fetch_football(lg, seasons=1)) for lg in cups.DOMESTIC)} souborů"),
+        ("poháry", lambda: "; ".join(cups.fetch_cups(ledger.api_football_key(), ledger.football_data_key(), seasons=1)) or "ok"),
+        ("reprezentace", lambda: (nations.download_results(), "ok")[1]),
+        ("NHL", lambda: (nhl_data.download_nhl(), "ok")[1]),
+        ("brankáři NHL", lambda: (nhl_data.download_goalies(), "ok")[1]),
+    ]
+    for name, fn in steps:
+        try:
+            notes.append(f"{name}: {fn()}")
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"{name}: nepodařilo se ({e})")
+    return notes

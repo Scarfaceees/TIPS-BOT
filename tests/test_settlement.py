@@ -38,3 +38,46 @@ def test_auto_settle_and_clv(ledger):
     assert t.closing_odds == pytest.approx(2.0) and t.clv_pct == pytest.approx(10.0)
     notes = settlement.settle_open_tickets(ledger, _df())
     assert t.status == "won" and "won" in notes[0] and t.profit_loss == pytest.approx(120.0)
+
+
+@pytest.mark.parametrize("market,sel,expected", [
+    ("under", "1,5", ("OU_1.5", "under")), ("Počet gólů", "nad 2.5", ("OU_2.5", "over")),
+    ("OU_2.75", "over", ("OU_2.75", "over")), ("BTTS", "ano", ("BTTS", "yes")), ("Oba dají gól", "ne", ("BTTS", "no")),
+    ("1x2", "0", ("1X2", "X")), ("1X2", "1", ("1X2", "1")), ("dvojitá šance", "10", ("DC", "1X")),
+    ("ASIAN_HANDICAP", "home:-0.5", ("ASIAN_HANDICAP", "home:-0.5")),
+])
+def test_normalize_bet(market, sel, expected):
+    assert settlement.normalize_bet(market, sel) == expected
+
+
+def test_grade_understands_manual_entry():
+    assert settlement.grade("under", "3,5", 1, 4) == "lost" and settlement.grade("under", "1,5", 0, 0) == "won"
+
+
+def test_parse_score():
+    assert settlement.parse_score(" 1:4 ") == (1, 4) and settlement.parse_score("2-0") == (2, 0)
+    with pytest.raises(ValueError):
+        settlement.parse_score("1:")
+
+
+def test_settle_with_score_czech_and_english_names(ledger):
+    from tipsbot import paper
+
+    t = ledger.add_ticket(bookmaker="tipsport", odds=1.49, stake=500, match_id="manual:x", market="OU_3.5", selection="under",
+                          match_day=date(2026, 11, 15), match_name="Kypr - Černá Hora")
+    p = paper.add_manual(ledger, league="", name="Cyprus - Montenegro", day="2026-11-15", market="BTTS", selection="no",
+                         book="tipsport", odds=2.18, now=datetime(2026, 11, 15, 9))
+    notes = settlement.settle_with_score(ledger, "Kypr - Černá Hora", date(2026, 11, 15), 1, 4)
+    assert t.status == "lost" and len(notes) == 2
+    done = next(x for x in paper.load(ledger) if x.id == p.id)
+    assert done.result == "lost" and done.score == "1:4"
+    with pytest.raises(ValueError):
+        settlement.settle_with_score(ledger, "Kypr - Černá Hora", date(2026, 11, 15), 1, 4)
+
+
+def test_nothing_to_settle_explains(ledger):
+    assert "žádné otevřené tikety" in settlement.nothing_to_settle(ledger)
+    ledger.add_ticket(bookmaker="tipsport", odds=2.0, stake=10, match_id="m", market="1X2", selection="1",
+                      match_day=date(2026, 11, 15), match_name="A - B")
+    msg = settlement.nothing_to_settle(ledger, date(2026, 10, 6))
+    assert "čeká 1 tiketů" in msg and "06.10.2026" in msg

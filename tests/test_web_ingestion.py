@@ -136,3 +136,20 @@ def test_history_shows_track_record(client):
         c.post(f"/tickets/{tid}/settle", data={"result": res})
     html = c.get("/?tab=historie").get_data(as_text=True)
     assert "3 sázek" in html and "nejdelší série proher 2" in html and "největší propad 200" in html
+
+
+def test_score_entry_settles_ticket(client):
+    c, _ = client
+    c.post("/deposit", data={"amount": "10000", "test": "1"})
+    today = date.today().isoformat()
+    r = c.post("/tickets", data={"match_name": "Kypr - Černá Hora", "match_day": today, "market": "OU", "line": "3,5",
+                                 "selection": "pod", "bookmaker": "tipsport", "odds": "1.49", "stake": "500", "tab": "tikety"})
+    html = r.get_data(as_text=True)
+    assert "OU_3.5 under" in html and "Zadat výsledek zápasu" in html
+    r = c.post("/score", data={"match": f"{today}|Kypr - Černá Hora", "score": "1:4", "tab": "tikety"})
+    assert "lost" in r.get_data(as_text=True) and "9500" in r.get_data(as_text=True)
+    assert c.post("/score", data={"match": f"{today}|Kypr - Černá Hora", "score": "x"}).status_code == 400
+    assert c.post("/tickets", data={"match_name": "A - B", "match_day": today, "market": "OU", "line": "",
+                                    "selection": "over", "bookmaker": "tipsport", "odds": "2", "stake": "10"}).status_code == 400
+    for t in ("prehled", "tikety", "sledovani", "historie", "kalkulacka", "nastaveni", "sazka"):
+        assert c.get(f"/?tab={t}").status_code == 200

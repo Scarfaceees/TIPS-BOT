@@ -93,3 +93,14 @@ def test_calculator(client):
     bad = c.post("/calc", data={"sharp": "2.10 3.40 3.60", "pick": "1", "odds": "2.05", "league": "ENG1"})
     assert "NESÁZET" in bad.get_data(as_text=True)
     assert c.post("/calc", data={"sharp": "abc", "pick": "1", "odds": "2", "league": "ENG1"}).status_code == 400
+
+
+def test_czech_odds_form(client):
+    c, _ = client
+    c.post("/deposit", data={"amount": "10000", "test": "1"})
+    r = c.post("/czech-odds", data={"text": "tipsport | Německo - Itálie | 1X2 | 2.10 3.30 3.40\nspatny radek", "tab": "nastaveni"})
+    html = r.get_data(as_text=True)
+    assert "Uloženo kurzů: 1" in html and "Německo - Itálie" in html
+    assert "Smazat všechny" in c.get("/?tab=nastaveni").get_data(as_text=True)
+    assert "Smazat všechny" not in c.post("/czech-odds/clear", data={"tab": "nastaveni"}).get_data(as_text=True)
+    assert c.post("/czech-odds", data={"text": "x"}).status_code == 400

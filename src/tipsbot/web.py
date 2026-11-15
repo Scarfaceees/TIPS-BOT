@@ -22,7 +22,7 @@ def _local(dt: datetime) -> str:
 from flask import Flask, render_template_string, request, url_for
 from sqlalchemy import select
 
-from . import analysis, combo, detail, devig, risk
+from . import analysis, combo, czechodds, detail, devig, risk
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
@@ -232,6 +232,12 @@ td,th{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}tr:las
 <label>Přidat vklad ({{ cur }})<input name="amount" type="number" step="1" min="1" required></label>
 <label>Režim<select name="test"><option value="1" {{ 'selected' if s.test_mode }}>Testovací (virtuální peníze)</option><option value="0" {{ 'selected' if not s.test_mode }}>Ostrý</option></select></label>
 <button>Uložit</button></form></div>
+<h2>České kurzy (ruční zadání)</h2>
+<div class="card">Jeden řádek na trh: <code>kancelář | Domácí - Hosté | trh | kurzy</code>, např. <code>tipsport | Německo - Itálie | 1X2 | 2.10 3.30 3.40</code> nebo <code>OU_2.5 | 1.90 1.95</code> (over under). Kancelář: tipsport, fortuna, chance, betano, betarena. Kurzy platí 48 h a bot je použije při dalším skenu.
+<form method="post" action="{{ url_for('set_czech_odds') }}"><textarea name="text" rows="6" style="width:100%" required></textarea><br><button>Uložit kurzy</button></form>
+{% if czech_entries %}<table><tr><th>Kancelář</th><th>Zápas</th><th>Trh</th><th>Kurzy</th></tr>
+{% for e in czech_entries %}<tr><td>{{ e.book }}</td><td>{{ e.home }} - {{ e.away }}</td><td>{{ e.market }}</td><td>{{ e.odds|join(' · ') }}</td></tr>{% endfor %}</table>
+<form method="post" action="{{ url_for('clear_czech_odds') }}"><button>Smazat všechny</button></form>{% endif %}</div>
 <h2>Informace o zápasech (zdarma)</h2>
 <div class="card">Klíč API-Football (zranění a absence fotbalistů, města stadionů pro počasí; zdarma 100 požadavků/den, registrace na api-football.com): <b>{{ 'uložen' if has_football_key else 'chybí' }}</b>
 <form class="row" method="post" action="{{ url_for('set_football_key') }}"><label>Klíč<input name="key" type="password" autocomplete="off" required></label><button>Uložit klíč</button></form></div>
@@ -308,6 +314,7 @@ def create_app(database_url: str | None = None) -> Flask:
             exposure=led.open_exposure(today),
             exposure_cap=s["bankroll"] * SETTINGS.risk.max_daily_exposure_pct,
             today=today.isoformat(),
+            czech_entries=czechodds.load(led, now),
             has_key=bool(led.api_key()),
             has_football_key=bool(led.api_football_key()),
             scan_leagues=list(SETTINGS.odds_api.sport_keys),
@@ -354,6 +361,22 @@ def create_app(database_url: str | None = None) -> Flask:
             led.set_api_football_key(request.form["key"])
 
         return action(fn, "Klíč API-Football uložen.", tab="nastaveni")
+
+    @app.post("/czech-odds")
+    def set_czech_odds():
+        def fn(led: Ledger, _):
+            now = utcnow()
+            entries, errors = czechodds.parse_text(request.form["text"], now)
+            if errors and not entries:
+                raise ValueError("; ".join(errors))
+            czechodds.add(led, entries, now)
+            return f"Uloženo kurzů: {len(entries)}." + (f" Přeskočeno: {'; '.join(errors)}" if errors else "")
+
+        return action(fn, "", tab="nastaveni")
+
+    @app.post("/czech-odds/clear")
+    def clear_czech_odds():
+        return action(lambda led, _: czechodds.save(led, []), "České kurzy smazány.", tab="nastaveni")
 
     @app.post("/resume")
     def resume():

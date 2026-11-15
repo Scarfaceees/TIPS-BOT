@@ -349,7 +349,7 @@ table.bets td{vertical-align:middle}
 
 {% elif tab == 'overeni' %}
 <div class="card"><b>Zpětný test modelů</b>
-<div class="muted">Bot projde poslední dvě sezóny zápas po zápase: model se vždy učí jen z dřívějších výsledků a jeho odhad se porovná se skutečností,
+<div class="muted">Bot projde poslední tři sezóny zápas po zápase: model se vždy učí jen z dřívějších výsledků a jeho odhad se porovná se skutečností,
 se zavíracím kurzem Pinnacle a s druhým nezávislým modelem. Čím nižší číslo (log-loss), tím přesnější odhad. Rozdíl pod 0,005 je v šumu.</div>
 {% if bt_running %}<div class="note-inline" style="margin-top:8px">Test právě běží na pozadí (spuštěn {{ bt_running }}). Trvá zhruba 25 minut, pak obnov stránku.</div>
 {% else %}<form class="row" method="post" action="{{ url_for('backtest_start') }}"><button>Spustit zpětný test (cca 25 minut)</button></form>{% endif %}</div>

@@ -351,8 +351,8 @@ table.bets td{vertical-align:middle}
 <div class="card"><b>Zpětný test modelů</b>
 <div class="muted">Bot projde poslední dvě sezóny zápas po zápase: model se vždy učí jen z dřívějších výsledků a jeho odhad se porovná se skutečností,
 se zavíracím kurzem Pinnacle a s druhým nezávislým modelem. Čím nižší číslo (log-loss), tím přesnější odhad. Rozdíl pod 0,005 je v šumu.</div>
-{% if bt_running %}<div class="note-inline" style="margin-top:8px">Test právě běží na pozadí (spuštěn {{ bt_running }}). Trvá zhruba 15 minut, pak obnov stránku.</div>
-{% else %}<form class="row" method="post" action="{{ url_for('backtest_start') }}"><button>Spustit zpětný test (cca 15 minut)</button></form>{% endif %}</div>
+{% if bt_running %}<div class="note-inline" style="margin-top:8px">Test právě běží na pozadí (spuštěn {{ bt_running }}). Trvá zhruba 25 minut, pak obnov stránku.</div>
+{% else %}<form class="row" method="post" action="{{ url_for('backtest_start') }}"><button>Spustit zpětný test (cca 25 minut)</button></form>{% endif %}</div>
 {% if bt %}<div class="muted" style="margin:10px 0 2px">Poslední výpočet: {{ bt.when }} · {{ bt.seasons }} sezóny</div>
 <div class="boxes" style="grid-template-columns:repeat(auto-fill,minmax(430px,1fr))">{% for g in bt.groups %}<div class="box"><h4>{{ g.name }}</h4><div class="muted">{{ g.note }}</div>
 <table>{% for r in g.rows %}{% if loop.changed(r.market) %}<tr><th>{{ market_names.get(r.market, r.market) }} <span class="muted">({{ r.n }} zápasů)</span></th><th class="num">Log-loss</th><th class="num">Brier</th></tr>{% endif %}
@@ -714,7 +714,7 @@ def create_app(database_url: str | None = None) -> Flask:
             if database_url:
                 cmd[3:3] = ["--db", database_url]
             subprocess.Popen(cmd)  # noqa: S603 - vlastni prikaz bota, bezi na pozadi
-            return "Zpětný test spuštěn na pozadí. Za zhruba 15 minut obnov stránku."
+            return "Zpětný test spuštěn na pozadí. Za zhruba 25 minut obnov stránku."
 
         return action(fn, "", tab="overeni")
 

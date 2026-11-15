@@ -345,7 +345,7 @@ def _group(name: str, note: str, rows: list[dict]) -> dict:
     return {"name": name, "note": note, "rows": rows}
 
 
-def run_all(seasons: int = 2, settings: Settings = SETTINGS, progress=print) -> dict:
+def run_all(seasons: int = 3, settings: Settings = SETTINGS, progress=print) -> dict:
     """Zpetny test vsech modelu: ligy a reprezentace proti zaviracim kurzum a druhemu modelu, NHL proti cetnostem."""
     from dataclasses import replace
     from datetime import date, datetime

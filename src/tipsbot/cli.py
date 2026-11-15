@@ -90,7 +90,7 @@ def _parser() -> argparse.ArgumentParser:
     bt.add_argument("--seasons", type=int, default=3, help="pocet testovanych sezon")
     bt.add_argument("--xi", type=float, nargs="*", help="vyzkousi vic hodnot casoveho utlumu, napr. --xi 0.002 0.0038 0.006")
     vf = sub.add_parser("verify", help="zpetny test vsech modelu (ligy, reprezentace, NHL), vysledek se ulozi pro panel")
-    vf.add_argument("--seasons", type=int, default=2)
+    vf.add_argument("--seasons", type=int, default=3)
     cal = sub.add_parser("calibrate", help="zkalibruje fotbalovy model a ulozi korekci pro dane ligy")
     cal.add_argument("--league", required=True, help="klic souteze nebo 'all'")
     cal.add_argument("--seasons", type=int, default=3)

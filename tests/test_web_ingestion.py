@@ -117,3 +117,10 @@ def test_paper_tab_flow(client):
     assert "+1.10" in html
     assert c.post("/paper", data={"name": "x", "day": "2026-11-20", "market": "OU_2.5", "selection": "1", "book": "t", "odds": "2"}).status_code == 400
     assert c.get("/?tab=sledovani").status_code == 200
+
+
+def test_quick_value_calculator_rendered(client):
+    c, _ = client
+    c.post("/deposit", data={"amount": "10000", "test": "1"})
+    html = c.get("/?tab=kalkulacka").get_data(as_text=True)
+    assert "Rychlá value kalkulačka" in html and "K=0.125" in html and "CAP=0.02" in html

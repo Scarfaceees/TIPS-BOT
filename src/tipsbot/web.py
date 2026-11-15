@@ -203,6 +203,36 @@ td,th{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left}tr:las
   {% if c.result.needs_review %}<div class="muted" style="margin-top:6px">Neobvykle vysoké EV – zkontroluj, že kurzy sedí.</div>{% endif %}
 </div>{% endif %}</div>
 
+<h2>Rychlá value kalkulačka</h2>
+<div class="card"><div class="muted">Zadej kurz a svůj odhad pravděpodobnosti (nejdřív odhad, až potom se dívej na kurz). Počítá se přímo v prohlížeči.</div>
+<div class="grid2" style="margin-top:12px">
+  <label>Formát kurzu<select id="vf"><option value="dec">Decimální (2.50)</option><option value="frac">Zlomkový (3/2)</option><option value="us">Americký (+150 / -200)</option></select></label>
+  <label>Kurz<input id="vo" value="1.48"></label>
+  <label>Můj odhad pravděpodobnosti (%)<input id="vp" type="number" step="0.1" min="0.1" max="99.9" value="71"></label>
+</div><div id="vout" class="kv" style="margin-top:12px"></div></div>
+<script>
+(function(){
+ var K={{ kelly_fraction }}, CAP={{ stake_cap }}, BANK={{ '%.0f'|format(s.bankroll) }}, CUR="{{ cur }}";
+ function dec(){var f=document.getElementById('vf').value,v=document.getElementById('vo').value.trim().replace(',','.');
+  if(f=='dec')return parseFloat(v);
+  if(f=='frac'){var a=v.split('/');return a.length==2?1+parseFloat(a[0])/parseFloat(a[1]):NaN;}
+  var n=parseFloat(v);return n>0?1+n/100:1+100/Math.abs(n);}
+ function frac(d){var b=d-1,best=[1,1,9];for(var q=1;q<=40;q++){var pn=Math.round(b*q),e=Math.abs(pn/q-b);if(e<best[2]-1e-9)best=[pn,q,e];if(e<1e-9)break;}
+  var g=function(a,c){return c?g(c,a%c):a},k=g(best[0],best[1]);return (best[0]/k)+'/'+(best[1]/k);}
+ function run(){var d=dec(),p=parseFloat(document.getElementById('vp').value)/100,o=document.getElementById('vout');
+  if(!(d>1)||!(p>0&&p<1)){o.innerHTML='<span>Zadej platný kurz a pravděpodobnost.</span>';return;}
+  var ev=p*d-1,imp=1/d,b=d-1,kelly=(b*p-(1-p))/b,stake=Math.max(0,Math.min(kelly*K,CAP))*BANK;
+  var cls=ev>0?'pos':'neg',h=function(l,v){return '<span>'+l+' <b>'+v+'</b></span>'};
+  o.innerHTML=h('Hodnota (EV)','<span class="'+cls+'">'+(ev>=0?'+':'')+(ev*100).toFixed(2)+' %</span>')+
+   h('Implikovaná šance',(imp*100).toFixed(2)+' %')+h('Férový kurz podle odhadu',(1/p).toFixed(2))+
+   h('Decimální / zlomkový',d.toFixed(2)+' / '+frac(d))+h('Výhra / 100 '+CUR,(b*100).toFixed(2))+h('Výplata / 100 '+CUR,(d*100).toFixed(2))+
+   h('Plný Kelly',(Math.max(kelly,0)*100).toFixed(1)+' %')+h('Vklad bota (1/8 Kelly, strop 2 %)',ev>0?stake.toFixed(0)+' '+CUR:'nesázet')+
+   (ev>0.15?'<div class="muted">Hrana nad 15 % je podezřelá, odhad pravděpodobnosti raději ověř.</div>':'')+
+   '<div class="muted">Odhad 55 % může být ve skutečnosti 51–59 %. Sázej jen, když hrana přesahuje nejistotu odhadu i marži.</div>';}
+ ['vf','vo','vp'].forEach(function(i){document.getElementById(i).addEventListener('input',run);});run();
+})();
+</script>
+
 {% elif tab == 'sazka' %}
 <h2>Zapsat sázku ručně</h2>
 <div class="card"><div class="muted">Pro sázky, které nevznikly z tipu bota.</div>
@@ -348,6 +378,8 @@ def create_app(database_url: str | None = None) -> Flask:
             exposure_cap=s["bankroll"] * SETTINGS.risk.max_daily_exposure_pct,
             today=today.isoformat(),
             czech_entries=czechodds.load(led, now),
+            kelly_fraction=SETTINGS.risk.kelly_fraction,
+            stake_cap=SETTINGS.risk.max_stake_pct,
             pst=paper.stats(picks),
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],

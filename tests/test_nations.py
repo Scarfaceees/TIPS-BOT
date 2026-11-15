@@ -61,3 +61,13 @@ def test_goal_markets_shrink_towards_base_rate():
     out = nations.shrink_goal_markets(probs, 0.5)
     assert 0.496 < out["OU_2.5:over"] < 0.80 and abs(out["OU_2.5:over"] + out["OU_2.5:under"] - 1) < 1e-9
     assert out["BTTS:yes"] > 0.10 and out["1X2:1"] == 0.6
+
+
+def test_goal_base_rates_and_custom_base():
+    import pandas as pd
+
+    df = pd.DataFrame({"home_goals": [2, 0, 1, 3], "away_goals": [1, 0, 1, 0]})
+    base = nations.goal_base_rates(df)
+    assert base["OU_2.5:over"] == 0.5 and base["BTTS:yes"] == 0.5 and base["TTA_0.5:over"] == 0.5
+    out = nations.shrink_goal_markets({"OU_2.5:over": 0.9, "OU_2.5:under": 0.1}, 0.5, base)
+    assert out["OU_2.5:over"] == 0.7 and abs(out["OU_2.5:under"] - 0.3) < 1e-9

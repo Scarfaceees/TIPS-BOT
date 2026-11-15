@@ -37,6 +37,8 @@ _ODDS_COLUMNS = {
     "max_1": ("MaxH", "BbMxH"),
     "max_x": ("MaxD", "BbMxD"),
     "max_2": ("MaxA", "BbMxA"),
+    "sharp_o25": ("PC>2.5", "P>2.5", "BbAv>2.5"),  # Pinnacle na goly: zaviraci, jinak predzapasovy
+    "sharp_u25": ("PC<2.5", "P<2.5", "BbAv<2.5"),
 }
 
 

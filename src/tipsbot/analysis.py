@@ -26,6 +26,7 @@ class Row:
     status: str  # "tip" | "value" | "none"
     note: str = ""
     min_odds: float = 0.0  # u trhu bez kurzu: od jakeho kurzu se vyplati sazet
+    p_second: float | None = None  # druhy model (penaltyblog) jako kontrola; None = neni k dispozici
 
 
 @dataclass
@@ -81,6 +82,7 @@ def build_view(
     now: datetime,
     model: dict[str, float] | None = None,
     settings: Settings = SETTINGS,
+    second: dict[str, float] | None = None,
 ) -> MatchView | None:
     if not cands:
         return None
@@ -105,13 +107,17 @@ def build_view(
             status, note = "none", ", ".join(a.reasons)
         view.rows.append(
             Row(c.market, c.selection, label(c.market, c.selection, home, away), c.p_model, c.p_market, a.prob,
-                1.0 / c.p_market, best.odds, best.bookmaker, a.ev * 100.0, status, note)
+                1.0 / c.p_market, best.odds, best.bookmaker, a.ev * 100.0, status, note,
+                p_second=(second or {}).get(f"{c.market}:{c.selection}"))
         )
     if not view.rows:
         return None
     n_priced = len(view.rows)
     if model:
-        view.rows += model_rows(model, {(r.market, r.selection) for r in view.rows}, home, away, thr, settings)
+        extra = model_rows(model, {(r.market, r.selection) for r in view.rows}, home, away, thr, settings)
+        for r in extra:
+            r.p_second = (second or {}).get(f"{r.market}:{r.selection}")
+        view.rows += extra
     valued = [i for i, r in enumerate(view.rows[:n_priced]) if r.status != "none"]
     lo, hi = settings.tickets.target_prob_min, settings.tickets.target_prob_max
     cands = [i for i in range(n_priced, len(view.rows)) if lo <= view.rows[i].p_model <= hi]

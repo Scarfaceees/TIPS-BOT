@@ -65,16 +65,27 @@ GOAL_BASE_RATES = {
 }
 
 
-def shrink_goal_markets(probs: dict[str, float], k: float) -> dict[str, float]:
+def goal_base_rates(df: pd.DataFrame) -> dict[str, float]:
+    """Podily vysledku golovych trhu v danych zapasech (stejne klice jako GOAL_BASE_RATES)."""
+    hg, ag = df["home_goals"], df["away_goals"]
+    out = {f"OU_{line:g}:over": float((hg + ag > line).mean()) for line in (1.5, 2.5, 3.5)}
+    out["BTTS:yes"] = float(((hg > 0) & (ag > 0)).mean())
+    for line in (0.5, 1.5, 2.5):
+        out[f"TTH_{line:g}:over"] = float((hg > line).mean())
+        out[f"TTA_{line:g}:over"] = float((ag > line).mean())
+    return out
+
+
+def shrink_goal_markets(probs: dict[str, float], k: float, base: dict[str, float] | None = None) -> dict[str, float]:
     """Trhy na goly (over/under, oba skoruji, tymove totaly) se pritahnou k prumeru reprezentaci.
 
     Zpetny test (975 zapasu): model v prumeru sedi, ale jeho predikce jsou prilis extremni
     (predpoved 24 % -> skutecnost 35 %, predpoved 78 % -> skutecnost 64 %; sklon cca 0,54)
     a nerozlisuje lepe nez konstantni sazka. Proto k < 1."""
     out = dict(probs)
-    for key, base in GOAL_BASE_RATES.items():
+    for key, rate in (base or GOAL_BASE_RATES).items():
         if key in out:
-            p = base + k * (out[key] - base)
+            p = rate + k * (out[key] - rate)
             out[key] = p
             other = key.replace(":over", ":under").replace(":yes", ":no")
             out[other] = 1.0 - p

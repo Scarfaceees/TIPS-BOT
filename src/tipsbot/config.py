@@ -112,9 +112,11 @@ class ValueConfig:
     max_odds: float = 4.20
     # Vaha modelu pri michani s trzni ferovou linii; zbytek je trh.
     model_weight: float = 0.50
-    # Vaha modelu pro jednotlive souteze (odhad, ne zmereno): model reprezentaci je slabsi nez trh, dokud
-    # se z ulozenych predikci (tipsbot model-check) nezjisti lepsi hodnota.
-    league_model_weight: dict[str, float] = field(default_factory=lambda: {"UNL": 0.25})
+    # Vaha modelu pro jednotlive souteze. Ligy: zpetny test 11/2026 (4 674 zapasu, dve sezony) - jakakoli
+    # vaha modelu zhorsuje odhad proti zaviraci i predzapasove linii Pinnacle, proto jen mala (model slouzi
+    # hlavne jako kontrola). Reprezentace: odhad, kurzy k overeni nejsou. NHL a pohary: neovereno, vychozi vaha.
+    league_model_weight: dict[str, float] = field(default_factory=lambda: {
+        "UNL": 0.25, "ENG1": 0.10, "GER1": 0.10, "ESP1": 0.10, "ITA1": 0.10, "FRA1": 0.10, "POR1": 0.10})
     # EV nad touto hranici je podezrele (chyba dat/kurzu) - tip se jen oznaci k rucni kontrole.
     ev_suspicious: float = 0.15
     # Model a trh se nesmi rozchazet o vic nez tolik (absolutne v pravdepodobnosti).
@@ -182,6 +184,9 @@ class FootballModelConfig:
     national_xi: float = 0.0019
     national_history_seasons: int = 4
     national_goal_shrink: float = 0.5  # trhy na goly se pritahuji k prumeru (viz nations.shrink_goal_markets)
+    # Ligy: model golove trhy prestreluje (predpoved 32 % over 2.5 -> skutecnost 42 %, 71 % -> 64 %). Stazeni
+    # napul k prumeru ligy snizilo log-loss z 0,6985 na 0,6828 (bez modelu 0,6922), stabilne v obou pulkach.
+    league_goal_shrink: float = 0.5
 
 
 @dataclass(frozen=True)

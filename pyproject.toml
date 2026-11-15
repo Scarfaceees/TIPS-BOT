@@ -11,6 +11,7 @@ dependencies = ["numpy", "pandas", "scipy", "SQLAlchemy", "requests", "flask", "
 
 [project.optional-dependencies]
 dev = ["pytest"]
+second = ["penaltyblog"]  # druhy pohled na fotbal (volitelne)
 
 [project.scripts]
 tipsbot = "tipsbot.cli:main"

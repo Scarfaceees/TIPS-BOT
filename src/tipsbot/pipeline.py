@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, teamreport
+from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, secondopinion, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl
 from .names import match_team, nhl_abbr
@@ -111,6 +111,8 @@ class ModelProvider:
         self.scales: dict[str, tuple[float, float]] = {}  # match_id -> nasobky golu z kontextu (fotbal)
         self.df = None
         self.scalers = None
+        self.second = None  # druhy pohled (penaltyblog), jen ligy a reprezentace
+        self.goal_base: dict[str, float] | None = None  # prumery ligy, ke kterym se stahuji golove trhy
         try:
             if LEAGUES[league].sport is Sport.NHL:
                 try:
@@ -124,6 +126,7 @@ class ModelProvider:
                               max_history_seasons=settings.football.national_history_seasons)
                 self.df = nations.load_international(neutral=True)
                 self.params = football.fit(self.df, today, cfg=cfg)
+                self.second = secondopinion.fit(self.df, today, cfg.xi, cfg.max_history_seasons)
             elif league in cups.CUP_API_FOOTBALL_IDS:
                 self.params, self.df, self.league_offsets = _fit_cup_model(today, settings)
             else:
@@ -131,6 +134,10 @@ class ModelProvider:
                 self.scalers = calibration.load_scalers(calibration_path(league, settings))
                 start = date(ingestion.current_season_start_year(today), 7, 1)
                 self.params = football.fit(df, today, season_start=start, cfg=settings.football)
+                self.second = secondopinion.fit(df, today, settings.football.xi, settings.football.max_history_seasons)
+                recent = df[(df["date"] < today) & (df["date"] >= today - timedelta(days=730))]
+                if len(recent) >= 200:
+                    self.goal_base = nations.goal_base_rates(recent)
         except (FileNotFoundError, ValueError) as e:
             self.note = f"model neni k dispozici ({e}); pouzita jen ferova linie trhu"
 
@@ -144,6 +151,8 @@ class ModelProvider:
             probs = football.market_probabilities(self.params, home, away, self.scales.get(ev.match_id, (1.0, 1.0)))
             if self.league == "UNL":
                 probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
+            elif self.goal_base:
+                probs = nations.shrink_goal_markets(probs, self.settings.football.league_goal_shrink, self.goal_base)
             return apply_calibration(probs, self.scalers) if self.scalers else probs
         if self.ratings is not None:
             home, away = nhl_abbr(ev.home), nhl_abbr(ev.away)
@@ -157,6 +166,20 @@ class ModelProvider:
             )
         return None
 
+
+    def second_opinion(self, ev: oddsapi.Event) -> dict[str, float] | None:
+        """Pravdepodobnosti druheho modelu pro stejny zapas (None, kdyz neni k dispozici)."""
+        if self.second is None or self.params is None:
+            return None
+        home, away = match_team(ev.home, self.params.teams), match_team(ev.away, self.params.teams)
+        if not home or not away:
+            return None
+        probs = secondopinion.probabilities(self.second, home, away)
+        if probs and self.league == "UNL":  # stejne stazeni golovych trhu jako u naseho modelu
+            probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
+        elif probs and self.goal_base:
+            probs = nations.shrink_goal_markets(probs, self.settings.football.league_goal_shrink, self.goal_base)
+        return probs
 
     def sections(self, ev: oddsapi.Event, probs: dict[str, float] | None) -> list[dict]:
         """Podrobny rozbor zapasu z dat modelu (prazdny, kdyz model chybi)."""
@@ -281,6 +304,7 @@ def scan_league(
     cands_by_match: dict[str, list[Candidate]] = {}
     models_by_match: dict[str, bool] = {}
     model_by_match: dict[str, dict | None] = {}
+    second_by_match: dict[str, dict | None] = {}
     sections_by_match: dict[str, list] = {}
     for ev in events:
         model = provider.probabilities(ev)
@@ -290,6 +314,7 @@ def scan_league(
         cands_by_match[ev.match_id] = cands
         models_by_match[ev.match_id] = model is not None
         model_by_match[ev.match_id] = model
+        second_by_match[ev.match_id] = provider.second_opinion(ev) if model and hasattr(provider, "second_opinion") else None
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
     modelcheck.log_predictions(ledger, league, {m: c for m, c in cands_by_match.items() if models_by_match[m]}, now)
@@ -344,7 +369,8 @@ def scan_league(
     views = []
     for mid, cands in cands_by_match.items():
         tips_here = [t for t in ledger.open_tips() if t.match_id == mid]
-        v = analysis.build_view(cands, tips_here, models_by_match.get(mid, False), now, model=model_by_match.get(mid), settings=settings)
+        v = analysis.build_view(cands, tips_here, models_by_match.get(mid, False), now, model=model_by_match.get(mid), settings=settings,
+                                second=second_by_match.get(mid))
         if v:
             ev = by_id[mid]
             v.sections = sections_by_match.get(mid, [])

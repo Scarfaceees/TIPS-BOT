@@ -46,31 +46,57 @@ def walk_forward(
     start,
     refit_days: int = 7,
     settings: Settings = SETTINGS,
+    second: bool = False,
+    cfg=None,
+    goal_shrink: float | None = None,
+    only=None,
+    goal_base: dict[str, float] | None = None,
 ) -> pd.DataFrame:
-    """Predikce 1X2 pro zapasy od `start`, model se odhaduje jen z drivejsich zapasu.
+    """Predikce 1X2 a over 2.5 pro zapasy od `start`, model se odhaduje jen z drivejsich zapasu.
 
-    Vraci puvodni radky doplnene o p1, px, p2. Volitelne sloupce se zachovaji
-    (napr. kurzy: sharp_1, sharp_x, sharp_2, odds_1, odds_x, odds_2).
+    Vraci puvodni radky doplnene o p1, px, p2, p_over. Volitelne sloupce se zachovaji
+    (napr. kurzy: sharp_1, sharp_x, sharp_2, odds_1, odds_x, odds_2). `second` prida druhy
+    model (penaltyblog) jako q1, qx, q2, q_over. `cfg` = jine nastaveni modelu (reprezentace),
+    `goal_shrink` = stazeni golovych trhu k prumeru jako u reprezentaci. `only(df)` vybere,
+    ktere zapasy se predpovidaji (model se dal uci ze vsech). `goal_base` = prumery, ke kterym
+    se golove trhy stahuji (vychozi: reprezentace).
     """
+    from . import nations, secondopinion
+
+    cfg = cfg or settings.football
+    other = None
     df = matches.copy()
     df["date"] = pd.to_datetime(df["date"]).dt.date
     start = pd.Timestamp(start).date()
     test = df[df["date"] >= start].sort_values("date")
+    if only is not None:
+        test = test[only(test)]
     rows = []
     params, fitted_on = None, None
     for d, day in test.groupby("date", sort=True):
         if params is None or (d - fitted_on) >= timedelta(days=refit_days):
             try:
-                params, fitted_on = football.fit(df, d, cfg=settings.football), d
+                params, fitted_on = football.fit(df, d, cfg=cfg), d
             except football.ModelError:
                 continue
+            if second:
+                other = secondopinion.fit(df, d, cfg.xi, cfg.max_history_seasons)
         for _, r in day.iterrows():
             try:
                 m = football.match_matrix(params, r["home"], r["away"])
             except football.ModelError:
                 continue
             p1, px, p2 = football.probs_1x2(m)
-            rows.append({**r.to_dict(), "p1": p1, "px": px, "p2": p2})
+            over = football.prob_over(m, 2.5)
+            if goal_shrink is not None:
+                over = nations.shrink_goal_markets({"OU_2.5:over": over}, goal_shrink, goal_base)["OU_2.5:over"]
+            row = {**r.to_dict(), "p1": p1, "px": px, "p2": p2, "p_over": over}
+            q = secondopinion.probabilities(other, r["home"], r["away"], bool(r.get("neutral", False))) if second else None
+            if q and goal_shrink is not None:
+                q = nations.shrink_goal_markets(q, goal_shrink, goal_base)
+            if q:
+                row.update(q1=q["1X2:1"], qx=q["1X2:X"], q2=q["1X2:2"], q_over=q["OU_2.5:over"])
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -190,3 +216,176 @@ def calibrate(preds: pd.DataFrame, min_samples: int = 300) -> tuple[dict, float,
     after = float(np.mean([calibration.brier_score(cal[:, k], y[:, k]) for k in range(3)]))
     full = calibration.fit_1x2_scalers(*cols, res, min_samples)
     return full, before, after
+
+
+def _scores(p: np.ndarray, res: np.ndarray) -> tuple[float, float]:
+    """(log-loss, Brier) pro matici pravdepodobnosti a indexy skutecnych vysledku."""
+    p = np.clip(p / p.sum(axis=1, keepdims=True), 1e-9, 1.0)
+    y = np.eye(p.shape[1])[res]
+    return float(-np.mean(np.log(p[np.arange(len(p)), res]))), float(np.mean((p - y) ** 2))
+
+
+def _fair(rows: np.ndarray) -> np.ndarray:
+    out = np.full(rows.shape, np.nan)
+    for i, odds in enumerate(rows):
+        if np.isnan(odds).any():
+            continue
+        try:
+            out[i] = devig.fair_line(list(odds)).probs
+        except (devig.DevigError, ValueError):
+            pass
+    return out
+
+
+def _pair(a: np.ndarray) -> np.ndarray:
+    """Dvoucestny trh je ulozen jednim sloupcem (over); druha strana je doplnek."""
+    return np.column_stack([a[:, 0], 1.0 - a[:, 0]]) if a.shape[1] == 1 else a
+
+
+NO_MODEL, OURS, SECOND, BOTH, MARKET, BLEND = (
+    "bez modelu (jen četnosti)", "náš model", "druhý model (penaltyblog)", "průměr obou modelů",
+    "zavírací kurz (trh)", "směs našeho modelu a trhu")
+
+
+def compare(preds: pd.DataFrame, weight: float = SETTINGS.value.model_weight) -> list[dict]:
+    """Srovnani zdroju na stejnych zapasech: nas model, druhy model, jejich prumer, zaviraci trh, smes modelu a trhu.
+
+    Radky {"market", "source", "n", "logloss", "brier"}; v ramci trhu se pocita jen na zapasech,
+    kde jsou vsechny dostupne zdroje. Nizsi cislo je lepsi.
+    """
+    out: list[dict] = []
+    if len(preds) == 0:
+        return out
+    hg, ag = preds["home_goals"].to_numpy(), preds["away_goals"].to_numpy()
+    specs = (
+        ("1X2", np.where(hg > ag, 0, np.where(hg == ag, 1, 2)), ["p1", "px", "p2"], ["q1", "qx", "q2"],
+         ["sharp_1", "sharp_x", "sharp_2"]),
+        ("OU_2.5", np.where(hg + ag > 2.5, 0, 1), ["p_over"], ["q_over"], ["sharp_o25", "sharp_u25"]),
+    )
+    for market, res, pcols, qcols, ocols in specs:
+        if not set(pcols) <= set(preds.columns):
+            continue
+        src = {OURS: _pair(preds[pcols].to_numpy(dtype=float))}
+        if set(qcols) <= set(preds.columns):
+            src[SECOND] = _pair(preds[qcols].to_numpy(dtype=float))
+            src[BOTH] = (src[OURS] + src[SECOND]) / 2
+        if set(ocols) <= set(preds.columns):
+            mk = _fair(preds[ocols].to_numpy(dtype=float))
+            if (~np.isnan(mk).any(axis=1)).sum() >= 30:
+                src[MARKET] = mk
+                src[BLEND] = weight * src[OURS] + (1 - weight) * mk
+        ok = ~np.any([np.isnan(a).any(axis=1) for a in src.values()], axis=0)
+        if ok.sum() < 30:
+            continue
+        freq = np.bincount(res[ok], minlength=src[OURS].shape[1]) / ok.sum()
+        src = {NO_MODEL: np.tile(freq, (len(res), 1)), **src}
+        for name, a in src.items():
+            ll, br = _scores(a[ok], res[ok])
+            out.append({"market": market, "source": name, "n": int(ok.sum()), "logloss": ll, "brier": br})
+    return out
+
+
+def nhl_walk_forward(df: pd.DataFrame, seasons: int = 2, settings: Settings = SETTINGS) -> pd.DataFrame:
+    """Predikce NHL po dnech: sily tymu jen z drivejsich zapasu, bez brankaru a bez ukotveni na trh
+    (historicke kurzy ani brankari po dnech v datech nejsou). Zapasy rozhodnute v najezdech maji
+    v datech shodne skore a z vyhodnoceni viteze se vynechavaji."""
+    from . import nhl_data
+    from .models import nhl
+
+    last = int(df["season"].max())
+    home = df[(df["home_or_away"] == "HOME") & (df["season"] > last - seasons)]
+    hist = df[df["season"] >= last - seasons - 1]
+    rows = []
+    for day, games in home.groupby("date", sort=True):
+        try:
+            ratings = nhl_data.NHLRatings(hist, day, settings.nhl)
+        except ValueError:
+            continue
+        for g in games.itertuples(index=False):
+            ctx = ratings.context(g.team, g.opposingTeam, day)
+            if ctx is None:
+                continue
+            lam_h, lam_a = nhl.expected_goals(ctx, settings.nhl)
+            sim = nhl.simulate(lam_h, lam_a, settings.nhl, np.random.default_rng(int(g.gameId)))
+            rows.append({"date": day, "home": g.team, "away": g.opposingTeam, "home_goals": int(g.goalsFor),
+                         "away_goals": int(g.goalsAgainst), "p_home": sim["MONEYLINE:home"],
+                         "p_over55": sim["OU_5.5:over"], "p_over65": sim["OU_6.5:over"], "exp_total": lam_h + lam_a})
+    return pd.DataFrame(rows)
+
+
+def nhl_compare(preds: pd.DataFrame) -> list[dict]:
+    """Model NHL proti odhadu bez modelu (cetnosti). Kurzy v datech nejsou, proto bez srovnani s trhem."""
+    out: list[dict] = []
+    if len(preds) == 0:
+        return out
+    hg, ag = preds["home_goals"].to_numpy(), preds["away_goals"].to_numpy()
+    total = hg + ag + (hg == ag)  # najezdy pridavaji vitezi jeden gol
+    for market, col, res, ok in (
+        ("MONEYLINE", "p_home", np.where(hg > ag, 0, 1), hg != ag),
+        ("OU_5.5", "p_over55", np.where(total > 5.5, 0, 1), np.ones(len(hg), bool)),
+        ("OU_6.5", "p_over65", np.where(total > 6.5, 0, 1), np.ones(len(hg), bool)),
+    ):
+        p = preds[col].to_numpy(dtype=float)[ok]
+        r = res[ok]
+        freq = np.bincount(r, minlength=2) / len(r)
+        for name, a in ((NO_MODEL, np.tile(freq, (len(r), 1))), (OURS, np.column_stack([p, 1 - p]))):
+            ll, br = _scores(a, r)
+            out.append({"market": market, "source": name, "n": int(len(r)), "logloss": ll, "brier": br})
+    return out
+
+
+STATE_KEY = "backtest_report"
+RUNNING_KEY = "backtest_running"
+
+
+def _group(name: str, note: str, rows: list[dict]) -> dict:
+    for market in {r["market"] for r in rows}:
+        best = min((r for r in rows if r["market"] == market and r["source"] != NO_MODEL), key=lambda r: r["logloss"])
+        best["best"] = True
+    return {"name": name, "note": note, "rows": rows}
+
+
+def run_all(seasons: int = 2, settings: Settings = SETTINGS, progress=print) -> dict:
+    """Zpetny test vsech modelu: ligy a reprezentace proti zaviracim kurzum a druhemu modelu, NHL proti cetnostem."""
+    from dataclasses import replace
+    from datetime import date, datetime
+
+    from . import ingestion, nations, nhl_data
+    from .config import LEAGUES
+
+    start = date(ingestion.current_season_start_year() - seasons + 1, 7, 1)
+    groups = []
+    for lg in ingestion.FOOTBALL_DATA_CODES:
+        try:
+            df = ingestion.load_football(lg)
+        except (FileNotFoundError, ValueError):
+            continue
+        first = max(start, df["date"].min())
+        before = df[df["date"] < first]
+        base = nations.goal_base_rates(before if len(before) >= 200 else df)  # prumery z drivejska, bez nahledu do testu
+        preds = walk_forward(df, first, second=True, settings=settings, goal_shrink=settings.football.league_goal_shrink,
+                             goal_base=base)
+        rows = compare(preds, settings.value.for_league(lg).model_weight)
+        if rows:
+            groups.append(_group(LEAGUES[lg].name, "zavírací kurzy Pinnacle", rows))
+        progress(f"{lg}: hotovo")
+    try:
+        intl = nations.load_international(neutral=True)
+        cfg = replace(settings.football, xi=settings.football.national_xi,
+                      max_history_seasons=settings.football.national_history_seasons)
+        preds = walk_forward(intl, start, second=True, cfg=cfg, goal_shrink=settings.football.national_goal_shrink,
+                             only=lambda d: d["tournament"].str.contains("UEFA"), settings=settings)
+        rows = compare(preds)
+        if rows:
+            groups.append(_group("Reprezentace (Liga národů a další soutěže UEFA)", "historické kurzy v datech nejsou, proto bez srovnání s trhem", rows))
+        progress("reprezentace: hotovo")
+    except FileNotFoundError:
+        pass
+    try:
+        rows = nhl_compare(nhl_walk_forward(nhl_data.load_nhl(min_season=date.today().year - 4), seasons, settings))
+        if rows:
+            groups.append(_group("NHL", "bez brankářů a bez kurzů (v historických datech nejsou); zápasy rozhodnuté v nájezdech se u vítěze nepočítají", rows))
+        progress("NHL: hotovo")
+    except FileNotFoundError:
+        pass
+    return {"when": datetime.now().strftime("%d.%m.%Y %H:%M"), "seasons": seasons, "groups": groups}

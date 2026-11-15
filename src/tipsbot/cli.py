@@ -89,6 +89,8 @@ def _parser() -> argparse.ArgumentParser:
     bt.add_argument("--league", required=True)
     bt.add_argument("--seasons", type=int, default=3, help="pocet testovanych sezon")
     bt.add_argument("--xi", type=float, nargs="*", help="vyzkousi vic hodnot casoveho utlumu, napr. --xi 0.002 0.0038 0.006")
+    vf = sub.add_parser("verify", help="zpetny test vsech modelu (ligy, reprezentace, NHL), vysledek se ulozi pro panel")
+    vf.add_argument("--seasons", type=int, default=2)
     cal = sub.add_parser("calibrate", help="zkalibruje fotbalovy model a ulozi korekci pro dane ligy")
     cal.add_argument("--league", required=True, help="klic souteze nebo 'all'")
     cal.add_argument("--seasons", type=int, default=3)
@@ -254,6 +256,27 @@ def main(argv: list[str] | None = None) -> int:
             led = Ledger(session)
             notes = fetch_cups(led.api_football_key(), led.football_data_key())
         print("\n".join(notes))
+        return 0
+    if args.cmd == "verify":
+        import json
+
+        from . import backtest
+
+        factory = make_session_factory(args.db)
+        try:
+            report = backtest.run_all(args.seasons)
+        finally:
+            with factory() as session:
+                Ledger(session)._set(backtest.RUNNING_KEY, "")
+                session.commit()
+        with factory() as session:
+            Ledger(session)._set(backtest.STATE_KEY, json.dumps(report, ensure_ascii=False))
+            session.commit()
+        for g in report["groups"]:
+            print(f"\n{g['name']} ({g['note']})")
+            for r in g["rows"]:
+                print(f"  {r['market']:10} {r['source']:28} zapasu {r['n']:5}  log-loss {r['logloss']:.4f}  Brier {r['brier']:.4f}"
+                      + ("  <- nejlepsi" if r.get("best") else ""))
         return 0
     if args.cmd == "calibrate":
         return _calibrate(args.league, args.seasons)

@@ -9,6 +9,7 @@ tu podáš ručně a tiket zapíšeš do panelu.
     python -m venv .venv
     .venv\Scripts\activate          (Windows)   |   source .venv/bin/activate   (Linux/macOS)
     pip install -e ".[dev]"
+    pip install -e ".[second]"     (volitelne: druhy model penaltyblog jako kontrola fotbalu)
     pytest                          (ověření, že vše funguje)
 
 ## Spuštění panelu
@@ -23,6 +24,7 @@ Panel běží na http://127.0.0.1:8000. Při prvním otevření nastav bankroll
     tipsbot fetch-football --league ENG1
     tipsbot backtest --league ENG1
     tipsbot backtest --league ENG1 --xi 0.002 0.0038 0.006     (ladění časového útlumu)
+    tipsbot verify                                              (zpetny test vsech modelu, vysledek je v panelu v zalozce Overeni modelu)
     tipsbot calibrate --league all                              (uloží korekci, jen když zlepší nevídaná data)
 
 Ligy: ENG1, ESP1, GER1, ITA1, FRA1, POR1. Backtest porovnává model s uzavírací linií Pinnacle

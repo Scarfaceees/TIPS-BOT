@@ -1,0 +1,11 @@
+services:
+  tipsbot:
+    build: .
+    container_name: tipsbot
+    restart: always
+    ports:
+      - "127.0.0.1:8000:8000"   # jen z tohoto pocitace
+    volumes:
+      - ./data:/app/data
+    environment:
+      TZ: Europe/Prague

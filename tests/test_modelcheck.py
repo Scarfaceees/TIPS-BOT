@@ -30,4 +30,4 @@ def test_started_match_not_logged_and_unmatched_result_skipped(ledger):
 
 def test_league_model_weight():
     v = SETTINGS.value
-    assert v.for_league("UNL").model_weight == 0.25 and v.for_league("NHL").model_weight == v.model_weight
+    assert v.for_league("UNL").model_weight == 0.25 and v.for_league("UCL").model_weight == v.model_weight

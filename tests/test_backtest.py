@@ -72,3 +72,17 @@ def test_second_opinion_probabilities():
     assert abs(p["OU_2.5:over"] + p["OU_2.5:under"] - 1) < 1e-9
     assert secondopinion.probabilities(model, "T0", "Neznamy") is None
     assert secondopinion.probabilities(None, "T0", "T7") is None
+
+
+def test_chances_blend_into_training_goals():
+    from tipsbot.models import football
+
+    df = pd.DataFrame({"home_goals": [2, 0, 1], "away_goals": [0, 0, 3], "home_sot": [4.0, 6.0, np.nan],
+                       "away_sot": [2.0, 0.0, np.nan], "home_xg": [np.nan, 1.5, np.nan], "away_xg": [np.nan, 0.5, np.nan]})
+    out = football._blend_chances(df.copy(), 0.5)
+    # 2 goly z 12 strel na branku -> 1/6 golu na strelu; druhy zapas ma xG, treti nema nic
+    assert out["home_goals"].round(4).tolist() == [round(0.5 * 2 + 0.5 * 4 / 6, 4), 0.75, 1.0]
+    assert out["away_goals"].round(4).tolist() == [round(0.5 * 2 / 6, 4), 0.25, 3.0]
+    assert football._blend_chances(df.copy(), 0.0)["home_goals"].tolist() == [2, 0, 1]
+    plain = df[["home_goals", "away_goals"]]
+    assert football._blend_chances(plain.copy(), 0.5).equals(plain)

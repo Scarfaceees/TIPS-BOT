@@ -114,9 +114,11 @@ class ValueConfig:
     model_weight: float = 0.50
     # Vaha modelu pro jednotlive souteze. Ligy: zpetny test 11/2026 (4 674 zapasu, dve sezony) - jakakoli
     # vaha modelu zhorsuje odhad proti zaviraci i predzapasove linii Pinnacle, proto jen mala (model slouzi
-    # hlavne jako kontrola). Reprezentace: odhad, kurzy k overeni nejsou. NHL a pohary: neovereno, vychozi vaha.
+    # hlavne jako kontrola). Reprezentace: odhad, kurzy k overeni nejsou. Pohary: neovereno, vychozi vaha.
+    # NHL: 10 664 zapasu 2012-2021 proti kurzum (model bez brankaru 0,6776, oteviraci linie 0,6701, zaviraci
+    # 0,6677): smes s oteviraci linii je nejlepsi kolem 0,1-0,2, se zaviraci do 0,1; nad 0,2 se zhorsuje.
     league_model_weight: dict[str, float] = field(default_factory=lambda: {
-        "UNL": 0.25, "ENG1": 0.10, "GER1": 0.10, "ESP1": 0.10, "ITA1": 0.10, "FRA1": 0.10, "POR1": 0.10})
+        "UNL": 0.25, "NHL": 0.15, "ENG1": 0.10, "GER1": 0.10, "ESP1": 0.10, "ITA1": 0.10, "FRA1": 0.10, "POR1": 0.10})
     # EV nad touto hranici je podezrele (chyba dat/kurzu) - tip se jen oznaci k rucni kontrole.
     ev_suspicious: float = 0.15
     # Model a trh se nesmi rozchazet o vic nez tolik (absolutne v pravdepodobnosti).
@@ -187,6 +189,10 @@ class FootballModelConfig:
     # Ligy: model golove trhy prestreluje (predpoved 32 % over 2.5 -> skutecnost 42 %, 71 % -> 64 %). Stazeni
     # napul k prumeru ligy snizilo log-loss z 0,6985 na 0,6828 (bez modelu 0,6922), stabilne v obou pulkach.
     league_goal_shrink: float = 0.5
+    # Sila tymu se uci ze smesi golu a sanci (xG, kde v datech je; jinak strely na branku prepoctene na goly).
+    # Zpetny test 4 674 ligovych zapasu: log-loss 1X2 0,9963 -> 0,9796, lepsi ve vsech sesti ligach i obou pulkach;
+    # vahy 0,5 a 0,75 vysly stejne, 1,0 hur. Kde statistiky chybi (pohary, reprezentace), zustavaji goly.
+    chance_weight: float = 0.5
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@ from ..config import SETTINGS, FootballModelConfig
 
 REQUIRED_COLUMNS = ("date", "home", "away", "home_goals", "away_goals")
 # neutral = zapas na neutralni pude (bez domaci vyhody), match_weight = vaha zapasu (dulezitost souteze)
-OPTIONAL_COLUMNS = ("neutral", "match_weight")
+OPTIONAL_COLUMNS = ("neutral", "match_weight", "home_sot", "away_sot", "home_xg", "away_xg")
 
 
 class ModelError(ValueError):
@@ -79,7 +79,24 @@ def _prepare(matches: pd.DataFrame, as_of: date, cfg: FootballModelConfig) -> pd
     df = df[days <= cfg.max_history_seasons * 365]
     if len(df) == 0:
         raise ModelError("Zadne zapasy pro odhad modelu.")
-    return df.reset_index(drop=True)
+    return _blend_chances(df.reset_index(drop=True), cfg.chance_weight)
+
+
+def _blend_chances(df: pd.DataFrame, weight: float) -> pd.DataFrame:
+    """Goly pro odhad sil se smichaji se sancemi: xG, jinak strely na branku prepoctene pomerem goly/strely
+    z techto zapasu. Zapasy bez statistik zustavaji na golech."""
+    if weight <= 0 or not {"home_sot", "away_sot"} & set(df.columns) and not {"home_xg", "away_xg"} & set(df.columns):
+        return df
+    nan = pd.Series(np.nan, index=df.index)
+    sot = {side: df[f"{side}_sot"] if f"{side}_sot" in df else nan for side in ("home", "away")}
+    known = sot["home"].notna() & sot["away"].notna()
+    shots = float(sot["home"][known].sum() + sot["away"][known].sum())
+    per_shot = float(df.loc[known, "home_goals"].sum() + df.loc[known, "away_goals"].sum()) / shots if shots > 0 else 0.0
+    for side in ("home", "away"):
+        chances = (df[f"{side}_xg"] if f"{side}_xg" in df else nan).fillna(sot[side] * per_shot)
+        goals = df[f"{side}_goals"].astype(float)
+        df[f"{side}_goals"] = goals.where(chances.isna(), (1 - weight) * goals + weight * chances)
+    return df
 
 
 def _fit_raw(df: pd.DataFrame, cfg: FootballModelConfig, team_group: dict[str, int] | None = None) -> DCParams:

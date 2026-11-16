@@ -41,6 +41,9 @@ _ODDS_COLUMNS = {
     "sharp_u25": ("PC<2.5", "P<2.5", "BbAv<2.5"),
 }
 
+# statistiky zapasu pro odhad sanci (viz models.football._prepare); xG je v datech az od sezony 2026/27
+_STAT_COLUMNS = {"home_sot": "HST", "away_sot": "AST", "home_xg": "HxG", "away_xg": "AxG"}
+
 
 def season_code(start_year: int) -> str:
     """2025 -> '2526' (sezona 2025/26)."""
@@ -95,6 +98,9 @@ def parse_football_csv(path: Path | str, league: str = "") -> pd.DataFrame:
     for target, sources in _ODDS_COLUMNS.items():
         src = next((c for c in sources if c in raw.columns), None)
         if src is not None:
+            out[target] = pd.to_numeric(raw[src], errors="coerce")
+    for target, src in _STAT_COLUMNS.items():
+        if src in raw.columns:
             out[target] = pd.to_numeric(raw[src], errors="coerce")
     out["league"] = league
     return out.sort_values("date").reset_index(drop=True)

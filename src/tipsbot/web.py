@@ -89,7 +89,12 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 .mbody{padding:4px 14px 12px}table.mk td,table.mk th{white-space:nowrap}table.mk td,table.mk th{padding:7px 6px}table.mk td:first-child{white-space:normal;min-width:140px}table.mk td:last-child{font-size:13px}tr.best td{background:#f4f9ff;font-weight:600}
 .det h4{margin:12px 0 4px}.det ul{margin:0;padding-left:18px}.det textarea{font:13px/1.4 monospace}
 .tipbox{margin-top:10px;padding:12px;border-radius:8px;background:#f3faf5;border:1px solid #cfe9d9}.tipbox.alt{background:#f4f9ff;border-color:#d6e4fb}
-.scorebox{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.scorebox label{flex:2 1 240px}.scorebox label.sc{flex:0 0 110px}
+.scorebox{display:flex;flex-wrap:wrap;gap:10px;align-items:end}.scorebox label{flex:2 1 240px}.scorebox label.sc{flex:0 0 76px}.scorebox .colon{font-size:22px;font-weight:700;padding-bottom:6px}
+.card.sec-acc{border-top:3px solid var(--acc)}.card.sec-ok{border-top:3px solid var(--ok)}.card.sec-warn{border-top:3px solid #e0a800}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.tile{border-radius:8px;padding:8px 10px;background:#f6f8fb}.tile span{display:block;font-size:12px;color:var(--muted)}.tile b{font-size:18px}.tile.good{background:var(--okbg)}.tile.good b{color:var(--ok)}.tile.bad{background:var(--badbg)}.tile.bad b{color:var(--bad)}
+table.mkt td,table.mkt th{padding:5px 6px}.res{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:700}.res.won{background:var(--okbg);color:var(--ok)}.res.lost{background:var(--badbg);color:var(--bad)}.res.void{background:#eef1f5;color:var(--muted)}
+.edge{display:inline-block;padding:1px 8px;border-radius:99px;font-weight:700;background:var(--okbg);color:var(--ok)}.edge.hi{background:var(--warnbg);color:var(--warn)}
+tr.r-won td:first-child{box-shadow:inset 3px 0 var(--ok)}tr.r-lost td:first-child{box-shadow:inset 3px 0 var(--bad)}
 .czgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px}
 .czgrid fieldset{border:1px solid var(--line);border-radius:8px;padding:6px 10px 10px;margin:0;display:flex;gap:8px}
 .czgrid legend{font-size:13px;font-weight:600;padding:0 4px}.czgrid label{flex:1 1 0;min-width:0}.czgrid input{padding:6px 8px}
@@ -123,11 +128,12 @@ table.bets td{vertical-align:middle}
 <td>{% if r.cz_ok %}<span class="badge tipb">VSADIT</span>{% elif r.cz_suspect %}<span class="badge warn" title="hrana nad 15 % – zkontroluj, že kurz patří k tomuto trhu">ověř kurz</span>{% elif r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VALUE</span>{% elif r.cz %}<span class="badge bad">nízký kurz</span>{% endif %}</td></tr>{% endmacro %}
 
 {% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
-{% if rows %}<div class="card"><b>Zadat výsledek zápasu</b>
-<div class="muted">Napiš skóre po 90 minutách (např. 1:4). Bot podle něj vyhodnotí všechny otevřené tikety i sledované výběry toho zápasu.</div>
+{% if rows %}<div class="card sec-acc"><b>Zadat výsledek zápasu</b>
+<div class="muted">Vyber skóre po 90 minutách (domácí : hosté). Bot podle něj vyhodnotí všechny otevřené tikety i sledované výběry toho zápasu.</div>
 <form class="scorebox" style="margin-top:10px" method="post" action="{{ url_for('score') }}"><input type="hidden" name="tab" value="{{ back }}">
 <label>Zápas<select name="match">{% for p in rows %}<option value="{{ p.key }}">{{ p.day_label }} · {{ p.name }} ({{ p.what }})</option>{% endfor %}</select></label>
-<label class="sc">Skóre<input name="score" placeholder="1:4" required></label>
+<label class="sc">Domácí<select name="home">{% for g in range(11) %}<option>{{ g }}</option>{% endfor %}</select></label><span class="colon">:</span>
+<label class="sc">Hosté<select name="away">{% for g in range(11) %}<option>{{ g }}</option>{% endfor %}</select></label>
 <button class="ok">Vyhodnotit</button></form></div>{% endif %}
 {% endmacro %}
 
@@ -302,12 +308,18 @@ table.bets td{vertical-align:middle}
 {% elif tab == 'sledovani' %}
 <div class="cols"><aside>
 {{ score_form('sledovani', 'vybery') }}
-<div class="card"><b>Jak model vydělává</b> <span class="muted">(výběry s hranou od 5 % proti českým kurzům, sázka 1 jednotky bez peněz)</span>
-{% if pst.settled %}<div class="kv"><span>Vyhodnoceno <b>{{ pst.settled }}</b></span><span>Úspěšnost <b>{{ '%.0f'|format(pst.hit * 100) }} %</b></span><span>Průměrný kurz <b>{{ '%.2f'|format(pst.avg_odds) }}</b></span>
-<span>Zisk <b class="{{ 'pos' if pst.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(pst.profit) }} j.</b></span><span>ROI <b class="{{ 'pos' if pst.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(pst.roi * 100) }} %</b>{% if pst.avg_ev is not none %} (model čekal {{ '%+.1f'|format(pst.avg_ev * 100) }} %){% endif %}</span></div>
+<div class="card sec-ok"><b>Jak model vydělává</b> <span class="muted">(výběry s hranou od 5 % proti českým kurzům, sázka 1 jednotky bez peněz)</span>
+{% if pst.settled %}<div class="tiles">
+<div class="tile"><span>Vyhodnoceno</span><b>{{ pst.settled }}</b></div>
+<div class="tile"><span>Úspěšnost</span><b>{{ '%.0f'|format(pst.hit * 100) }} %</b></div>
+<div class="tile"><span>Průměrný kurz</span><b>{{ '%.2f'|format(pst.avg_odds) }}</b></div>
+<div class="tile {{ 'good' if pst.profit >= 0 else 'bad' }}"><span>Zisk</span><b>{{ '%+.2f'|format(pst.profit) }} j.</b></div>
+<div class="tile {{ 'good' if pst.roi >= 0 else 'bad' }}"><span>ROI</span><b>{{ '%+.1f'|format(pst.roi * 100) }} %</b></div>
+<div class="tile"><span>Model čekal</span><b>{{ '%+.1f %%'|format(pst.avg_ev * 100) if pst.avg_ev is not none else '–' }}</b></div></div>
 {% if prec.n %}<div class="muted">Největší propad {{ '%.2f'|format(prec.max_drawdown) }} j. · nejdelší série proher {{ prec.longest_losing }}{% if prec.current_losing %} (teď {{ prec.current_losing }}){% endif %}</div>{% endif %}
-{% if pst.settled < 30 %}<div class="muted">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
-{% for m, v in pst.by_market.items() %}<div class="muted">{{ m }}: {{ v[0] }} výběrů, {{ '%+.2f'|format(v[1]) }} j., ROI {{ '%+.1f'|format(v[2] * 100) }} %</div>{% endfor %}
+{% if pst.settled < 30 %}<div class="muted note-inline">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
+{% if pst.by_market %}<table class="mkt" style="margin-top:8px"><tr><th>Trh</th><th class="num">Výběrů</th><th class="num">Zisk (j.)</th><th class="num">ROI</th></tr>
+{% for m, v in pst.by_market.items() %}<tr><td>{{ m }}</td><td class="num">{{ v[0] }}</td><td class="num {{ 'pos' if v[1] >= 0 else 'neg' }}">{{ '%+.2f'|format(v[1]) }}</td><td class="num"><span class="res {{ 'won' if v[2] >= 0 else 'lost' }}">{{ '%+.1f'|format(v[2] * 100) }} %</span></td></tr>{% endfor %}</table>{% endif %}
 {% else %}<div class="muted" style="margin-top:6px">Zatím nic vyhodnoceno ({{ pst.open }} čeká na výsledek).</div>{% endif %}
 <form class="row" method="post" action="{{ url_for('settle_all') }}"><input type="hidden" name="tab" value="sledovani"><button class="ghost">Stáhnout výsledky a vyhodnotit automaticky</button></form></div>
 <details class="fold card"><summary>Přidat vlastní výběr do sledování</summary>
@@ -321,16 +333,16 @@ table.bets td{vertical-align:middle}
 </div><div class="row"><button>Přidat do sledování</button></div></form></details>
 </aside><div class="colmain">
 <h2>Čeká na výsledek ({{ paper_open|length }})</h2>
-<div class="card tablewrap"><table><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th class="num">Model</th><th class="num">Hrana</th><th></th></tr>
-{% for p in paper_open %}<tr><td>{{ p.name }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% for f in p.flags %}<div class="muted">{{ f }}</div>{% endfor %}</td><td>{{ p.market }} {{ p.selection }}<div class="muted">{{ p.book }}</div></td><td class="num">{{ '%.2f'|format(p.odds) }}</td>
-<td class="num">{{ '%.0f %%'|format(p.p_model * 100) if p.p_model else '–' }}</td><td class="num">{{ '%+.1f %%'|format(p.ev * 100) if p.ev is not none else '–' }}</td>
+<div class="card sec-warn tablewrap"><table><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th class="num">Model</th><th class="num">Hrana</th><th></th></tr>
+{% for p in paper_open %}<tr><td>{{ p.name }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% for f in p.flags %}<div><span class="badge warn">{{ f }}</span></div>{% endfor %}</td><td><b>{{ p.market }} {{ p.selection }}</b><div class="muted">{{ p.book }}</div></td><td class="num">{{ '%.2f'|format(p.odds) }}</td>
+<td class="num">{{ '%.0f %%'|format(p.p_model * 100) if p.p_model else '–' }}</td><td class="num">{% if p.ev is not none %}<span class="edge {{ 'hi' if p.ev > 0.15 }}">{{ '%+.1f %%'|format(p.ev * 100) }}</span>{% else %}–{% endif %}</td>
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('paper_result', pick_id=p.id) }}" class="row" style="margin:4px 0"><input type="hidden" name="tab" value="sledovani">
 <select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button class="sm">Zapsat</button></form>
 <form method="post" action="{{ url_for('paper_delete', pick_id=p.id) }}" style="margin:0"><input type="hidden" name="tab" value="sledovani"><button class="ghost sm">Smazat</button></form></details></td></tr>
 {% else %}<tr><td colspan="6" class="muted">Nic nesledováno. Vlož české kurzy (Nastavení) a spusť sken.</td></tr>{% endfor %}</table></div>
 <details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }})</summary>
 <div class="tablewrap"><table><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
-{% for p in paper_done %}<tr><td>{{ p.name }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market }} {{ p.selection }}</td><td class="num">{{ '%.2f'|format(p.odds) }}</td><td>{{ p.score or '–' }}</td><td>{{ p.result }}</td>
+{% for p in paper_done %}<tr class="r-{{ p.result }}"><td>{{ p.name }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market }} {{ p.selection }}</td><td class="num">{{ '%.2f'|format(p.odds) }}</td><td>{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
 <td class="num {{ 'pos' if p.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p.profit) }}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div></details>
 </div></div>
@@ -770,7 +782,8 @@ def create_app(database_url: str | None = None) -> Flask:
             from .settlement import parse_score, settle_with_score
 
             day, _, name = request.form["match"].partition("|")
-            hg, ag = parse_score(request.form["score"])
+            f = request.form
+            hg, ag = parse_score(f"{f['home']}:{f['away']}" if "home" in f else f.get("score", ""))
             return " · ".join(settle_with_score(led, name, date.fromisoformat(day), hg, ag))
 
         return action(fn, "", tab="tikety")

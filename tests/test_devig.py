@@ -121,7 +121,7 @@ def test_assess_value_accepts_and_rejects():
     assert devig.expected_value(ok.prob, ok.min_odds) >= thr - 1e-9
 
     low_ev = devig.assess_value(0.50, 0.50, 2.00, thr)
-    assert not low_ev.is_value and "EV pod prahem" in low_ev.reasons
+    assert not low_ev.is_value and "čekaný zisk pod prahem" in low_ev.reasons
 
     out_of_band = devig.assess_value(0.20, 0.19, 6.00, thr)
     assert "kurz mimo pasmo" in out_of_band.reasons

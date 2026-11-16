@@ -153,6 +153,7 @@ def test_score_entry_settles_ticket(client):
                                     "selection": "over", "bookmaker": "tipsport", "odds": "2", "stake": "10"}).status_code == 400
     for t in ("prehled", "tikety", "sledovani", "historie", "kalkulacka", "nastaveni", "sazka"):
         assert c.get(f"/?tab={t}").status_code == 200
+    assert "Profil 2" in c.get("/?tab=sledovani&profile=profil2").get_data(as_text=True)
 
 
 def test_overview_lists_bets_on_czech_odds(client):

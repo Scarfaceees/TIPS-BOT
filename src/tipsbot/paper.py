@@ -4,6 +4,9 @@ Bot z modelu a rucne zadanych kurzu vybere u zapasu nejvyhodnejsi vyber a sleduj
 sazku (1 jednotka). Po zapase se vyhodnoti z vysledku. Slouzi k overeni, jestli model na trzich bez
 ferove linie (pocet golu, BTTS) skutecne vydelava, nez se na nej zacne sazet.
 Vlastni sledovane vybery lze pridat rucne (panel).
+
+Profily: kazdy profil hleda vybery podle vlastnich pravidel (prah zisku, pasmo kurzu, trhy) a ma vlastni
+sledovani, takze jde porovnat, ktery zpusob hledani tipu vydelava.
 """
 
 from __future__ import annotations
@@ -22,6 +25,30 @@ KEY = "paper_picks"
 KEEP = 2000
 MIN_EV = 0.05  # od teto hrany (podle modelu) se vyber sleduje
 SELECTIONS = {"1X2": ("1", "X", "2"), "BTTS": ("yes", "no"), "DC": ("1X", "12", "X2"), "DNB": ("home", "away")}
+
+
+@dataclass(frozen=True)
+class Profile:
+    key: str
+    name: str
+    about: str
+    min_ev: float = MIN_EV
+    min_odds: float | None = None  # None = podle nastaveni (ValueConfig)
+    max_odds: float | None = None
+    markets: tuple[str, ...] | None = None  # zacatky nazvu trhu (napr. "OU_", "1X2"); None = vsechny
+    active: bool = True
+
+
+PROFILES = (
+    Profile("zaklad", "Základ", "u každého zápasu výběr s nejvyšším čekaným ziskem od 5 %, kurzy podle nastavení"),
+    Profile("profil2", "Profil 2", "zatím nenastaven – pravidla doplníme", active=False),
+    Profile("profil3", "Profil 3", "zatím nenastaven – pravidla doplníme", active=False),
+)
+DEFAULT = PROFILES[0].key
+
+
+def profile(key: str | None) -> Profile:
+    return next((pr for pr in PROFILES if pr.key == key), PROFILES[0])
 
 
 def selections(market: str) -> tuple[str, ...] | None:
@@ -49,6 +76,7 @@ class Pick:
     score: str = ""
     profit: float | None = None  # v jednotkach vkladu
     flags: list[str] = field(default_factory=list)
+    profile: str = DEFAULT
 
     @property
     def ev(self) -> float | None:
@@ -65,9 +93,15 @@ def unit_profit(result: str, odds: float) -> float:
     }[result]
 
 
+_OLD_FLAGS = {"hrana nad 15 % je podezřelá, ověř ručně": "čekaný zisk nad 15 % je podezřelý, ověř ručně"}
+
+
 def load(ledger) -> list[Pick]:
     raw = ledger._get(KEY, "")
-    return [Pick(**d) for d in json.loads(raw)] if raw else []
+    picks = [Pick(**d) for d in json.loads(raw)] if raw else []
+    for p in picks:  # starsi zaznamy maji puvodni text upozorneni
+        p.flags = [_OLD_FLAGS.get(f, f) for f in p.flags]
+    return picks
 
 
 def save(ledger, picks: list[Pick]) -> None:
@@ -75,55 +109,62 @@ def save(ledger, picks: list[Pick]) -> None:
     ledger._set(KEY, json.dumps([asdict(p) for p in picks], ensure_ascii=False))
 
 
+def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings) -> Pick | None:
+    """Vyber s nejvyssim cekanym ziskem podle pravidel profilu."""
+    lo = settings.value.min_odds if pr.min_odds is None else pr.min_odds
+    hi = settings.value.max_odds if pr.max_odds is None else pr.max_odds
+    best: tuple[float, Pick] | None = None
+    for e in entries:
+        sels = selections(e.market)
+        if sels is None or len(sels) != len(e.odds) or (pr.markets and not e.market.startswith(pr.markets)):
+            continue
+        for sel, odds in zip(sels, e.odds):
+            p = model.get(f"{e.market}:{sel}")
+            if p is None or not (lo <= odds <= hi):
+                continue
+            edge = p * odds - 1.0
+            if edge >= pr.min_ev and (best is None or edge > best[0]):
+                flags = ["čekaný zisk nad 15 % je podezřelý, ověř ručně"] if edge > 0.15 else []
+                best = (edge, Pick(
+                    id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
+                    day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=e.market,
+                    selection=sel, odds=odds, book=e.book, p_model=round(p, 4), source="model",
+                    created=now.isoformat(), flags=flags, profile=pr.key,
+                ))
+    return best[1] if best else None
+
+
 def track(ledger, league: str, offers: list, now: datetime, settings: Settings = SETTINGS) -> int:
-    """`offers`: [(udalost, model {trh:vyber: p}, [ceske zaznamy])]. Pro kazdy zapas vybere nejvyssi hranu
-    podle modelu; stejny zapas se pred vykopem jen aktualizuje, po vykopu se uz nemeni."""
+    """`offers`: [(udalost, model {trh:vyber: p}, [ceske zaznamy])]. Kazdy aktivni profil vybere u zapasu
+    nejvyssi cekany zisk podle svych pravidel; pred vykopem se vyber jen aktualizuje, po vykopu se nemeni."""
     picks = load(ledger)
-    by_match = {p.match_id: p for p in picks if p.source == "model"}
-    cfg = settings.value
+    by_match = {(p.profile, p.match_id): p for p in picks if p.source == "model"}
     n = 0
     for ev, model, entries in offers:
         if not model or ev.kickoff <= now:
             continue
-        best: tuple[float, Pick] | None = None
-        for e in entries:
-            sels = selections(e.market)
-            if sels is None or len(sels) != len(e.odds):
+        for pr in PROFILES:
+            if not pr.active:
                 continue
-            for sel, odds in zip(sels, e.odds):
-                p = model.get(f"{e.market}:{sel}")
-                if p is None or not (cfg.min_odds <= odds <= cfg.max_odds):
-                    continue
-                edge = p * odds - 1.0
-                if edge >= MIN_EV and (best is None or edge > best[0]):
-                    flags = ["hrana nad 15 % je podezřelá, ověř ručně"] if edge > 0.15 else []
-                    best = (
-                        edge,
-                        Pick(
-                            id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
-                            day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=e.market,
-                            selection=sel, odds=odds, book=e.book, p_model=round(p, 4), source="model",
-                            created=now.isoformat(), flags=flags,
-                        ),
-                    )
-        old = by_match.get(ev.match_id)
-        if old is not None and datetime.fromisoformat(old.kickoff) <= now:
-            continue
-        if best is None:
-            if old is not None and old.result is None:
-                picks.remove(old)  # hrana zmizela, vyber uz neplati
-            continue
-        if old is not None:
-            picks.remove(old)
-        picks.append(best[1])
-        n += 1
+            new = _best(pr, league, ev, model, entries, now, settings)
+            old = by_match.get((pr.key, ev.match_id))
+            if old is not None and datetime.fromisoformat(old.kickoff) <= now:
+                continue
+            if new is None:
+                if old is not None and old.result is None:
+                    picks.remove(old)  # vyhoda zmizela, vyber uz neplati
+                continue
+            if old is not None:
+                picks.remove(old)
+            picks.append(new)
+            n += 1
     if n or offers:
         save(ledger, picks)
     return n
 
 
 def add_manual(ledger, *, league: str, name: str, day: str, market: str, selection: str, odds: float,
-               book: str, now: datetime) -> Pick:
+               book: str, now: datetime, profile_key: str = DEFAULT) -> Pick:
     if " - " not in name:
         raise ValueError("Zápas zapiš jako 'Domácí - Hosté'.")
     if odds <= 1.0:
@@ -136,7 +177,7 @@ def add_manual(ledger, *, league: str, name: str, day: str, market: str, selecti
     d = datetime.fromisoformat(day)
     pick = Pick(id=uuid.uuid4().hex[:8], league=league, match_id=f"manual:{day}:{name}", name=name, day=day,
                 kickoff=d.replace(hour=23).isoformat(), market=market, selection=sel, odds=odds, book=book,
-                p_model=None, source="rucne", created=now.isoformat())
+                p_model=None, source="rucne", created=now.isoformat(), profile=profile(profile_key).key)
     save(ledger, load(ledger) + [pick])
     return pick
 

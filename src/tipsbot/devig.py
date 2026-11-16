@@ -264,7 +264,7 @@ def assess_value(
     if not (cfg.min_odds <= offered_odds <= cfg.max_odds):
         reasons.append("kurz mimo pasmo")
     if ev < ev_threshold:
-        reasons.append("EV pod prahem")
+        reasons.append("čekaný zisk pod prahem")
     if prob < cfg.min_probability:
         reasons.append(f"sance pod {cfg.min_probability * 100:.0f} %")
     if abs(p_model - p_market) > cfg.max_model_market_gap:

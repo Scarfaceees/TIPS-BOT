@@ -118,6 +118,6 @@ def post_text(name: str, kickoff_local: str, league: str, rec_label: str, odds: 
         body.append("Sestavy a absence:")
         body += [f"• {line}" for line in context_lines]
         body.append("")
-    body.append(f"Tip: {rec_label} @ {odds:.2f}. Model dává {p_model * 100:.1f} %, trh {p_market * 100:.1f} % (férový kurz {1 / p_market:.2f}), "
+    body.append(f"Tip: {rec_label} @ {odds:.2f}. Model dává {p_model * 100:.1f} %, trh {p_market * 100:.1f} % (kurz bez marže {1 / p_market:.2f}), "
                 f"očekávaná hodnota {ev_pct:+.1f} %.")
     return "\n".join(body)

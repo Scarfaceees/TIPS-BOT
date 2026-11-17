@@ -20,7 +20,7 @@ import pandas as pd
 
 from . import marketsim
 from .config import SETTINGS, Settings
-from .settlement import find_result, grade
+from .settlement import settle_bet
 
 KEY = "paper_picks"
 KEEP = 2000
@@ -61,7 +61,7 @@ def profile(key: str | None) -> Profile:
 
 
 def selections(market: str) -> tuple[str, ...] | None:
-    if market.startswith(("OU_", "TTH_", "TTA_")):
+    if market.startswith(("OU_", "TTH_", "TTA_", "ROHY_", "KARTY_")):
         return ("over", "under")
     return SELECTIONS.get(market)
 
@@ -253,11 +253,10 @@ def settle(ledger, results: pd.DataFrame) -> list[str]:
     for p in picks:
         if p.result is not None:
             continue
-        res = find_result(results, p.name, datetime.fromisoformat(p.day).date())
-        if res is None:
+        got = settle_bet(results, p.name, datetime.fromisoformat(p.day).date(), p.market, p.selection)
+        if got is None:
             continue
-        outcome = grade(p.market, p.selection, *res)
-        p.score = f"{res[0]}:{res[1]}"
+        p.score, outcome = got
         if outcome is None:
             continue
         p.result, p.profit = outcome, unit_profit(outcome, p.odds)

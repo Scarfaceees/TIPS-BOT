@@ -10,9 +10,9 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, secondopinion, teamreport
+from . import analysis, calibration, referees, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, secondopinion, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
-from .models import football, nhl
+from .models import football, nhl, props
 from .names import match_team, nhl_abbr
 from .storage import Ledger, Tip, utcnow
 from .tips import Candidate, Offer, Rejection, _betting_offers, best_per_match, evaluate, recheck
@@ -113,6 +113,8 @@ class ModelProvider:
         self.scalers = None
         self.second = None  # druhy pohled (penaltyblog), jen ligy a reprezentace
         self.goal_base: dict[str, float] | None = None  # prumery ligy, ke kterym se stahuji golove trhy
+        self.props: dict[str, props.CountModel] = {}  # rohy a karty (jen ligy, kde jsou data)
+        self.referees: dict[str, str | None] = {}  # match_id -> nasazeny rozhodci
         try:
             if LEAGUES[league].sport is Sport.NHL:
                 try:
@@ -135,6 +137,10 @@ class ModelProvider:
                 start = date(ingestion.current_season_start_year(today), 7, 1)
                 self.params = football.fit(df, today, season_start=start, cfg=settings.football)
                 self.second = secondopinion.fit(df, today, settings.football.xi, settings.football.max_history_seasons)
+                try:
+                    self.props = props.fit_all(referees.attach(df, league), today)
+                except Exception as e:  # noqa: BLE001 - rohy a karty jsou doplnek, goly bezi i bez nich
+                    log.warning("model rohu a karet %s: %s", league, e)
                 recent = df[(df["date"] < today) & (df["date"] >= today - timedelta(days=730))]
                 if len(recent) >= 200:
                     self.goal_base = nations.goal_base_rates(recent)
@@ -153,7 +159,12 @@ class ModelProvider:
                 probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
             elif self.goal_base:
                 probs = nations.shrink_goal_markets(probs, self.settings.football.league_goal_shrink, self.goal_base)
-            return apply_calibration(probs, self.scalers) if self.scalers else probs
+            probs = apply_calibration(probs, self.scalers) if self.scalers else probs
+            if self.props:
+                if ev.match_id not in self.referees:
+                    self.referees[ev.match_id] = referees.upcoming(self.league, ev.home, ev.away, ev.kickoff.date())
+                probs = {**probs, **props.probabilities(self.props, home, away, self.referees[ev.match_id])}
+            return probs
         if self.ratings is not None:
             home, away = nhl_abbr(ev.home), nhl_abbr(ev.away)
             ctx = self.ratings.context(home, away, ev.kickoff.date()) if home and away else None
@@ -188,7 +199,10 @@ class ModelProvider:
         try:
             if self.params is not None and self.df is not None:
                 h, a = match_team(ev.home, self.params.teams), match_team(ev.away, self.params.teams)
-                return detail.football_sections(self.params, self.df, h, a, probs)
+                out = detail.football_sections(self.params, self.df, h, a, probs)
+                if self.props:
+                    out.append(detail.props_section(self.props, h, a, probs, self.referees.get(ev.match_id)))
+                return out
             if self.ratings is not None:
                 return detail.nhl_sections(self.ratings, nhl_abbr(ev.home), nhl_abbr(ev.away), ev.kickoff.date(), probs)
         except Exception as e:  # noqa: BLE001 - rozbor nesmi shodit sken
@@ -530,6 +544,7 @@ def refresh_data(ledger: Ledger) -> list[str]:
         ("reprezentace", lambda: (nations.download_results(), "ok")[1]),
         ("NHL", lambda: (nhl_data.download_nhl(), "ok")[1]),
         ("brankáři NHL", lambda: (nhl_data.download_goalies(), "ok")[1]),
+        ("rozhodčí", lambda: "; ".join(referees.fetch(ledger.api_football_key(), cups.DOMESTIC))),
     ]
     for name, fn in steps:
         try:

@@ -558,7 +558,8 @@ MARKET_NAMES = {"1X2": "Výsledek", "DC": "Dvojitá šance", "DNB": "Sázka bez 
                 "OU_2.0": "Góly 2.0 (při 2 vráceno)", "OU_4.0": "Góly 4.0 (při 4 vráceno)", "TTH_1.5": "Góly domácích 1.5",
                 "TTA_1.5": "Góly hostů 1.5", "BTTS": "Oba týmy dají gól", "TTH_0.5": "Domácí dají gól",
                 "TTA_0.5": "Hosté dají gól", "MONEYLINE": "Vítěz zápasu (vč. prodloužení)",
-                "OU_5.5": "Góly 5.5", "OU_6.5": "Góly 6.5"}
+                "OU_5.5": "Góly 5.5", "OU_6.5": "Góly 6.5", "ROHY_8.5": "Rohy 8.5", "ROHY_9.5": "Rohy 9.5",
+                "ROHY_10.5": "Rohy 10.5", "KARTY_3.5": "Karty 3.5", "KARTY_4.5": "Karty 4.5", "KARTY_5.5": "Karty 5.5"}
 
 
 def _decorate(v, czech_entries) -> None:

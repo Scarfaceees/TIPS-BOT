@@ -69,6 +69,9 @@ def label(market: str, selection: str, home: str, away: str) -> str:
         return {"1": f"Základní doba: {home}", "X": "Základní doba: remíza", "2": f"Základní doba: {away}"}[selection]
     if market.startswith("OU_"):
         return f"{'Over' if selection == 'over' else 'Under'} {market[3:]} gólů"
+    if market.startswith(("ROHY_", "KARTY_")):
+        kind, line = market.split("_", 1)
+        return f"{'Rohy' if kind == 'ROHY' else 'Karty'}: {'víc' if selection == 'over' else 'míň'} než {line}"
     if market.startswith("PUCKLINE"):
         team = home if selection.startswith("home") else away
         return f"Handicap {team} {selection[4:] if selection.startswith('home') else selection[4:]}"

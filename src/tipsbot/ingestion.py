@@ -102,6 +102,15 @@ def parse_football_csv(path: Path | str, league: str = "") -> pd.DataFrame:
     for target, src in _STAT_COLUMNS.items():
         if src in raw.columns:
             out[target] = pd.to_numeric(raw[src], errors="coerce")
+    # rohy a karty (zlute + cervene, kazda za 1) pro models.props; rozhodci jen u anglicke ligy
+    for side, c, y, r in (("home", "HC", "HY", "HR"), ("away", "AC", "AY", "AR")):
+        if c in raw.columns:
+            out[f"{side}_corners"] = pd.to_numeric(raw[c], errors="coerce")
+        if y in raw.columns:
+            out[f"{side}_cards"] = pd.to_numeric(raw[y], errors="coerce") + pd.to_numeric(
+                raw[r], errors="coerce").fillna(0) if r in raw.columns else pd.to_numeric(raw[y], errors="coerce")
+    if "Referee" in raw.columns:
+        out["referee"] = raw["Referee"].where(raw["Referee"].notna(), None)
     out["league"] = league
     return out.sort_values("date").reset_index(drop=True)
 

@@ -31,7 +31,8 @@ def load_all_results() -> pd.DataFrame:
             d = ingestion.load_football(lg)
         except FileNotFoundError:
             continue
-        frames.append(d[["date", "home", "away", "home_goals", "away_goals", "league"]])
+        frames.append(d[["date", "home", "away", "home_goals", "away_goals", "league"]
+                        + [c for c in ("home_corners", "away_corners", "home_cards", "away_cards") if c in d]])
         known |= set(d["home"]) | set(d["away"])
     for cup in cups.CUP_API_FOOTBALL_IDS:
         try:

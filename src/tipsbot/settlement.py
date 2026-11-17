@@ -39,6 +39,8 @@ def _plain(text: str) -> str:
 
 def normalize_bet(market: str, selection: str) -> tuple[str, str]:
     """Rucne zapsany trh/vyber -> tvar, kterému rozumi `grade` (napr. 'under' + '1,5' -> 'OU_1.5', 'under')."""
+    if market.strip().upper().startswith(COUNT_MARKETS):  # rohy a karty: linie je v nazvu trhu
+        return market.strip().upper(), {"nad": "over", "vic": "over", "pod": "under", "min": "under"}.get(_plain(selection), _plain(selection))
     m, s = _plain(market), _plain(selection)
     words = set(f"{m} {s}".split())
     side = "over" if words & {"over", "nad", "vice"} else "under" if words & {"under", "pod", "mene"} else None
@@ -113,7 +115,41 @@ def grade(market: str, selection: str, hg: int, ag: int) -> str | None:
     return None
 
 
+COUNT_MARKETS = ("ROHY_", "KARTY_")
+_COUNT_COLUMNS = {"ROHY": ("home_corners", "away_corners"), "KARTY": ("home_cards", "away_cards")}
+
+
+def grade_count(market: str, selection: str, total: float) -> str | None:
+    """Rohy / karty: 'ROHY_9.5' + over/under proti skutecnemu poctu."""
+    try:
+        line = float(market.split("_", 1)[1])
+    except (IndexError, ValueError):
+        return None
+    return _ou_single(int(total), line, selection == "over") if selection in ("over", "under") else None
+
+
+def settle_bet(df: pd.DataFrame, match_name: str, match_day, market: str, selection: str) -> tuple[str, str] | None:
+    """(skore nebo pocet, vysledek) jedne sazky z vysledku v `df`; None, kdyz zapas (nebo pocet rohu/karet) v datech neni."""
+    row = _find_row(df, match_name, match_day)
+    if row is None:
+        return None
+    hg, ag = int(row["home_goals"]), int(row["away_goals"])
+    m, s = normalize_bet(market, selection)
+    if m.startswith(COUNT_MARKETS):
+        hc, ac = _COUNT_COLUMNS[m.split("_", 1)[0]]
+        if hc not in row or pd.isna(row[hc]) or pd.isna(row[ac]):
+            return None  # zdroj vysledku pocty nema (doplni football-data.co.uk)
+        total = row[hc] + row[ac]
+        return f"{hg}:{ag}, {int(total)} {'rohů' if m.startswith('ROHY') else 'karet'}", grade_count(m, s, total)
+    return f"{hg}:{ag}", grade(market, selection, hg, ag)
+
+
 def find_result(df: pd.DataFrame, match_name: str, match_day) -> tuple[int, int] | None:
+    row = _find_row(df, match_name, match_day)
+    return None if row is None else (int(row["home_goals"]), int(row["away_goals"]))
+
+
+def _find_row(df: pd.DataFrame, match_name: str, match_day):
     """Vysledek zapasu 'Domaci - Hoste' v okoli data (+-1 den), nazvy se paruji tolerantne."""
     if " - " not in match_name:
         return None
@@ -124,10 +160,7 @@ def find_result(df: pd.DataFrame, match_name: str, match_day) -> tuple[int, int]
         return None
     lo, hi = match_day - timedelta(days=1), match_day + timedelta(days=1)
     m = df[(df["home"] == h) & (df["away"] == a) & (df["date"] >= lo) & (df["date"] <= hi)]
-    if m.empty:
-        return None
-    r = m.iloc[-1]
-    return int(r["home_goals"]), int(r["away_goals"])
+    return None if m.empty else m.iloc[-1]
 
 
 def settle_open_tickets(ledger, df: pd.DataFrame) -> list[str]:
@@ -138,15 +171,15 @@ def settle_open_tickets(ledger, df: pd.DataFrame) -> list[str]:
 
     notes = []
     for t in list(ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))):
-        res = find_result(df, t.match_name, t.match_day)
-        if res is None:
+        got = settle_bet(df, t.match_name, t.match_day, t.market, t.selection)
+        if got is None:
             continue
-        outcome = grade(t.market, t.selection, *res)
+        score, outcome = got
         if outcome is None:
             notes.append(f"Tiket {t.id} ({t.match_name}, {t.market}:{t.selection}): trh neumím vyhodnotit, udělej to ručně")
             continue
         ledger.settle_ticket(t.id, outcome, fair_closing_odds=t.closing_odds)
-        notes.append(f"Tiket {t.id}: {t.match_name} {res[0]}:{res[1]} -> {outcome}")
+        notes.append(f"Tiket {t.id}: {t.match_name} {score} -> {outcome}")
     return notes
 
 

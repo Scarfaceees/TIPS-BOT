@@ -334,6 +334,43 @@ def nhl_compare(preds: pd.DataFrame) -> list[dict]:
     return out
 
 
+PROPS_LINES = ("ROHY_9.5", "ROHY_10.5", "KARTY_3.5", "KARTY_4.5", "KARTY_5.5")
+
+
+def props_compare(start) -> list[dict]:
+    """Rohy a karty: model (tymy + rozhodci) proti cetnosti dane ligy pred testem."""
+    from . import cups, ingestion, referees
+    from .models import props
+
+    preds, bases = [], []
+    for lg in cups.DOMESTIC:
+        try:
+            df = referees.attach(ingestion.load_football(lg), lg)
+        except (FileNotFoundError, ValueError):
+            continue
+        wf = props.walk_forward(df, max(start, df["date"].min()))
+        before = df[df["date"] < start]
+        for kind, (hc, ac, _) in props.KINDS.items():
+            if len(wf) and hc in before:
+                tot = (before[hc] + before[ac]).dropna()
+                for m in PROPS_LINES:
+                    if m.startswith(kind) and len(tot):
+                        wf[f"base_{m}"] = float((tot > float(m.split("_")[1])).mean())
+        preds.append(wf)
+    out: list[dict] = []
+    d = pd.concat(preds, ignore_index=True) if preds else pd.DataFrame()
+    for m in PROPS_LINES:
+        kind, line = m.split("_")
+        if f"base_{m}" not in d or f"{m}:over" not in d:
+            continue
+        ok = d[[f"{kind}_total", f"base_{m}", f"{m}:over"]].notna().all(axis=1).to_numpy()
+        r = np.where(d[f"{kind}_total"].to_numpy()[ok] > float(line), 0, 1)
+        for name, p in ((NO_MODEL, d[f"base_{m}"].to_numpy()[ok]), (OURS, d[f"{m}:over"].to_numpy()[ok])):
+            ll, br = _scores(np.column_stack([p, 1 - p]).astype(float), r)
+            out.append({"market": m, "source": name, "n": int(ok.sum()), "logloss": ll, "brier": br})
+    return out
+
+
 STATE_KEY = "backtest_report"
 RUNNING_KEY = "backtest_running"
 
@@ -387,6 +424,10 @@ def run_all(seasons: int = 3, settings: Settings = SETTINGS, progress=print) -> 
         if rows:
             groups.append(_group(LEAGUES[lg].name, "zavírací kurzy Pinnacle", rows))
         progress(f"{lg}: hotovo")
+    rows = props_compare(start)
+    if rows:
+        groups.append(_group("Rohy a karty (6 lig)", "kurzy na rohy a karty v datech nejsou; bez modelu = četnost ligy před testem, karty včetně rozhodčího", rows))
+    progress("rohy a karty: hotovo")
     try:
         intl = nations.load_international(neutral=True)
         cfg = replace(settings.football, xi=settings.football.national_xi,

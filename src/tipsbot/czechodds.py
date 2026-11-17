@@ -95,6 +95,10 @@ def parse_text(text: str, now: datetime) -> tuple[list[Entry], list[str]]:
     return entries, errors
 
 
+# trhy "vic / min nez linie": goly, goly tymu, rohy a karty
+COUNT_PREFIXES = ("OU_", "TTH_", "TTA_", "ROHY_", "KARTY_")
+
+
 # Trhy ve formulari u zapasu: (trh, vybery v poradi ulozeni, popisky).
 FORM_MARKETS = (
     ("1X2", ("1", "X", "2"), ("1", "X", "2")),
@@ -111,6 +115,12 @@ FORM_MARKETS = (
     ("TTA_0.5", ("over", "under"), ("hosté dají gól: ano", "ne")),
     ("TTH_1.5", ("over", "under"), ("domácí víc než 1.5", "míň než 1.5")),
     ("TTA_1.5", ("over", "under"), ("hosté víc než 1.5", "míň než 1.5")),
+    ("ROHY_8.5", ("over", "under"), ("rohů víc než 8.5", "míň než 8.5")),
+    ("ROHY_9.5", ("over", "under"), ("rohů víc než 9.5", "míň než 9.5")),
+    ("ROHY_10.5", ("over", "under"), ("rohů víc než 10.5", "míň než 10.5")),
+    ("KARTY_3.5", ("over", "under"), ("karet víc než 3.5", "míň než 3.5")),
+    ("KARTY_4.5", ("over", "under"), ("karet víc než 4.5", "míň než 4.5")),
+    ("KARTY_5.5", ("over", "under"), ("karet víc než 5.5", "míň než 5.5")),
 )
 
 
@@ -145,7 +155,7 @@ def for_match(entries: list[Entry], match_name: str) -> dict[tuple[str, str], tu
     for e in entries:
         if not (match_team(_en(e.home), [home]) and match_team(_en(e.away), [away])):
             continue
-        names = sels.get(e.market) or (("over", "under") if e.market.startswith(("OU_", "TTH_", "TTA_")) else None)
+        names = sels.get(e.market) or (("over", "under") if e.market.startswith(COUNT_PREFIXES) else None)
         if not names or len(names) != len(e.odds):
             continue
         for s, o in zip(names, e.odds):
@@ -193,6 +203,8 @@ def apply(events: list[Event], entries: list[Entry]) -> list[str]:
         if ev is None:
             continue  # zapas neni v dnesnim skenu (jina liga, jiny den)
         market = ev.markets.get(e.market)
+        if market is None and e.market.startswith(("ROHY_", "KARTY_")):
+            continue  # rohy a karty kurzove API nema, porovnaji se s modelem
         if market is None:
             notes.append(f"{e.book} {ev.name} {e.market}: trh nema ferovou linii, nelze ohodnotit")
             continue

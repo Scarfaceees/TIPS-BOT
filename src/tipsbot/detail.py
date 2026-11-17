@@ -67,6 +67,28 @@ def nhl_sections(ratings, home: str, away: str, day: date, probs: dict[str, floa
     return out
 
 
+def props_section(models: dict, home: str, away: str, probs: dict[str, float], referee: str | None) -> Section:
+    """Rohy a karty: ocekavany pocet, nejbliz vyrovnane linie a rozhodci."""
+    from .models import props
+
+    lines = []
+    for kind, word in (("ROHY", "rohů"), ("KARTY", "karet")):
+        m = models.get(kind)
+        if m is None:
+            continue
+        mh, ma = m.means(home, away, referee if kind == "KARTY" else None)
+        line = min(props.KINDS[kind][2], key=lambda x: abs(probs.get(f"{kind}_{x:g}:over", 0) - 0.5))
+        lines.append(f"Očekávaný počet {word}: {home} {mh:.1f} – {ma:.1f} {away} (celkem {mh + ma:.1f}); "
+                     f"víc než {line:g}: {probs[f'{kind}_{line:g}:over'] * 100:.0f} %")
+    if "KARTY" in models:
+        if referee:
+            f = models["KARTY"].ref.get(props.referee_key(referee))
+            lines.append(f"Rozhodčí: {referee}" + (f" – karet {f * 100 - 100:+.0f} % proti průměru ligy" if f else " – zatím bez historie, počítá se s průměrem"))
+        else:
+            lines.append("Rozhodčí zatím není nasazený (doplní se, jakmile ho liga oznámí).")
+    return {"title": "Rohy a karty (model)", "lines": lines}
+
+
 def football_sections(params, df: pd.DataFrame, home: str, away: str, probs: dict[str, float]) -> list[Section]:
     lam, mu = params.expected_goals(home, away)
     m = football.match_matrix(params, home, away)

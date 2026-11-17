@@ -203,7 +203,7 @@ def settle_everything(ledger) -> list[str]:
         download_results()
         intl = load_international(neutral=True)
         intl_last = max(intl["date"]) if len(intl) else None
-        results = pd.concat([results, intl[list(results.columns)]], ignore_index=True)
+        results = pd.concat([results, intl.reindex(columns=results.columns)], ignore_index=True)
     except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
         print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
     notes = settle_open_tickets(ledger, results) + paper.settle(ledger, results)

@@ -1,0 +1,9 @@
+.venv
+.git
+.claude
+data
+kurzy.txt
+tests
+__pycache__
+*.egg-info
+.pytest_cache

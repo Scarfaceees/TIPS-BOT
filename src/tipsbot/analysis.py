@@ -102,7 +102,7 @@ def build_view(
         if (c.market, c.selection) in tip_keys:
             status, note = "tip", ""
         elif a.is_value:
-            status, note = "value", "mimo sázkové okno" if win is None else "jiný trh na zápase má vyšší EV"
+            status, note = "value", "mimo sázkové okno" if win is None else "jiný trh na zápase má vyšší čekaný zisk"
         else:
             status, note = "none", ", ".join(a.reasons)
         view.rows.append(
@@ -129,11 +129,11 @@ def build_view(
     if r.status == "tip":
         view.verdict = "TIP"
     elif r.status == "value":
-        view.verdict = "VALUE (mimo okno)" if win is None else "VALUE"
+        view.verdict = "VÝHODNÉ (mimo okno)" if win is None else "VÝHODNÉ"
     elif view.target is not None:
         view.verdict = "CÍL"
     else:
-        view.verdict = "BEZ VALUE – nesázet"
+        view.verdict = "NEVÝHODNÉ – nesázet"
     return view
 
 

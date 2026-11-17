@@ -103,9 +103,14 @@ FORM_MARKETS = (
     ("OU_1.5", ("over", "under"), ("víc než 1.5", "míň než 1.5")),
     ("OU_2.5", ("over", "under"), ("víc než 2.5", "míň než 2.5")),
     ("OU_3.5", ("over", "under"), ("víc než 3.5", "míň než 3.5")),
+    ("OU_4.5", ("over", "under"), ("víc než 4.5", "míň než 4.5")),
+    ("OU_2.0", ("over", "under"), ("víc než 2.0", "míň než 2.0")),
+    ("OU_4.0", ("over", "under"), ("víc než 4.0", "míň než 4.0")),
     ("BTTS", ("yes", "no"), ("oba dají gól: ano", "ne")),
     ("TTH_0.5", ("over", "under"), ("domácí dají gól: ano", "ne")),
     ("TTA_0.5", ("over", "under"), ("hosté dají gól: ano", "ne")),
+    ("TTH_1.5", ("over", "under"), ("domácí víc než 1.5", "míň než 1.5")),
+    ("TTA_1.5", ("over", "under"), ("hosté víc než 1.5", "míň než 1.5")),
 )
 
 

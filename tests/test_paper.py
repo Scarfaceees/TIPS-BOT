@@ -64,3 +64,17 @@ def test_manual_validation(led):
         paper.add_manual(led, league="", name="A - B", day="2026-11-14", market="OU_2.5", selection="yes", odds=2, book="x", now=NOW)
     with pytest.raises(ValueError):
         paper.add_manual(led, league="", name="AB", day="2026-11-14", market="1X2", selection="1", odds=2, book="x", now=NOW)
+
+
+def test_profiles_track_separately(led, monkeypatch):
+    narrow = paper.Profile("uzky", "Úzký", "jen kurzy do 2.0", min_odds=1.5, max_odds=2.0)
+    monkeypatch.setattr(paper, "PROFILES", paper.PROFILES[:1] + (narrow, paper.Profile("vyp", "Vyp", "", active=False)))
+    model = {"OU_2.5:over": 0.62, "OU_2.5:under": 0.60}
+    assert paper.track(led, "UNL", _offers(model=model), NOW) == 2
+    got = {p.profile: (p.selection, p.odds) for p in paper.load(led)}
+    assert got == {"zaklad": ("under", 2.10), "uzky": ("over", 1.76)}  # uzky profil nesmi brat kurz 2.10
+    paper.track(led, "UNL", _offers(odds_ou="1.80 2.10", model=model), NOW)
+    assert len(paper.load(led)) == 2  # aktualizace v ramci profilu, ne duplikaty
+    m = paper.add_manual(led, league="UNL", name="A - B", day="2026-11-14", market="1X2", selection="1",
+                         odds=2.0, book="tipsport", now=NOW, profile_key="uzky")
+    assert m.profile == "uzky" and paper.profile("neznamy").key == "zaklad"

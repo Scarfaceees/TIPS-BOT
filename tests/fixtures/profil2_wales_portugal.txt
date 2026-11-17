@@ -1,0 +1,42 @@
+# Tipsport 16.11. 22:30 (screenshoty)
+tipsport | OU_0.5 | 1.01 16.80
+tipsport | OU_1.0 | 1.02 13.30
+tipsport | OU_1.5 | 1.16 5.35
+tipsport | OU_2.0 | 1.22 4.34
+tipsport | OU_2.5 | 1.52 2.55
+tipsport | OU_3.0 | 1.83 2.01
+tipsport | OU_3.5 | 2.34 1.62
+tipsport | OU_4.0 | 3.30 1.33
+tipsport | OU_4.5 | 3.95 1.25
+tipsport | OU_5.0 | 6.45 1.11
+tipsport | OU_5.5 | 7.07 1.09
+tipsport | TTH_0.5 | 1.50 2.39
+tipsport | TTH_1.0 | 2.37 1.51
+tipsport | TTH_1.5 | 3.60 1.24
+tipsport | TTA_0.5 | 1.06 7.51
+tipsport | TTA_1.0 | 1.08 6.28
+tipsport | TTA_1.5 | 1.38 2.78
+tipsport | TTA_2.0 | 1.68 2.06
+tipsport | TTA_2.5 | 2.31 1.54
+tipsport | TTA_3.0 | 3.58 1.24
+tipsport | TTA_3.5 | 4.42 1.17
+tipsport | BTTS | 1.65 2.11
+tipsport | 2&BTTS | 2.65
+tipsport | 2&H_U0.5 | 2.62
+tipsport | X&BTTS | 5.68
+tipsport | 1&U3.5 | 8.58
+tipsport | X&U3.5 | 6.55
+tipsport | 2&O1.5 | 1.57
+tipsport | 2&O2.5 | 1.89
+tipsport | 2&O3.5 | 2.92
+tipsport | 2&U2.5 | 4.42
+tipsport | 2&U3.5 | 2.41
+tipsport | 2&U4.5 | 1.86
+tipsport | 2&U5.5 | 1.56
+tipsport | G1-3 | 1.73
+tipsport | G1-4 | 1.32
+tipsport | G2-3 | 2.20
+tipsport | G2-4 | 1.58
+tipsport | G3 | 3.94
+tipsport | G2 | 4.37
+tipsport | AH_1.0:away | 1.65

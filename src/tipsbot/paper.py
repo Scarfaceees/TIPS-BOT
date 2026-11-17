@@ -18,6 +18,7 @@ from datetime import datetime
 
 import pandas as pd
 
+from . import marketsim
 from .config import SETTINGS, Settings
 from .settlement import find_result, grade
 
@@ -37,12 +38,20 @@ class Profile:
     max_odds: float | None = None
     markets: tuple[str, ...] | None = None  # zacatky nazvu trhu (napr. "OU_", "1X2"); None = vsechny
     active: bool = True
+    method: str = "edge"  # edge = nejvyssi cekany zisk podle modelu bota; sim = model trhu se simulaci (marketsim)
 
 
 PROFILES = (
     Profile("zaklad", "Základ", "u každého zápasu výběr s nejvyšším čekaným ziskem od 5 %, kurzy podle nastavení"),
-    Profile("profil2", "Profil 2", "zatím nenastaven – pravidla doplníme", active=False),
-    Profile("profil3", "Profil 3", "zatím nenastaven – pravidla doplníme", active=False),
+    Profile("profil2", "Profil 2 – Scénáře model/trh",
+            "góly z modelu bota proti trhu (scénář model, kompromis 50/50 a trh), nejistota odhadu, simulace 1000 "
+            "zápasů; sázka musí mít kladný čekaný zisk v modelu i v kompromisu; přednost má nejrozumnější sázka "
+            "(prohra nejvýš ve 25 % zápasů, i nízký kurz), pak kurz 1,5+ s výhrou aspoň 60 %, pak nejvyšší hodnota. "
+            "Ruční rozbor v záložce Profil 2", method="p2"),
+    Profile("profil3", "Profil 3 – Simulace trhu",
+            "góly fitované z kurzů kanceláří, simulace 1000 zápasů a 4 scénáře; nižší kurz 1.15–1.75, "
+            "prohra nejvýš ve 25 % zápasů, sázka musí obstát i při méně příznivém průběhu",
+            min_odds=1.15, max_odds=1.75, method="sim"),
 )
 DEFAULT = PROFILES[0].key
 
@@ -77,6 +86,7 @@ class Pick:
     profit: float | None = None  # v jednotkach vkladu
     flags: list[str] = field(default_factory=list)
     profile: str = DEFAULT
+    detail: str = ""  # rozbor vyberu (Profil 3: ocekavane goly, simulace, scenare)
 
     @property
     def ev(self) -> float | None:
@@ -109,8 +119,48 @@ def save(ledger, picks: list[Pick]) -> None:
     ledger._set(KEY, json.dumps([asdict(p) for p in picks], ensure_ascii=False))
 
 
+def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime) -> Pick | None:
+    """Profil se simulaci trhu (marketsim)."""
+    cfg = marketsim.SimConfig(min_odds=pr.min_odds or marketsim.DEFAULT.min_odds,
+                              max_odds=pr.max_odds or marketsim.DEFAULT.max_odds)
+    sp = marketsim.best_pick(ev.match_id, model, entries, cfg)
+    if sp is None:
+        return None
+    return Pick(
+        id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
+        day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=sp.market,
+        selection=sp.selection, odds=sp.odds, book=sp.book, p_model=round(sp.p_equiv, 4), source="model",
+        created=now.isoformat(), flags=sp.flags, profile=pr.key, detail=sp.detail,
+    )
+
+
+def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime) -> Pick | None:
+    """Profil 2 (profile2): scenare model / kompromis / trh, robustni sazka."""
+    from . import profile2
+
+    got = profile2.auto_pick(ev.name, model, entries)
+    if got is None:
+        return None
+    pk, a = got
+    o = pk.offer
+    p_eff = o.worst_win / max(1e-9, 1.0 - o.worst_push)
+    flags = [pk.title] + (["čekaný zisk nad 15 % je podezřelý, ověř ručně"] if o.worst_ev > 0.15 else [])
+    return Pick(
+        id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
+        day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=o.market, selection=o.selection,
+        odds=o.odds, book=o.book, p_model=round(p_eff, 4), source="model", created=now.isoformat(), flags=flags,
+        profile=pr.key, detail=profile2.pick_detail(a, pk),
+    )
+
+
 def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings) -> Pick | None:
     """Vyber s nejvyssim cekanym ziskem podle pravidel profilu."""
+    if pr.method == "sim":
+        return _sim(pr, league, ev, model, entries, now)
+    if pr.method == "p2":
+        return _p2(pr, league, ev, model, entries, now)
+    if not model:
+        return None
     lo = settings.value.min_odds if pr.min_odds is None else pr.min_odds
     hi = settings.value.max_odds if pr.max_odds is None else pr.max_odds
     best: tuple[float, Pick] | None = None
@@ -141,7 +191,7 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
     by_match = {(p.profile, p.match_id): p for p in picks if p.source == "model"}
     n = 0
     for ev, model, entries in offers:
-        if not model or ev.kickoff <= now:
+        if ev.kickoff <= now:
             continue
         for pr in PROFILES:
             if not pr.active:

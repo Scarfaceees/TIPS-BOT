@@ -345,6 +345,24 @@ def _group(name: str, note: str, rows: list[dict]) -> dict:
     return {"name": name, "note": note, "rows": rows}
 
 
+def run_and_store(factory, seasons: int = 3) -> dict:
+    """Zpetny test vsech modelu a ulozeni vysledku pro zalozku Overeni modelu."""
+    import json
+
+    from .storage import Ledger
+
+    try:
+        report = run_all(seasons)
+    finally:
+        with factory() as session:
+            Ledger(session)._set(RUNNING_KEY, "")
+            session.commit()
+    with factory() as session:
+        Ledger(session)._set(STATE_KEY, json.dumps(report, ensure_ascii=False))
+        session.commit()
+    return report
+
+
 def run_all(seasons: int = 3, settings: Settings = SETTINGS, progress=print) -> dict:
     """Zpetny test vsech modelu: ligy a reprezentace proti zaviracim kurzum a druhemu modelu, NHL proti cetnostem."""
     from dataclasses import replace

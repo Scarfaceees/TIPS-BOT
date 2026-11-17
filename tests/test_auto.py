@@ -43,12 +43,48 @@ def test_run_once_scans_all_leagues_and_records_status(monkeypatch):
     monkeypatch.setattr(pipeline, "refresh_data", lambda led: ["ligy: ok"])
     monkeypatch.setattr(pipeline, "scan_league", lambda lg, led, **kw: calls.append((lg, kw["cache_only"])) or Rep(lg))
     monkeypatch.setattr("tipsbot.settlement.settle_everything", lambda led: ["nic"])
-    notes = auto.run_once(factory, NOW)
+    notes = auto.run_once(factory, NOW, verify=False)
     assert [c[0] for c in calls] == list(SETTINGS.odds_api.sport_keys)
     assert all(c[1] is False for c in calls)  # bez ulozenych kurzu se stahuje
     assert "data ligy: ok" in notes and "nic" in notes
     with factory() as s:
         st = auto.status(Ledger(s))
     assert st["t"] == NOW.isoformat() and "ENG1 ok" in st["notes"]
-    auto.run_once(factory, NOW + timedelta(hours=6))
-    assert sum(n.startswith("data") for n in auto.run_once(factory, NOW + timedelta(hours=7))) == 0  # data jen 1x denne
+    auto.run_once(factory, NOW + timedelta(hours=6), verify=False)
+    assert sum(n.startswith("data") for n in auto.run_once(factory, NOW + timedelta(hours=7), verify=False)) == 0
+
+
+def test_redact_hides_keys():
+    from tipsbot.oddsapi import redact
+
+    msg = redact("Error for url: https://api.the-odds-api.com/v4/x?apiKey=abc123&regions=eu")
+    assert "abc123" not in msg and "apiKey=***" in msg
+
+
+def test_settle_from_scores_settles_pending_pick(monkeypatch):
+    import pandas as pd
+
+    from tipsbot import oddsapi
+
+    led = Ledger(make_session_factory("sqlite://")())
+    led.set_api_key("k")
+    kick = NOW - timedelta(hours=5)
+    paper.save(led, [paper.Pick(id="a1", league="UNL", match_id="m", name="Germany - Netherlands", day=kick.date().isoformat(),
+                                kickoff=kick.isoformat(), market="BTTS", selection="no", odds=2.9, book="tipsport",
+                                p_model=0.45, source="model", created=NOW.isoformat())])
+    df = pd.DataFrame([{"date": kick.date(), "home": "Germany", "away": "Netherlands", "home_goals": 1, "away_goals": 4}])
+    calls = []
+    monkeypatch.setattr(oddsapi, "fetch_scores", lambda lg, key, **kw: calls.append(lg) or (df, 300))
+    notes = auto.settle_from_scores(led, NOW)
+    assert calls == ["UNL"] and any("lost" in n for n in notes)
+    assert paper.load(led)[0].result == "lost"
+    assert auto.settle_from_scores(led, NOW + timedelta(hours=1)) == []  # nic neceka -> zadne volani
+    assert calls == ["UNL"]
+
+
+def test_panel_button_requests_run(tmp_path):
+    from tipsbot.web import create_app
+
+    c = create_app(f"sqlite:///{tmp_path / 'p.db'}").test_client()
+    r = c.post("/auto/run", data={})
+    assert "spustí se do minuty" in r.get_data(as_text=True)

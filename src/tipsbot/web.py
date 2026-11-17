@@ -153,8 +153,9 @@ table.bets td{vertical-align:middle}
 {% if msg %}<div class="msg {{ 'err' if err else '' }}">{{ msg }}</div>{% endif %}
 
 {% if tab == 'prehled' %}
-<div class="card sec-acc autobar"><b>Automat</b> {% if auto_st %}<span class="muted">naposledy {{ auto_st.t[:16].replace('T', ' ') }} UTC – sám načítá kurzy na 48 h dopředu, všechny profily vybírají sázky do Sledování, odehrané zápasy vyhodnocuje (každých 6 h)</span>
-<details class="fold"><summary>Co udělal ({{ auto_st.notes|length }})</summary><div class="muted">{% for n in auto_st.notes %}<div>{{ n }}</div>{% endfor %}</div></details>{% else %}<span class="muted">zatím neproběhl (spouští se v Dockeru jako služba tipsbot-auto)</span>{% endif %}</div>
+<div class="card sec-acc autobar"><b>Automat</b> {% if auto_st %}<span class="muted">naposledy {{ auto_st.t[:16].replace('T', ' ') }} UTC – sám načítá kurzy na 48 h dopředu, všechny profily vybírají sázky do Sledování, odehrané zápasy vyhodnocuje, jednou týdně ověří model (každých 6 h)</span>
+<details class="fold"><summary>Co udělal ({{ auto_st.notes|length }})</summary><div class="muted">{% for n in auto_st.notes %}<div>{{ n }}</div>{% endfor %}</div></details>{% else %}<span class="muted">zatím neproběhl (spouští se v Dockeru jako služba tipsbot-auto)</span>{% endif %}
+<form class="row" method="post" action="{{ url_for('auto_run') }}" style="margin-top:6px">{% if auto_req %}<span class="badge warn">spustí se do minuty</span>{% else %}<button class="ghost sm">Spustit automat teď</button>{% endif %}</form></div>
 <div class="cols"><aside>
 <div class="stats">
   <div class="stat"><span>Bankroll</span><b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b><small>dnes vsazeno {{ '%.0f'|format(exposure) }} z {{ '%.0f'|format(exposure_cap) }}</small></div>
@@ -747,6 +748,7 @@ def create_app(database_url: str | None = None) -> Flask:
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),
             auto_st=auto.status(led),
+            auto_req=bool(led._get(auto.REQUEST_KEY, "")),
             has_football_key=bool(led.api_football_key()),
             scan_leagues=list(SETTINGS.odds_api.sport_keys),
             c=type("C", (), calc) if calc else None,
@@ -842,6 +844,11 @@ def create_app(database_url: str | None = None) -> Flask:
             return "Zpětný test spuštěn na pozadí. Za zhruba 25 minut obnov stránku."
 
         return action(fn, "", tab="overeni")
+
+    @app.post("/auto/run")
+    def auto_run():
+        return action(lambda led, _: auto.request_run(led),
+                      "Automat se spustí do minuty (načte kurzy, profily vyberou sázky, vyhodnotí zápasy).")
 
     @app.post("/refresh-data")
     def refresh_data():

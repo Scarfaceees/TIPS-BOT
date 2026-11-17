@@ -516,7 +516,7 @@ def scan_all(
         except Exception as e:  # noqa: BLE001 - chyba jedne souteze nesmi shodit ostatni
             log.exception("sken %s selhal", league)
             rep = ScanReport(league)
-            rep.notes.append(f"chyba skenu: {e!r}")
+            rep.notes.append(oddsapi.redact(f"chyba skenu: {e!r}"))
             reports.append(rep)
     return reports
 

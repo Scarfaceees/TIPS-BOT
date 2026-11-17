@@ -295,20 +295,9 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(notes))
         return 0
     if args.cmd == "verify":
-        import json
-
         from . import backtest
 
-        factory = make_session_factory(args.db)
-        try:
-            report = backtest.run_all(args.seasons)
-        finally:
-            with factory() as session:
-                Ledger(session)._set(backtest.RUNNING_KEY, "")
-                session.commit()
-        with factory() as session:
-            Ledger(session)._set(backtest.STATE_KEY, json.dumps(report, ensure_ascii=False))
-            session.commit()
+        report = backtest.run_and_store(make_session_factory(args.db), args.seasons)
         for g in report["groups"]:
             print(f"\n{g['name']} ({g['note']})")
             for r in g["rows"]:

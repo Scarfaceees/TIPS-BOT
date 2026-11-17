@@ -5,6 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+import re
+
+import pandas as pd
 import requests
 
 from .config import SETTINGS, Settings
@@ -69,6 +72,41 @@ def fetch_raw(
     if resp.status_code != 200:
         raise OddsApiError(f"Kurzove API vratilo {resp.status_code}: {resp.text[:200]}")
     return resp.json(), dict(resp.headers)
+
+
+_SECRET = re.compile(r"(?i)\b(api_?key|key|token)=[^&\s'\"]+")
+
+
+def redact(text: str) -> str:
+    """Zprava bez klicu (chyby knihovny requests obsahuji celou adresu i s apiKey)."""
+    return _SECRET.sub(r"\1=***", str(text))
+
+
+def fetch_scores(league: str, api_key: str, days: int = 3, settings: Settings = SETTINGS,
+                 timeout: int = 30) -> tuple[pd.DataFrame, int | None]:
+    """Vysledky odehranych zapasu souteze za posledni `days` dny (2 kredity). Sloupce jako u ostatnich vysledku."""
+    sport = settings.odds_api.sport_keys.get(league)
+    if sport is None or not api_key:
+        raise OddsApiError(f"Výsledky {league} z kurzového API nejsou dostupné.")
+    resp = requests.get(f"{settings.odds_api.base_url}/sports/{sport}/scores",
+                        params={"apiKey": api_key, "daysFrom": days, "dateFormat": "iso"}, timeout=timeout)
+    if resp.status_code != 200:
+        raise OddsApiError(f"Kurzove API vratilo {resp.status_code}: {resp.text[:200]}")
+    rows = []
+    for ev in resp.json():
+        sc = {s.get("name"): s.get("score") for s in ev.get("scores") or []}
+        home, away = ev.get("home_team"), ev.get("away_team")
+        if not ev.get("completed") or sc.get(home) is None or sc.get(away) is None:
+            continue
+        try:
+            hg, ag = int(sc[home]), int(sc[away])
+        except (TypeError, ValueError):
+            continue
+        rows.append({"date": _parse_time(ev["commence_time"]).date(), "home": home, "away": away,
+                     "home_goals": hg, "away_goals": ag})
+    left = resp.headers.get("x-requests-remaining")
+    df = pd.DataFrame(rows, columns=["date", "home", "away", "home_goals", "away_goals"])
+    return df, int(float(left)) if left not in (None, "") else None
 
 
 def _parse_time(value: str) -> datetime:

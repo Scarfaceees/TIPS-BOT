@@ -159,6 +159,10 @@ class TimingConfig:
     main_window_minutes: tuple[int, int] = (15, 720)
     # Bez prubezne obnovy: sken se spousti rucne nebo par krat za hraci den.
     odds_refresh_seconds: int = 6 * 3600
+    # Automat (tipsbot auto): kurzy souteze stahne znovu nejdriv po tolika hodinach (2 kredity za soutez)
+    # a pod touto rezervou kreditu uz jen prepocitava z ulozenych kurzu.
+    auto_odds_hours: int = 24
+    auto_credit_reserve: int = 50
     # Tip plati do vykopu (nejdele tuto dobu); hlida ho minimalni kurz.
     tip_validity_seconds: int = 24 * 3600
 

@@ -91,6 +91,8 @@ def _parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("scan", help="nacte zive kurzy a vyda/zkontroluje tipy")
     sc.add_argument("--league", default="all", help="kod souteze nebo 'all'")
 
+    sub.add_parser("auto", help="automat: data, kurzy na 48 h dopredu, vsechny profily, vyhodnoceni (stale dokola)")
+
     rn = sub.add_parser("run", help="opakovany sken v intervalu (pozor na kredity API)")
     rn.add_argument("--league", default="all")
     rn.add_argument("--interval", type=int, default=SETTINGS.timing.odds_refresh_seconds, help="sekundy mezi skeny")
@@ -327,6 +329,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Stazeno: {download_goalies()}")
         except Exception as e:  # noqa: BLE001 - brankari jsou doplnek, model bezi i bez nich
             print(f"Brankari se nepodarilo stahnout ({e}); model pobezi bez nich.")
+        return 0
+    if args.cmd == "auto":
+        from .auto import run_forever
+
+        run_forever(make_session_factory(args.db))
         return 0
     if args.cmd in ("scan", "run"):
         return _scan(args)

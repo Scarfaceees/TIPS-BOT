@@ -249,9 +249,9 @@ def scan_league(
     now = now or utcnow()
     report = ScanReport(league)
     live = events is None  # doplnujici informace (zraneni, pocasi, novinky) jen pri zivem stazeni
-    horizon = now + timedelta(hours=settings.timing.early_window_hours[1])
+    horizon = now + timedelta(hours=settings.timing.analysis_hours)
     if events is None:
-        # Setreni kreditu: soutez bez zapasu v pristich 24 h se nestahuje.
+        # Setreni kreditu: soutez bez zapasu v pristich 48 h se nestahuje.
         nxt = ledger.next_kickoff(league)
         if nxt is not None and nxt > horizon and not ledger.has_open_tips(league):
             report.notes.append(f"preskoceno, dalsi zapas {nxt:%d.%m. %H:%M} UTC")
@@ -318,12 +318,16 @@ def scan_league(
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
     modelcheck.log_predictions(ledger, league, {m: c for m, c in cands_by_match.items() if models_by_match[m]}, now)
-    if czech and is_football:
+    if is_football:
+        # Vsechny profily vybiraji z ceskych kurzu; zapas bez nich dostane median zahranicnich kancelari.
         by_ev = {ev.match_id: (ev, model_by_match.get(ev.match_id), []) for ev in events}
         for e in czech:
             hit = czechodds.find_event(e, events)
             if hit is not None:
                 by_ev[hit.match_id][2].append(e)
+        for ev, _, entries in by_ev.values():
+            if not entries:
+                entries.extend(market_entries(ev, now))
         paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 
@@ -475,6 +479,25 @@ def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:
         ok = ok or bool(got)
         out += got
     return out, ok
+
+
+MARKET_BOOK = "zahraničí (medián)"
+_EXCHANGES = ("betfair_ex_eu", "betfair_ex_uk", "matchbook")
+
+
+def market_entries(ev: oddsapi.Event, now: datetime) -> list[czechodds.Entry]:
+    """Kurzy zapasu jako zaznamy pro Sledovani: median kancelari z kurzoveho API (burzy bez provize vynechany),
+    kdyz pro zapas nejsou zadane ceske kurzy."""
+    out = []
+    for mkt in ev.markets.values():
+        if paper.selections(mkt.market) != mkt.selections:
+            continue
+        rows = [b for k, b in mkt.books.items() if k not in _EXCHANGES and all(s in b for s in mkt.selections)]
+        if len(rows) < 2:
+            continue
+        odds = tuple(round(float(np.median([b[s] for b in rows])), 2) for s in mkt.selections)
+        out.append(czechodds.Entry(MARKET_BOOK, ev.home, ev.away, mkt.market, odds, now))
+    return out
 
 
 def scan_all(

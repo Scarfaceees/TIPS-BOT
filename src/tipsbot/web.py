@@ -23,7 +23,7 @@ def _local(dt: datetime) -> str:
 from flask import Flask, render_template_string, request, url_for
 from sqlalchemy import select
 
-from . import analysis, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
+from . import analysis, auto, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
@@ -153,6 +153,8 @@ table.bets td{vertical-align:middle}
 {% if msg %}<div class="msg {{ 'err' if err else '' }}">{{ msg }}</div>{% endif %}
 
 {% if tab == 'prehled' %}
+<div class="card sec-acc autobar"><b>Automat</b> {% if auto_st %}<span class="muted">naposledy {{ auto_st.t[:16].replace('T', ' ') }} UTC – sám načítá kurzy na 48 h dopředu, všechny profily vybírají sázky do Sledování, odehrané zápasy vyhodnocuje (každých 6 h)</span>
+<details class="fold"><summary>Co udělal ({{ auto_st.notes|length }})</summary><div class="muted">{% for n in auto_st.notes %}<div>{{ n }}</div>{% endfor %}</div></details>{% else %}<span class="muted">zatím neproběhl (spouští se v Dockeru jako služba tipsbot-auto)</span>{% endif %}</div>
 <div class="cols"><aside>
 <div class="stats">
   <div class="stat"><span>Bankroll</span><b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b><small>dnes vsazeno {{ '%.0f'|format(exposure) }} z {{ '%.0f'|format(exposure_cap) }}</small></div>
@@ -744,6 +746,7 @@ def create_app(database_url: str | None = None) -> Flask:
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),
+            auto_st=auto.status(led),
             has_football_key=bool(led.api_football_key()),
             scan_leagues=list(SETTINGS.odds_api.sport_keys),
             c=type("C", (), calc) if calc else None,

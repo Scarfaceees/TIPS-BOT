@@ -110,7 +110,8 @@ def make_session_factory(database_url: str | None = None) -> sessionmaker[Sessio
         from pathlib import Path
 
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(url)
+    # panel a automat pisou do stejne SQLite databaze: pri zapisu druheho radeji pockat nez spadnout
+    engine = create_engine(url, connect_args={"timeout": 60} if url.startswith("sqlite") else {})
     Base.metadata.create_all(engine)
     return sessionmaker(engine, expire_on_commit=False)
 

@@ -1,10 +1,23 @@
 services:
   tipsbot:
     build: .
+    image: tipsbot-local
     container_name: tipsbot
     restart: always
     ports:
       - "127.0.0.1:8000:8000"   # jen z tohoto pocitace
+    volumes:
+      - ./data:/app/data
+    environment:
+      TZ: Europe/Prague
+
+  # automat: kazdych 6 h data, kurzy na 48 h dopredu, vsechny profily, vyhodnoceni
+  tipsbot-auto:
+    build: .
+    image: tipsbot-local
+    container_name: tipsbot-auto
+    restart: always
+    command: ["tipsbot", "auto"]
     volumes:
       - ./data:/app/data
     environment:

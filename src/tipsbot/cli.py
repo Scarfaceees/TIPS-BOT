@@ -72,6 +72,16 @@ def _parser() -> argparse.ArgumentParser:
     co.add_argument("--list", action="store_true", help="vypise ulozene kurzy")
     co.add_argument("--clear", action="store_true", help="smaze ulozene kurzy")
     sub.add_parser("settle-auto", help="stahne vysledky a automaticky vyhodnoti otevrene tikety")
+    p2 = sub.add_parser("profil2", help="Profil 2: rozbor zapasu z rucnich kurzu (scenare model/trh, simulace, sure bety)")
+    p2.add_argument("--match", required=True, help="'Domaci - Hoste'")
+    p2.add_argument("--odds", required=True, help="soubor s kurzy, radky 'kancelar | trh | kurzy' (viz README)")
+    p2.add_argument("--lam", type=float, nargs=2, metavar=("DOMACI", "HOSTE"), help="vlastni odhad ocekavanych golu")
+    p2.add_argument("--league", default="", help="kod souteze (napr. UNL) - doplni odhad z modelu bota")
+    p2.add_argument("--day", default="", help="datum zapasu RRRR-MM-DD (nutne pro --track)")
+    p2.add_argument("--context", type=float, nargs=2, default=(1.0, 1.0), metavar=("DOMACI", "HOSTE"),
+                    help="nasobky golu z kontextu (absence, motivace), napr. 0.95 0.9")
+    p2.add_argument("--save", action="store_true", help="ulozi rozbor do panelu (zalozka Profil 2)")
+    p2.add_argument("--track", action="store_true", help="doporucene sazky prida do Sledovani (zdroj profil2)")
 
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
     ak.add_argument("key")
@@ -204,6 +214,31 @@ def main(argv: list[str] | None = None) -> int:
             notes = settle_everything(Ledger(session))
             session.commit()
         print("\n".join(notes) or "Nic k vyhodnocení (výsledky ještě nejsou v datech).")
+        return 0
+    if args.cmd == "profil2":
+        from . import profile2
+        from .storage import utcnow
+
+        now = utcnow()
+        entries, errors = profile2.parse_odds(open(args.odds, encoding="utf-8").read())
+        for err in errors:
+            print(f"Preskoceno - {err}", file=sys.stderr)
+        home, _, away = args.match.partition(" - ")
+        lams, source = profile2.combine_lambdas(args.lam, args.league, home.strip(), away.strip(), now.date())
+        with make_session_factory(args.db)() as session:
+            led = Ledger(session)
+            try:
+                a = profile2.analyse(args.match, entries, lams, source, args.league, args.day, tuple(args.context),
+                                     led.bankroll(), led.open_exposure(now.date()), now)
+            except ValueError as e:
+                print(f"Chyba: {e}", file=sys.stderr)
+                return 1
+            print(profile2.format_text(a, SETTINGS.currency))
+            if args.save:
+                profile2.save(led, a)
+            if args.track:
+                print(f"Do sledovani pridano: {profile2.track_picks(led, a, now)}")
+            session.commit()
         return 0
     if args.cmd == "czech-odds":
         from . import czechodds

@@ -62,6 +62,47 @@ Sken jedné soutěže stojí 2 kredity (u NHL 3 kvůli puckline). Kurzy se 10 mi
 (kredity se nespotřebují); zaškrtnutím „nová data" v panelu se stáhnou znovu.
 Soutěž bez zápasu v příštích 24 hodinách se nestahuje.
 
+## Profil 2 – rozbor zápasu z vlastních kurzů
+
+Záložka **Profil 2** v panelu (nebo příkaz `tipsbot profil2`) rozebere jeden zápas z kurzů, které opíšeš
+z Tipsportu, Fortuny a dalších. Postup vychází z rozboru Wales – Portugalsko (Liga národů, 11/2026):
+
+1. **Tři scénáře gólů:** A = model (tvůj odhad λ, model bota pro zvolenou soutěž, nebo průměr obou;
+   volitelně násobky z kontextu – absence, motivace), B = kompromis 50 % model / 50 % trh,
+   C = trh (λ dopočtené z kurzů po odstranění marže, jen pro kontrolu).
+2. **Nejistota odhadu:** λ se násobí náhodným faktorem (gama rozdělení, ±25 %), takže vysoké výsledky
+   nejsou podceněné jako u čistého Poissona.
+3. **Přesný výpočet každé sázky** na matici výsledků: výhra / vrácení / prohra a EV ve všech scénářích.
+   Celé a čtvrtinové linie (Under 4,0, Over 2,25, handicap −1,0) se počítají s vrácením vkladu.
+4. **Doporučení** jen ze sázek s kladným EV v A i B: *nejrozumnější sázka* (prohra max. 25 %, i nízký kurz),
+   *kurz 1,5+ s vysokou šancí* (výhra aspoň 60 %), *nejvyšší hodnota*; k tomu *vyhnout se* a minimální kurz.
+5. **Korelace:** když doporučené sázky stojí na stejném průběhu zápasu, bot upozorní, ať je nedáváš na AKO.
+6. **Sure bety** mezi kancelářemi a hranice kurzu, od které by sure bet vznikl.
+7. **Simulace 1000 zápasů:** nejčastější výsledky, rozložení gólů a výsledek každé sázky po 100 Kč.
+
+Proti férové linii týchž kurzů (scénář C) vychází EV vždy zhruba minus marže – kladná hodnota vzniká
+jen tam, kde se model liší od trhu, nebo u lepšího kurzu jiné kanceláře. **Profil 2 není ověřený
+zpětným testem**: tlačítkem „Sledovat doporučené sázky“ je pošli do Sledování (zdroj `profil2`)
+a po stovce vyhodnocených sázek uvidíš, jestli skutečně vydělávají.
+
+Zápis kurzů (řádek `kancelář | trh | kurzy`, kancelář lze vynechat):
+
+    OU_3.5 | 2.34 1.62            celkem gólů: víc, méně (OU_4.0 = celá linie s vrácením)
+    1X2 | 6.90 4.80 1.45          DC (1X 12 X2), DNB (domácí hosté), BTTS (ano ne)
+    TTA_1.5 | 1.38 2.78           góly hostů (TTH_ = domácích): víc, méně
+    AH_-1.0 | 2.10 1.70           handicap z pohledu domácích: domácí, hosté
+    U4.5 | 1.25                   jedna strana linie (O2.5, H_U1.5, A_O0.5) nebo TRH:výběr (AH_1.0:away)
+    2&U3.5 | 2.41                 kombinace s jedním kurzem (X2&U3.5, 2&BTTS, 2&H_U0.5, G1-3, G3, S0:1)
+    fortuna | OU_3.5 | 2.30 1.66  jiná kancelář (pro sure bety a nejlepší kurz)
+
+Příkazová řádka:
+
+    tipsbot profil2 --match "Wales - Portugalsko" --odds kurzy.txt --lam 0.83 1.95 --day 2026-11-17 --save --track
+    tipsbot profil2 --match "Wales - Portugalsko" --odds kurzy.txt --league UNL      (λ z modelu bota)
+
+Ukázkové kurzy z rozboru jsou v `tests/fixtures/profil2_wales_portugal.txt`. Nastavení (nejistota, prahy,
+váha kompromisu) je v `profile2.Profile2Config`.
+
 ## Co bot ukáže u každého zápasu
 
 - Tabulka 10 a více trhů: pravděpodobnost modelu, férová pravděpodobnost trhu, férový kurz, kurz a EV.

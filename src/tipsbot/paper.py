@@ -43,7 +43,11 @@ class Profile:
 
 PROFILES = (
     Profile("zaklad", "Základ", "u každého zápasu výběr s nejvyšším čekaným ziskem od 5 %, kurzy podle nastavení"),
-    Profile("profil2", "Profil 2", "zatím nenastaven – pravidla doplníme", active=False),
+    Profile("profil2", "Profil 2 – Scénáře model/trh",
+            "góly z modelu bota proti trhu (scénář model, kompromis 50/50 a trh), nejistota odhadu, simulace 1000 "
+            "zápasů; sázka musí mít kladný čekaný zisk v modelu i v kompromisu; přednost má nejrozumnější sázka "
+            "(prohra nejvýš ve 25 % zápasů, i nízký kurz), pak kurz 1,5+ s výhrou aspoň 60 %, pak nejvyšší hodnota. "
+            "Ruční rozbor v záložce Profil 2", method="p2"),
     Profile("profil3", "Profil 3 – Simulace trhu",
             "góly fitované z kurzů kanceláří, simulace 1000 zápasů a 4 scénáře; nižší kurz 1.15–1.75, "
             "prohra nejvýš ve 25 % zápasů, sázka musí obstát i při méně příznivém průběhu",
@@ -130,10 +134,31 @@ def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: d
     )
 
 
+def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime) -> Pick | None:
+    """Profil 2 (profile2): scenare model / kompromis / trh, robustni sazka."""
+    from . import profile2
+
+    got = profile2.auto_pick(ev.name, model, entries)
+    if got is None:
+        return None
+    pk, a = got
+    o = pk.offer
+    p_eff = o.worst_win / max(1e-9, 1.0 - o.worst_push)
+    flags = [pk.title] + (["čekaný zisk nad 15 % je podezřelý, ověř ručně"] if o.worst_ev > 0.15 else [])
+    return Pick(
+        id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
+        day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=o.market, selection=o.selection,
+        odds=o.odds, book=o.book, p_model=round(p_eff, 4), source="model", created=now.isoformat(), flags=flags,
+        profile=pr.key, detail=profile2.pick_detail(a, pk),
+    )
+
+
 def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings) -> Pick | None:
     """Vyber s nejvyssim cekanym ziskem podle pravidel profilu."""
     if pr.method == "sim":
         return _sim(pr, league, ev, model, entries, now)
+    if pr.method == "p2":
+        return _p2(pr, league, ev, model, entries, now)
     if not model:
         return None
     lo = settings.value.min_odds if pr.min_odds is None else pr.min_odds

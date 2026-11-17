@@ -23,12 +23,12 @@ def _local(dt: datetime) -> str:
 from flask import Flask, render_template_string, request, url_for
 from sqlalchemy import select
 
-from . import analysis, backtest, combo, czechodds, detail, devig, metrics, paper, risk, secondopinion
+from . import analysis, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
 TABS = (("prehled", "Přehled"), ("tikety", "Moje tikety"), ("sledovani", "Sledování modelu"),
-        ("historie", "Historie"), ("overeni", "Ověření modelu"), ("kalkulacka", "Kalkulačka"), ("nastaveni", "Nastavení"))
+        ("historie", "Historie"), ("overeni", "Ověření modelu"), ("profil2", "Profil 2"), ("kalkulacka", "Kalkulačka"), ("nastaveni", "Nastavení"))
 TAB_ALIASES = {"sazka": "tikety"}  # stare odkazy
 
 PAGE = """<!doctype html>
@@ -379,6 +379,95 @@ se zavíracím kurzem Pinnacle a s druhým nezávislým modelem. Čím nižší 
 <tr class="{{ 'win' if r.best }}"><td>{{ r.source }}</td><td class="num">{{ '%.4f'|format(r.logloss) }}</td><td class="num">{{ '%.4f'|format(r.brier) }}</td></tr>{% endfor %}</table></div>{% endfor %}</div>
 {% else %}<div class="card muted">Zatím nebyl spuštěn.</div>{% endif %}
 
+{% elif tab == 'profil2' %}
+<h2>Profil 2 – rozbor zápasu z tvých kurzů</h2>
+<div class="card">
+<div class="muted">Postup z rozboru Wales – Portugalsko: tři scénáře gólů (A model, B kompromis model/trh, C trh), nejistota odhadu,
+přesný výpočet každé sázky včetně vrácení vkladu (celé linie), simulace 1000 zápasů, kontrola korelace a sure betů.
+Doporučí jen sázky s kladnou hodnotou ve scénáři A i B. <b>Profil 2 není ověřený zpětným testem</b> – doporučené sázky si dej do sledování a po čase uvidíš, jestli vydělávají.</div>
+<form method="post" action="{{ url_for('profil2_run') }}"><input type="hidden" name="tab" value="profil2">
+<div class="grid2" style="margin-top:12px">
+  <label>Zápas (Domácí - Hosté)<input name="match" placeholder="Wales - Portugalsko" value="{{ p2f.match }}" required></label>
+  <label>Datum zápasu<input name="day" type="date" value="{{ p2f.day or today }}"></label>
+  <label>Soutěž (doplní model bota)<select name="league"><option value="">– bez modelu bota –</option>{% for k, lg in leagues.items() if lg.sport.value == 'football' %}<option value="{{ k }}" {{ 'selected' if p2f.league == k }}>{{ lg.name }}</option>{% endfor %}</select></label>
+  <label>Kancelář (výchozí pro řádky bez ní)<select name="book">{% for b in czech_books %}<option {{ 'selected' if p2f.book == b }}>{{ b }}</option>{% endfor %}</select></label>
+  <label>Můj odhad gólů – domácí (λ)<input name="lam_h" type="number" step="0.01" min="0.05" placeholder="0.83" value="{{ p2f.lam_h }}"></label>
+  <label>Můj odhad gólů – hosté (λ)<input name="lam_a" type="number" step="0.01" min="0.05" placeholder="1.95" value="{{ p2f.lam_a }}"></label>
+  <label>Kontext – góly domácích ×<input name="ctx_h" type="number" step="0.01" min="0.5" max="1.5" value="{{ p2f.ctx_h or '1.00' }}"></label>
+  <label>Kontext – góly hostů ×<input name="ctx_a" type="number" step="0.01" min="0.5" max="1.5" value="{{ p2f.ctx_a or '1.00' }}"></label>
+</div>
+<label style="margin-top:10px">Kurzy (řádek: kancelář | trh | kurzy; kancelář můžeš vynechat)
+<textarea name="odds" rows="9" placeholder="OU_3.5 | 2.34 1.62        (víc, méně)
+OU_4.0 | 3.30 1.33        (celá linie: při 4 gólech vrácení)
+1X2 | 6.90 4.80 1.45
+BTTS | 1.65 2.11          (ano, ne)
+TTA_1.5 | 1.38 2.78       (góly hostů: víc, méně)
+U4.5 | 1.25               (jen jedna strana)
+AH_1.0:away | 1.65        (hosté -1,0)
+2&U3.5 | 2.41             (kombinace)
+G1-3 | 1.73               (1 až 3 góly)
+fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
+<label style="flex-direction:row;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" name="use_czech" value="1" style="width:auto" {{ 'checked' if p2f.use_czech != '0' }}> přidat i kurzy uložené u zápasu / v Nastavení</label>
+<div class="row"><button>Spočítat Profil 2</button></div></form>
+<details class="fold" style="margin-top:8px"><summary>Zápis trhů</summary><ul class="help">
+<li><b>1X2</b> (1 X 2), <b>DC</b> (1X 12 X2), <b>DNB</b> (domácí hosté), <b>BTTS</b> (ano ne)</li>
+<li><b>OU_2.5</b>, <b>OU_4.0</b>, <b>OU_2.25</b> – celkem gólů (víc méně); celé a čtvrtinové linie se počítají s vrácením</li>
+<li><b>TTH_1.5</b> / <b>TTA_1.5</b> – góly domácích / hostů (víc méně); <b>AH_-1.0</b> – handicap z pohledu domácích (domácí hosté)</li>
+<li>Jedna strana: <b>U4.5</b>, <b>O2.5</b>, <b>H_U1.5</b> (domácí méně než 1,5), <b>A_O0.5</b>, nebo obecně <b>TRH:výběr</b> (např. AH_1.0:away)</li>
+<li>Kombinace s jedním kurzem: <b>2&amp;U3.5</b>, <b>X2&amp;U3.5</b>, <b>2&amp;BTTS</b>, <b>2&amp;H_U0.5</b> (výhra hostů s čistým kontem), <b>G1-3</b>, <b>G3</b>, <b>S0:1</b></li>
+</ul></details>
+</div>
+
+{% if p2st.settled or p2st.open %}<h2>Sledování Profilu 2</h2>
+<div class="stats"><div class="stat"><span>Vyhodnoceno</span><b>{{ p2st.settled }}</b><small>čeká {{ p2st.open }}</small></div>
+<div class="stat"><span>Zisk (jednotky)</span><b class="{{ 'pos' if p2st.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p2st.profit) }}</b></div>
+<div class="stat"><span>ROI</span><b>{{ '%+.1f %%'|format(p2st.roi * 100) if p2st.roi is not none else '–' }}</b></div>
+<div class="stat"><span>Úspěšnost</span><b>{{ '%.0f %%'|format(p2st.hit * 100) if p2st.hit is not none else '–' }}</b><small>{% if p2st.avg_ev is not none %}čekané EV {{ '%+.1f %%'|format(p2st.avg_ev * 100) }}{% endif %}</small></div></div>
+<div class="muted">Do 100+ vyhodnocených sázek jsou výsledky hlavně náhoda. Výběry a výsledky najdeš v záložce Sledování modelu.</div>{% endif %}
+
+{% for a in p2 %}{% set first = loop.first %}
+<details class="card match" {{ 'open' if first }}>
+<summary class="ms" style="grid-template-columns:1fr auto 18px"><span class="nm">{{ a.match }}<small>{{ a.day }}{{ ' · ' + leagues[a.league].name if a.league in leagues }} · spočteno {{ a.created.replace('T', ' ') }} UTC</small></span>
+<span class="rc">{% if a.picks %}<b>{{ a.picks[0].offer.label }} @ {{ '%.2f'|format(a.picks[0].offer.odds) }}</b><small>{{ a.picks[0].title }}</small>{% else %}<span class="badge bad">nesázet</span>{% endif %}</span><span class="arr">▸</span></summary>
+<div class="mbody">
+<table class="mk" style="margin-top:6px"><tr><th>Scénář</th><th class="num">Góly domácí</th><th class="num">Góly hosté</th><th class="num">Celkem</th><th>Zdroj</th></tr>
+{% for sc in a.scenarios %}<tr><td><b>{{ sc.name }}</b>{% if not sc.decides %} <span class="muted">(kontrola)</span>{% endif %}</td><td class="num">{{ '%.2f'|format(sc.lam_h) }}</td><td class="num">{{ '%.2f'|format(sc.lam_a) }}</td><td class="num">{{ '%.2f'|format(sc.lam_h + sc.lam_a) }}</td><td class="muted">{{ sc.source }}</td></tr>{% endfor %}</table>
+
+{% for pk in a.picks %}{% set o = pk.offer %}<div class="tipbox {{ 'alt' if not loop.first }}">
+<div class="tip"><div><div class="muted">{{ pk.title }}</div><div class="title">{{ o.label }} <span class="muted">({{ o.book }})</span></div>
+<div class="kv"><span>Výhra <b>{{ '%.0f'|format(o.worst_win * 100) }} %</b></span>{% if o.worst_push > 0.005 %}<span>Vrácení <b>{{ '%.0f'|format(o.worst_push * 100) }} %</b></span>{% endif %}<span>Prohra <b>{{ '%.0f'|format(o.worst_loss * 100) }} %</b></span>
+<span>EV {% for e in o.ev %}<b class="{{ 'pos' if e > 0 else 'neg' }}">{{ '%+.1f'|format(e * 100) }} %</b>{{ ' / ' if not loop.last }}{% endfor %}</span>
+<span>Min. kurz <b>{{ '%.2f'|format(o.min_odds) }}</b></span><span>Simulace 1000× po 100 {{ cur }} <b class="{{ 'pos' if o.sim_profit > 0 else 'neg' }}">{{ '%+.0f'|format(o.sim_profit * 100) }} %</b></span></div></div>
+<div class="big">{{ '%.2f'|format(o.odds) }}<small>{% if pk.stake %}vklad {{ '%.0f'|format(pk.stake) }} {{ cur }}{% else %}vklad: {{ pk.stake_note }}{% endif %}</small></div></div></div>{% endfor %}
+{% for n in a.notes %}<div class="card note" style="margin-top:8px">{{ n }}</div>{% endfor %}
+{% if a.correlation %}<div class="muted" style="margin-top:6px">Společně: {% for c in a.correlation %}{{ c.a }} + {{ c.b }} – obě vyjdou {{ '%.0f'|format(c.both_win * 100) }} %, obě padnou {{ '%.0f'|format(c.both_lose * 100) }} %{{ '; ' if not loop.last }}{% endfor %}.</div>{% endif %}
+<div class="row" style="margin-top:8px">
+<form method="post" action="{{ url_for('profil2_track') }}"><input type="hidden" name="tab" value="profil2"><input type="hidden" name="match" value="{{ a.match }}"><input type="hidden" name="day" value="{{ a.day }}"><button class="ok sm" {{ 'disabled' if not a.picks }}>Sledovat doporučené sázky</button></form>
+<form method="post" action="{{ url_for('profil2_delete') }}"><input type="hidden" name="tab" value="profil2"><input type="hidden" name="match" value="{{ a.match }}"><input type="hidden" name="day" value="{{ a.day }}"><button class="ghost sm">Smazat rozbor</button></form></div>
+
+<div class="boxes">
+<div class="box"><h4>Simulace {{ a.sim.n }} zápasů (scénář {{ a.scenarios[0].name.split(' ')[0] }})</h4>
+<p>Domácí <b>{{ '%.1f'|format(a.sim.home) }} %</b> · remíza <b>{{ '%.1f'|format(a.sim.draw) }} %</b> · hosté <b>{{ '%.1f'|format(a.sim.away) }} %</b> · průměr <b>{{ '%.2f'|format(a.sim.avg_goals) }}</b> gólu</p>
+<table><tr><th>Výsledek</th><th class="num">%</th><th>Výsledek</th><th class="num">%</th></tr>
+{% for i in range(0, a.sim.top|length, 2) %}<tr><td>{{ a.sim.top[i].score }}</td><td class="num">{{ '%.1f'|format(a.sim.top[i].pct) }}</td>{% if i + 1 < a.sim.top|length %}<td>{{ a.sim.top[i+1].score }}</td><td class="num">{{ '%.1f'|format(a.sim.top[i+1].pct) }}</td>{% endif %}</tr>{% endfor %}</table>
+<p class="muted">Počet gólů: {% for g, v in a.sim.goals.items() %}{{ g }}: {{ '%.1f'|format(v) }} %{{ ' · ' if not loop.last }}{% endfor %}</p></div>
+<div class="box"><h4>Sure bety</h4>{% set sure = a.surebets|selectattr('sure')|list %}
+{% if sure %}{% for sb in sure %}<p><span class="badge tipb">SURE BET</span> {% for sel in sb.labels %}{{ sel }} {{ '%.2f'|format(sb.odds[loop.index0]) }} ({{ sb.books[loop.index0] }}, {{ sb.split[loop.index0] }} % vkladu){{ ', ' if not loop.last }}{% endfor %} – výnos <b>{{ '%+.1f'|format(sb.yield * 100) }} %</b></p>{% endfor %}
+{% else %}<p class="muted">Žádný. Sure bet vznikne, když jiná kancelář nabídne aspoň:</p>
+<table>{% for sb in a.surebets if sb.needed %}<tr>{% for i in (0, 1) %}<td>{{ sb.labels[1 - i] }} ≥ <b>{{ '%.2f'|format(sb.needed[i]) }}</b> <span class="muted">(proti {{ '%.2f'|format(sb.odds[i]) }})</span></td>{% endfor %}</tr>{% endfor %}</table>{% endif %}</div>
+{% if a.avoid %}<div class="box"><h4>Vyhnout se</h4><ul>{% for o in a.avoid %}<li>{{ o.label }} @ {{ '%.2f'|format(o.odds) }} <span class="neg">{{ '%+.0f'|format(o.worst_ev * 100) }} %</span></li>{% endfor %}</ul></div>{% endif %}
+</div>
+<details class="fold" style="margin-top:8px"><summary>Všechny nabídky ({{ a.offers|length }})</summary><div class="tablewrap">
+<table class="mk"><tr><th>Sázka</th><th class="num">Kurz</th>{% for sc in a.scenarios %}<th class="num">EV {{ sc.name.split(' ')[0] }}</th>{% endfor %}<th class="num">Výhra / vrácení / prohra</th><th class="num">Min. kurz</th><th class="num">Sim.</th><th></th></tr>
+{% for o in a.offers %}<tr><td>{{ o.label }} <span class="muted">{{ o.book }}</span></td><td class="num">{{ '%.2f'|format(o.odds) }}</td>
+{% for e in o.ev %}<td class="num {{ 'pos' if e > 0 else 'neg' }}">{{ '%+.1f'|format(e * 100) }} %</td>{% endfor %}
+<td class="num">{{ '%.0f'|format(o.worst_win * 100) }} / {{ '%.0f'|format(o.worst_push * 100) }} / {{ '%.0f'|format(o.worst_loss * 100) }} %</td><td class="num">{{ '%.2f'|format(o.min_odds) }}</td>
+<td class="num {{ 'pos' if o.sim_profit > 0 else 'neg' }}">{{ '%+.0f'|format(o.sim_profit * 100) }} %</td>
+<td>{% if o.verdict == 'robust' %}<span class="badge tipb">robustní</span>{% elif o.verdict == 'borderline' %}<span class="badge warn">jen model</span>{% elif o.verdict == 'avoid' %}<span class="badge bad">vyhnout se</span>{% elif o.verdict == 'suspicious' %}<span class="badge warn">ověř kurz</span>{% endif %}</td></tr>{% endfor %}</table></div></details>
+<details class="fold"><summary>Text pro kopírování</summary><textarea rows="12" readonly style="font:13px/1.4 monospace">{{ p2text[loop.index0] }}</textarea></details>
+</div></details>
+{% else %}<div class="card muted">Zatím žádný rozbor. Vyplň zápas a kurzy výše.</div>{% endfor %}
+
 {% elif tab == 'kalkulacka' %}
 <h2>Rychlá value kalkulačka</h2>
 <div class="card"><div class="muted">Zadej kurz a svůj odhad pravděpodobnosti (nejdřív odhad, až potom se dívej na kurz). Počítá se přímo v prohlížeči.</div>
@@ -560,11 +649,13 @@ def create_app(database_url: str | None = None) -> Flask:
     factory = make_session_factory(database_url)
     valid_tabs = {k for k, _ in TABS}
 
-    def render(session, msg: str = "", err: bool = False, calc: dict | None = None, tab: str = "prehled"):
+    def render(session, msg: str = "", err: bool = False, calc: dict | None = None, tab: str = "prehled",
+               p2form: dict | None = None):
         led = Ledger(session)
         all_picks = paper.load(led)
         prof = paper.profile(request.values.get("profile"))
         picks = [p for p in all_picks if p.profile == prof.key]
+        p2 = profile2.load(led)
         done_picks = sorted((p for p in picks if p.result is not None), key=lambda p: p.kickoff)
         settled = list(session.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN).order_by(Ticket.settled_at.desc()).limit(200)))
         s = led.summary()
@@ -656,6 +747,10 @@ def create_app(database_url: str | None = None) -> Flask:
             has_football_key=bool(led.api_football_key()),
             scan_leagues=list(SETTINGS.odds_api.sport_keys),
             c=type("C", (), calc) if calc else None,
+            p2=p2,
+            p2text=[profile2.format_text(a, SETTINGS.currency) for a in p2],
+            p2f=type("F", (), {k: "" for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds", "use_czech")} | (p2form or {})),
+            p2st=type("P", (), paper.stats([p for p in all_picks if p.profile == "profil2"])),
         )
 
     def action(fn, ok_msg: str, tab: str = "prehled"):
@@ -865,6 +960,54 @@ def create_app(database_url: str | None = None) -> Flask:
             return " · ".join(r.summary().replace("\n  - ", " – ") for r in reports)
 
         return action(fn, "")
+
+    @app.post("/profil2")
+    def profil2_run():
+        f = request.form
+        form = {k: f.get(k, "") for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds")}
+        form["use_czech"] = f.get("use_czech", "0")
+        with factory() as session:
+            led = Ledger(session)
+            try:
+                match = " - ".join(p.strip() for p in f["match"].replace("–", "-").split(" - ", 1))
+                if " - " not in match:
+                    raise ValueError("Zápas zapiš jako 'Domácí - Hosté'.")
+                entries, errors = profile2.parse_odds(f.get("odds", ""), f.get("book") or "tipsport")
+                if f.get("use_czech") == "1":
+                    entries += profile2.from_czech(czechodds.load(led, utcnow()), match)
+                if errors and not entries:
+                    raise ValueError("; ".join(errors))
+                manual = None
+                if f.get("lam_h") and f.get("lam_a"):
+                    manual = (float(f["lam_h"].replace(",", ".")), float(f["lam_a"].replace(",", ".")))
+                home, away = match.split(" - ", 1)
+                lams, source = profile2.combine_lambdas(manual, f.get("league", ""), home, away, date.today())
+                ctx = (float((f.get("ctx_h") or "1").replace(",", ".")), float((f.get("ctx_a") or "1").replace(",", ".")))
+                a = profile2.analyse(match, entries, lams, source, f.get("league", ""), f.get("day", ""), ctx,
+                                     led.bankroll(), led.open_exposure(date.today()), utcnow())
+                profile2.save(led, a)
+                session.commit()
+                msg = f"Profil 2: {match} spočten ({len(a.offers)} nabídek)." + (f" Přeskočeno: {'; '.join(errors)}" if errors else "")
+                return render(session, msg, tab="profil2", p2form=form)
+            except (ValueError, KeyError) as e:
+                session.rollback()
+                return render(session, f"Chyba: {e}", err=True, tab="profil2", p2form=form), 400
+
+    @app.post("/profil2/track")
+    def profil2_track():
+        def fn(led: Ledger, _):
+            a = next((x for x in profile2.load(led) if x.match == request.form["match"] and x.day == request.form["day"]), None)
+            if a is None:
+                raise ValueError("Rozbor nenalezen.")
+            n = profile2.track_picks(led, a, utcnow())
+            return f"Do sledování přidáno: {n}." if n else "Nic nového ke sledování (už sledováno, nebo trh nejde vyhodnotit)."
+
+        return action(fn, "", tab="profil2")
+
+    @app.post("/profil2/delete")
+    def profil2_delete():
+        return action(lambda led, _: profile2.remove(led, request.form["match"], request.form["day"]), "Rozbor smazán.",
+                      tab="profil2")
 
     @app.post("/calc")
     def calc():

@@ -39,6 +39,10 @@ class Profile:
     markets: tuple[str, ...] | None = None  # zacatky nazvu trhu (napr. "OU_", "1X2"); None = vsechny
     active: bool = True
     method: str = "edge"  # edge = nejvyssi cekany zisk podle modelu bota; sim = model trhu se simulaci (marketsim)
+    props: bool = False  # True = jen rohy a karty; ostatni profily je nevidi (vlastni sledovani, jine trhy)
+
+
+PROPS = ("ROHY_", "KARTY_")
 
 
 PROFILES = (
@@ -52,6 +56,10 @@ PROFILES = (
             "góly fitované z kurzů kanceláří, simulace 1000 zápasů a 4 scénáře; nižší kurz 1.15–1.75, "
             "prohra nejvýš ve 25 % zápasů, sázka musí obstát i při méně příznivém průběhu",
             min_odds=1.15, max_odds=1.75, method="sim"),
+    Profile("rohy", "Rohy a karty",
+            "jen rohy a karty: model týmů (a u karet rozhodčího) proti kurzům kanceláří z API-Football "
+            "(Pinnacle, Bet365, Betano…) nebo ručně zadaným českým; u zápasu výběr s nejvyšším čekaným ziskem od 5 %; "
+            "jen 6 lig (Anglie, Španělsko, Německo, Itálie, Francie, Portugalsko)", props=True),
 )
 DEFAULT = PROFILES[0].key
 
@@ -155,6 +163,9 @@ def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: da
 
 def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings) -> Pick | None:
     """Vyber s nejvyssim cekanym ziskem podle pravidel profilu."""
+    entries = [e for e in entries if e.market.startswith(PROPS) == pr.props]
+    if not entries:
+        return None
     if pr.method == "sim":
         return _sim(pr, league, ev, model, entries, now)
     if pr.method == "p2":

@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import pandas as pd
 
-from . import analysis, calibration, referees, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, secondopinion, teamreport
+from . import analysis, calibration, referees, context, cups, czechodds, detail, devig, ingestion, modelcheck, nations, nhl_api, nhl_data, oddsapi, paper, propsodds, secondopinion, teamreport
 from .config import LEAGUES, SETTINGS, Settings, Sport
 from .models import football, nhl, props
 from .names import match_team, nhl_abbr
@@ -287,6 +287,8 @@ def scan_league(
         ledger.set_next_kickoff(league, min(upcoming) if upcoming else now + timedelta(hours=24))
     events = [e for e in events if now < e.kickoff <= now + timedelta(hours=settings.timing.analysis_hours)]
     report.events = len(events)
+    # rohy a karty z API-Football (levne dotazy, obnovuji se nezavisle na kreditech kurzoveho API)
+    report.notes.extend(propsodds.attach(events, league, ledger, now, refresh=live))
     czech = czechodds.load(ledger, now)
     if czech:
         report.notes.extend(czechodds.apply(events, czech))
@@ -340,8 +342,10 @@ def scan_league(
             if hit is not None:
                 by_ev[hit.match_id][2].append(e)
         for ev, _, entries in by_ev.values():
-            if not entries:
-                entries.extend(market_entries(ev, now))
+            have = {e.market for e in entries}
+            # bez ceskych kurzu vse z medianu; s nimi jen rohy a karty, ktere rucne zadane nejsou
+            entries.extend(e for e in market_entries(ev, now)
+                           if not have or (e.market.startswith(paper.PROPS) and e.market not in have))
         paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 

@@ -88,11 +88,11 @@ def test_panel_flow(client):
 def test_calculator(client):
     c, _ = client
     c.post("/deposit", data={"amount": "10000", "test": "1"})
-    good = c.post("/calc", data={"sharp": "2.10 3.40 3.60", "pick": "1", "odds": "2.30", "league": "ENG1"})
+    good = c.get("/calc", query_string={"sharp": "2.10 3.40 3.60", "pick": "1", "odds": "2.30", "league": "ENG1"})
     assert "SÁZET" in good.get_data(as_text=True) and "NESÁZET" not in good.get_data(as_text=True)
-    bad = c.post("/calc", data={"sharp": "2.10 3.40 3.60", "pick": "1", "odds": "2.05", "league": "ENG1"})
+    bad = c.get("/calc", query_string={"sharp": "2.10 3.40 3.60", "pick": "1", "odds": "2.05", "league": "ENG1"})
     assert "NESÁZET" in bad.get_data(as_text=True)
-    assert c.post("/calc", data={"sharp": "abc", "pick": "1", "odds": "2", "league": "ENG1"}).status_code == 400
+    assert c.get("/calc", query_string={"sharp": "abc", "pick": "1", "odds": "2", "league": "ENG1"}).status_code == 400
 
 
 def test_czech_odds_form(client):
@@ -170,3 +170,21 @@ def test_overview_lists_bets_on_czech_odds(client):
     bets, check = web._to_bet([v], led, 10000.0, 0.0)
     assert [b["row"] for b in bets] == [ok] and [c["row"] for c in check] == [row]
     assert bets[0]["day"] == "2026-11-16" and 0 < bets[0]["stake"] <= 100
+
+
+def test_post_redirects_and_mobile_ui(client):
+    c, _ = client
+    r = c.post("/deposit", data={"amount": "10000", "test": "1"}, follow_redirects=False)
+    assert r.status_code == 302 and "/?tab=prehled" in r.headers["Location"]  # obnoveni stranky nic neodesle znovu
+    html = c.get(r.headers["Location"]).get_data(as_text=True)
+    assert "Bankroll uložen." in html and 'class="bottomnav"' in html and "Ruční rozbor" in html
+    assert "Bankroll uložen." not in c.get("/").get_data(as_text=True)  # zprava jen jednou
+    st = c.get("/auto/state").get_json()
+    assert st == {"requested": False, "running": "", "t": ""}
+    today = date.today().isoformat()
+    for market, sel in (("DNB", "home"), ("BTTS", "yes"), ("DC", "X2"), ("JINY", "rohy nad 9.5")):
+        r = c.post("/tickets", data={"match_name": "A - B", "match_day": today, "market": market, "line": "2.5", "selection": sel,
+                                     "bookmaker": "tipsport", "odds": "2", "stake": "10", "tab": "tikety"})
+        assert r.status_code == 200 and "zapsán" in r.get_data(as_text=True), market
+    html = c.get("/?tab=tikety").get_data(as_text=True)
+    assert 'data-for="market"' in html and 'list="matchlist"' in html and 'list="stakes"' in html

@@ -46,3 +46,17 @@ def ledger():
         led = Ledger(session)
         led.deposit(10_000)
         yield led
+
+
+@pytest.fixture(autouse=True)
+def _follow_redirects(monkeypatch):
+    """Panel po odeslani formulare presmerovava (POST -> redirect -> GET); testy ctou vysledne stranky jako prohlizec."""
+    from flask.testing import FlaskClient
+
+    orig = FlaskClient.open
+
+    def open_(self, *args, **kwargs):
+        kwargs.setdefault("follow_redirects", True)
+        return orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(FlaskClient, "open", open_)

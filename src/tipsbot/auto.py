@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 STATUS_KEY = "auto:status"
 REFRESH_KEY = "auto:last_refresh"
 VERIFY_KEY = "auto:last_verify"
+RUNNING_KEY = "auto:running"  # cas zacatku behu (panel ukazuje, ze automat prave pracuje)
 REQUEST_KEY = "auto:request"  # tlacitko v panelu: spustit hned
 SCORES_KEY = "auto:scores:"
 
@@ -161,6 +162,12 @@ def _take_request(factory) -> bool:
         return True
 
 
+def _set(factory, key: str, value: str) -> None:
+    with factory() as s:
+        Ledger(s)._set(key, value)
+        s.commit()
+
+
 def status(ledger: Ledger) -> dict | None:
     raw = ledger._get(STATUS_KEY, "")
     return json.loads(raw) if raw else None
@@ -170,11 +177,14 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
     every = settings.timing.odds_refresh_seconds
     while True:
         _take_request(factory)
+        _set(factory, RUNNING_KEY, utcnow().isoformat())
         try:
             for n in run_once(factory, settings=settings):
                 print(n, flush=True)
         except Exception:  # noqa: BLE001 - automat bezi dal
             log.exception("automat: pruchod selhal")
+        finally:
+            _set(factory, RUNNING_KEY, "")
         waited = 0
         while waited < every and not _take_request(factory):  # tlacitko v panelu zkrati cekani
             time.sleep(60)

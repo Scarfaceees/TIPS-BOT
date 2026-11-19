@@ -41,6 +41,23 @@ class BacktestReport:
         )
 
 
+# trhy hodnocene ve zpetnem testu krome 1X2 (klic = "ano" strana: over / oba daji gol)
+EVAL_KEYS = ("OU_1.5:over", "OU_2.5:over", "OU_3.5:over", "OU_4.5:over", "BTTS:yes",
+             "TTH_0.5:over", "TTH_1.5:over", "TTA_0.5:over", "TTA_1.5:over")
+
+
+def _outcome(key: str, hg: np.ndarray, ag: np.ndarray) -> np.ndarray:
+    """Index vysledku 0 = over / ano, 1 = under / ne."""
+    market = key.split(":")[0]
+    if market == "BTTS":
+        yes = (hg > 0) & (ag > 0)
+    else:
+        kind, line = market.split("_")
+        goals = {"OU": hg + ag, "TTH": hg, "TTA": ag}[kind]
+        yes = goals > float(line)
+    return np.where(yes, 0, 1)
+
+
 def walk_forward(
     matches: pd.DataFrame,
     start,
@@ -83,19 +100,19 @@ def walk_forward(
                 other = secondopinion.fit(df, d, cfg.xi, cfg.max_history_seasons)
         for _, r in day.iterrows():
             try:
-                m = football.match_matrix(params, r["home"], r["away"])
+                probs = football.market_probabilities(params, r["home"], r["away"])
             except football.ModelError:
                 continue
-            p1, px, p2 = football.probs_1x2(m)
-            over = football.prob_over(m, 2.5)
-            if goal_shrink is not None:
-                over = nations.shrink_goal_markets({"OU_2.5:over": over}, goal_shrink, goal_base)["OU_2.5:over"]
-            row = {**r.to_dict(), "p1": p1, "px": px, "p2": p2, "p_over": over}
+            if goal_shrink is not None:  # stejne stazeni golovych trhu jako v ostrem provozu
+                probs = nations.shrink_goal_markets(probs, goal_shrink, goal_base)
+            row = {**r.to_dict(), "p1": probs["1X2:1"], "px": probs["1X2:X"], "p2": probs["1X2:2"],
+                   "p_over": probs["OU_2.5:over"], **{f"p:{k}": probs[k] for k in EVAL_KEYS if k in probs}}
             q = secondopinion.probabilities(other, r["home"], r["away"], bool(r.get("neutral", False))) if second else None
             if q and goal_shrink is not None:
                 q = nations.shrink_goal_markets(q, goal_shrink, goal_base)
             if q:
-                row.update(q1=q["1X2:1"], qx=q["1X2:X"], q2=q["1X2:2"], q_over=q["OU_2.5:over"])
+                row.update(q1=q["1X2:1"], qx=q["1X2:X"], q2=q["1X2:2"], q_over=q["OU_2.5:over"],
+                           **{f"q:{k}": q[k] for k in EVAL_KEYS if k in q})
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -261,6 +278,7 @@ def compare(preds: pd.DataFrame, weight: float = SETTINGS.value.model_weight) ->
         ("1X2", np.where(hg > ag, 0, np.where(hg == ag, 1, 2)), ["p1", "px", "p2"], ["q1", "qx", "q2"],
          ["sharp_1", "sharp_x", "sharp_2"]),
         ("OU_2.5", np.where(hg + ag > 2.5, 0, 1), ["p_over"], ["q_over"], ["sharp_o25", "sharp_u25"]),
+        *((k.split(":")[0], _outcome(k, hg, ag), [f"p:{k}"], [f"q:{k}"], []) for k in EVAL_KEYS if k != "OU_2.5:over"),
     )
     for market, res, pcols, qcols, ocols in specs:
         if not set(pcols) <= set(preds.columns):
@@ -269,7 +287,7 @@ def compare(preds: pd.DataFrame, weight: float = SETTINGS.value.model_weight) ->
         if set(qcols) <= set(preds.columns):
             src[SECOND] = _pair(preds[qcols].to_numpy(dtype=float))
             src[BOTH] = (src[OURS] + src[SECOND]) / 2
-        if set(ocols) <= set(preds.columns):
+        if ocols and set(ocols) <= set(preds.columns):
             mk = _fair(preds[ocols].to_numpy(dtype=float))
             if (~np.isnan(mk).any(axis=1)).sum() >= 30:
                 src[MARKET] = mk

@@ -29,12 +29,13 @@ from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
 
 # (klic, nazev, ikona); prvni ctyri jsou na mobilu ve spodni liste, ostatni pod "Více"
-TABS = (("prehled", "Přehled", "⚽"), ("tikety", "Moje tikety", "🎫"), ("sledovani", "Sledování", "📈"),
-        ("historie", "Historie", "🕘"), ("overeni", "Ověření modelu", "🔬"), ("profil2", "Ruční rozbor", "✍️"),
-        ("kalkulacka", "Kalkulačka", "🧮"), ("nastaveni", "Nastavení", "⚙️"))
+TABS = (("prehled", "Přehled", "⚽", "Přehled"), ("tikety", "Moje tikety", "🎫", "Tikety"),
+        ("sledovani", "Sledování", "📈", "Sledování"), ("overeni", "Ověření modelu", "🔬", "Ověření"),
+        ("profil2", "Ruční rozbor", "✍️", "Rozbor"), ("kalkulacka", "Kalkulačka", "🧮", "Kalkulačka"),
+        ("nastaveni", "Nastavení", "⚙️", "Nastavení"))
 MAIN_TABS = 4
 P2_FORM_KEY = "profil2_form"  # posledni vyplneny formular rucniho rozboru (aby po prepoctu zustal vyplneny)
-TAB_ALIASES = {"sazka": "tikety"}  # stare odkazy
+TAB_ALIASES = {"sazka": "tikety", "historie": "tikety"}  # stare odkazy (historie je soucasti tiketu)
 
 PAGE = """<!doctype html>
 <html lang="cs"><head><meta charset="utf-8">
@@ -198,11 +199,11 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <div class="chips"><span>Bankroll <b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b></span>
 <span>Zisk <b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b></span></div></div>
 {% macro cnt(key) %}{% set n = (pending|selectattr('tikety')|list|length) if key == 'tikety' else (pending|selectattr('vybery')|list|length) if key == 'sledovani' else 0 %}{% if n %}<span class="cnt" title="zápasy čekající na výsledek">{{ n }}</span>{% endif %}{% endmacro %}
-<nav class="topnav">{% for key, label, icon in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ label }}{{ cnt(key) }}</a>{% endfor %}</nav>
+<nav class="topnav">{% for key, label, icon, short in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ label }}{{ cnt(key) }}</a>{% endfor %}</nav>
 </div></header>
-<nav class="bottomnav">{% for key, label, icon in tabs[:main_tabs] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}"><i>{{ icon }}</i><span>{{ label.split()[-1]|capitalize }}</span>{{ cnt(key) }}</a>{% endfor %}
+<nav class="bottomnav">{% for key, label, icon, short in tabs[:main_tabs] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}"><i>{{ icon }}</i><span>{{ short }}</span>{{ cnt(key) }}</a>{% endfor %}
 <details class="more"><summary class="{{ 'on' if tab in tabs[main_tabs:]|map('first')|list }}"><i>☰</i><span>Více</span></summary>
-<div class="sheet">{% for key, label, icon in tabs[main_tabs:] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ icon }} {{ label }}</a>{% endfor %}</div></details></nav>
+<div class="sheet">{% for key, label, icon, short in tabs[main_tabs:] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ icon }} {{ label }}</a>{% endfor %}</div></details></nav>
 <main><div class="wrap">
 <datalist id="matchlist">{% for n in match_names %}<option value="{{ n }}">{% endfor %}</datalist>
 <datalist id="stakes">{% for x in (50, 100, 200, 300, 500, 1000) %}<option value="{{ x }}">{% endfor %}</datalist>
@@ -370,7 +371,22 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <div class="row" style="margin-top:6px"><button class="ok sm" name="result" value="won">Výhra</button><button class="bad sm" name="result" value="lost">Prohra</button><button class="ghost sm" name="result" value="void">Vráceno</button></div></form></details></td></tr>
 {% else %}<tr><td colspan="7" class="muted">Žádné otevřené tikety.</td></tr>{% endfor %}</table></div>
 <form method="post" action="{{ url_for('settle_all') }}"><input type="hidden" name="tab" value="tikety"><button class="ghost">Stáhnout výsledky a vyhodnotit automaticky</button></form>
+<h2 id="ukoncene">Ukončené tikety ({{ settled|length }})</h2>
+{% if rec.n %}<div class="card"><div class="tiles" style="margin-top:0">
+<div class="tile"><span>Vyhodnoceno</span><b>{{ rec.n }} sázek</b></div>
+<div class="tile {{ 'good' if rec.profit >= 0 else 'bad' }}"><span>Zisk</span><b>{{ '%+.0f'|format(rec.profit) }} {{ cur }}</b></div>
+<div class="tile {{ 'good' if (rec.yield_pct or 0) >= 0 else 'bad' }}"><span>Výnos</span><b>{{ '%+.1f %%'|format(rec.yield_pct) if rec.yield_pct is not none else '–' }}</b></div></div>
+<div class="muted">Výsledky ({{ rec.n }} sázek): největší propad {{ '%.0f'|format(rec.max_drawdown) }} {{ cur }} · nejdelší série proher {{ rec.longest_losing }}{% if rec.current_losing %} (teď {{ rec.current_losing }}){% endif %}</div>
+{% if rec.n < 30 %}<div class="muted note-inline">Při {{ rec.n }} sázkách jsou čísla jen orientační (potřeba desítky až stovky).</div>{% endif %}</div>{% endif %}
+<div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th>Výsledek</th><th class="num">Zisk / ztráta</th><th class="num" title="o kolik lepší kurz jsi vzal než ten těsně před zápasem; dlouhodobě v plusu = sázíš chytře">Proti závěr. kurzu</th></tr>
+{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td><b>{{ k.match_name or k.match_id }}</b></td>
+<td>{{ k.market|bet(k.selection, k.match_name) }}</td><td>{{ k.bookmaker }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
+<td>{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(k.status, k.status) }}</td>
+<td class="num {{ 'pos' if k.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(k.profit_loss) }}</td>
+<td class="num">{{ '%+.1f %%'|format(k.clv_pct) if k.clv_pct is not none else '–' }}</td></tr>
+{% else %}<tr><td colspan="9" class="muted">Zatím žádné vyhodnocené sázky.</td></tr>{% endfor %}</table></div>
 </div></div>
+
 
 {% elif tab == 'sledovani' %}
 <div class="profbar">{% for pr in profiles %}{% set st = prof_stats[pr.key] %}
@@ -418,29 +434,39 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 {% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div></details>
 </div></div>
 
-{% elif tab == 'historie' %}
-<h2>Vyhodnocené sázky</h2>
-{% if rec.n %}<div class="card"><b>Výsledky ({{ rec.n }} sázek):</b> zisk {{ '%+.0f'|format(rec.profit) }} {{ cur }}{% if rec.yield_pct is not none %} · výnos {{ '%+.1f'|format(rec.yield_pct) }} %{% endif %} · největší propad {{ '%.0f'|format(rec.max_drawdown) }} {{ cur }} · nejdelší série proher {{ rec.longest_losing }}{% if rec.current_losing %} (teď {{ rec.current_losing }}){% endif %}
-{% if rec.n < 30 %}<div class="muted">Při {{ rec.n }} sázkách jsou čísla jen orientační (potřeba desítky až stovky).</div>{% endif %}</div>{% endif %}
-<div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th>Výsledek</th><th class="num">Zisk / ztráta</th><th class="num" title="o kolik lepší kurz jsi vzal než ten těsně před zápasem; dlouhodobě v plusu = sázíš chytře">Proti závěr. kurzu</th></tr>
-{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td><b>{{ k.match_name or k.match_id }}</b></td>
-<td>{{ k.market|bet(k.selection, k.match_name) }}</td><td>{{ k.bookmaker }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
-<td>{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(k.status, k.status) }}</td>
-<td class="num {{ 'pos' if k.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(k.profit_loss) }}</td>
-<td class="num">{{ '%+.1f %%'|format(k.clv_pct) if k.clv_pct is not none else '–' }}</td></tr>
-{% else %}<tr><td colspan="9" class="muted">Zatím žádné vyhodnocené sázky.</td></tr>{% endfor %}</table></div>
-
 {% elif tab == 'overeni' %}
-<div class="card"><b>Zpětný test modelů</b>
-<div class="muted">Bot projde poslední tři sezóny zápas po zápase: model se vždy učí jen z dřívějších výsledků a jeho odhad se porovná se skutečností,
-se zavíracím kurzem Pinnacle a s druhým nezávislým modelem. Čím nižší číslo (log-loss), tím přesnější odhad. Rozdíl pod 0,005 je v šumu.</div>
-{% if bt_running %}<div class="note-inline" style="margin-top:8px">Test právě běží na pozadí (spuštěn {{ bt_running }}). Trvá zhruba 25 minut, pak obnov stránku.</div>
-{% else %}<form class="row" method="post" action="{{ url_for('backtest_start') }}"><button>Spustit zpětný test (cca 25 minut)</button></form>{% endif %}</div>
-{% if bt %}<div class="muted" style="margin:10px 0 2px">Poslední výpočet: {{ bt.when }} · {{ bt.seasons }} sezóny</div>
-<div class="boxes" style="grid-template-columns:repeat(auto-fill,minmax(430px,1fr))">{% for g in bt.groups %}<div class="box"><h4>{{ g.name }}</h4><div class="muted">{{ g.note }}</div>
-<table>{% for r in g.rows %}{% if loop.changed(r.market) %}<tr><th>{{ market_names.get(r.market, r.market) }} <span class="muted">({{ r.n }} zápasů)</span></th><th class="num">Log-loss</th><th class="num">Brier</th></tr>{% endif %}
-<tr class="{{ 'win' if r.best }}"><td>{{ r.source }}</td><td class="num">{{ '%.4f'|format(r.logloss) }}</td><td class="num">{{ '%.4f'|format(r.brier) }}</td></tr>{% endfor %}</table></div>{% endfor %}</div>
-{% else %}<div class="card muted">Zatím nebyl spuštěn.</div>{% endif %}
+<div class="card sec-acc"><b>Ověření modelu</b>
+<div class="muted">Dva pohledy: <b>skutečné výběry ve Sledování</b> (reálné kurzy, zatím malý vzorek) a <b>zpětný test</b> za poslední tři sezóny
+(model se vždy učí jen z dřívějších zápasů – tisíce zápasů, ale u většiny trhů bez historických kurzů). Trh je pro sázení důvěryhodný, až když obojí ukazuje stejným směrem.</div>
+<div class="arow" style="margin-top:8px">{% if bt_running %}<span class="badge warn">zpětný test běží (od {{ bt_running }}), trvá asi 30 minut</span>
+{% else %}<form method="post" action="{{ url_for('backtest_start') }}" style="margin:0"><input type="hidden" name="tab" value="overeni"><button class="sm">Spustit zpětný test znovu</button></form>{% endif %}
+{% if bt %}<span class="muted">poslední výpočet {{ bt.when }} · automat ho opakuje jednou týdně</span>{% endif %}</div></div>
+
+<h2>Skutečné výběry ve Sledování podle trhů <span class="muted" style="font-weight:400">(všechny profily, 1 jednotka na výběr)</span></h2>
+<div class="card tablewrap">{% if track_markets %}<table class="mkt"><tr><th>Trh</th><th class="num">Výběrů</th><th class="num">Zisk (j.)</th><th class="num">ROI</th><th>Hodnocení</th></tr>
+{% for r in track_markets %}<tr><td><b>{{ r.name }}</b></td><td class="num">{{ r.n }}</td><td class="num {{ 'pos' if r.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(r.profit) }}</td>
+<td class="num"><span class="res {{ 'won' if r.roi >= 0 else 'lost' }}">{{ '%+.1f'|format(r.roi * 100) }} %</span></td>
+<td>{% if r.n < 30 %}<span class="badge warn">málo dat ({{ r.n }} z 30+)</span>{% elif r.roi > 0 %}<span class="badge tipb">vydělává</span>{% else %}<span class="badge bad">prodělává</span>{% endif %}</td></tr>{% endfor %}</table>
+<div class="muted" style="margin-top:6px">Pod 30 výběrů je výsledek hlavně náhoda: +100 % ROI z 5 výběrů jsou 3 trefy za kurz kolem 3, což se stane i bez jakékoli výhody.</div>
+{% else %}<span class="muted">Zatím nic vyhodnoceno.</span>{% endif %}</div>
+
+{% if btv %}
+<h2>Přesnost modelu podle trhů – {{ btv.summary_name }}</h2>
+<div class="card tablewrap"><table class="mkt"><tr><th>Trh</th><th class="num">Zápasů</th><th class="num" title="o kolik je odhad přesnější než prostá četnost výsledků (log-loss); kladné = model pomáhá">Proti odhadu bez modelu</th><th class="num" title="srovnání se zavíracím kurzem Pinnacle (nejpřesnější trh); kladné = model přesnější než trh">Proti trhu</th><th>Hodnocení</th></tr>
+{% for m in btv.summary %}<tr><td><b>{{ market_names.get(m.market, m.market) }}</b></td><td class="num">{{ m.n }}</td>
+<td class="num {{ 'pos' if m.skill > 0 else 'neg' }}">{{ '%+.1f'|format(m.skill * 100) }} %</td>
+<td class="num">{% if m.vs_market is not none %}<span class="{{ 'pos' if m.vs_market >= 0 else 'neg' }}">{{ '%+.1f'|format(m.vs_market * 100) }} %</span>{% else %}<span class="muted">kurzy nejsou</span>{% endif %}</td>
+<td><span class="badge {{ m.cls }}">{{ m.verdict }}</span></td></tr>{% endfor %}</table>
+<div class="muted" style="margin-top:6px">Procenta = o kolik je odhad přesnější (log-loss). Historické kurzy jsou jen pro výsledek zápasu a počet gólů 2,5; u ostatních trhů jde srovnat jen s odhadem bez modelu.
+To říká, že model zápasy „čte“, ne že porazí kancelář – proto se tyto trhy ověřují ve Sledování na skutečných kurzech.</div></div>
+
+<h2>Podrobně podle soutěží</h2>
+{% for g in btv.groups %}<details class="card fold"><summary>{{ g.name }} <span class="muted" style="font-weight:400">· {{ g.markets|length }} trhů</span></summary>
+<div class="muted">{{ g.note }}. Čísla = log-loss (nižší je lepší), zvýrazněný je nejlepší zdroj kromě odhadu bez modelu.</div>
+<div class="tablewrap"><table class="mkt"><tr><th>Trh</th><th class="num">Zápasů</th>{% for src in g.sources %}<th class="num">{{ src_names.get(src, src) }}</th>{% endfor %}</tr>
+{% for m in g.markets %}<tr><td>{{ market_names.get(m.market, m.market) }}</td><td class="num">{{ m.n }}</td>
+{% for src in g.sources %}{% set r = m.src.get(src) %}<td class="num">{% if r %}<span class="{{ 'edge' if r.best }}">{{ '%.4f'|format(r.logloss) }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>{% endfor %}</tr>{% endfor %}</table></div></details>{% endfor %}
+{% else %}<div class="card muted">Zpětný test zatím nebyl spuštěn.</div>{% endif %}
 
 {% elif tab == 'profil2' %}
 <h2>Ruční rozbor zápasu (Profil 2)</h2>
@@ -653,7 +679,7 @@ MARKET_NAMES = {"1X2": "Výsledek", "DC": "Dvojitá šance", "DNB": "Sázka bez 
                 "TTA_0.5": "Hosté dají gól", "MONEYLINE": "Vítěz zápasu (vč. prodloužení)",
                 "OU_5.5": "Góly 5.5", "OU_6.5": "Góly 6.5", "ROHY_8.5": "Rohy 8.5", "ROHY_9.5": "Rohy 9.5",
                 "ROHY_10.5": "Rohy 10.5", "KARTY_3.5": "Karty 3.5", "KARTY_4.5": "Karty 4.5", "KARTY_5.5": "Karty 5.5",
-                "OU_7.5": "Góly 7.5",
+                "OU_7.5": "Góly 7.5", "TTH_2.5": "Góly domácích 2.5", "TTA_2.5": "Góly hostů 2.5",
                 **{f"OU60_{x}": f"Góly za 60 min {x}" for x in ("3.5", "4.5", "5.5", "6.5", "7.5", "8.5")}}
 
 
@@ -723,6 +749,61 @@ def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
     if grade(market, selection, 0, 0) is None:
         raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím (např. 1/X/2, over/under, ano/ne, 1X).")
     return market, selection
+
+
+SRC_NAMES = {backtest.NO_MODEL: "Bez modelu", backtest.OURS: "Náš model", backtest.SECOND: "2. model",
+             backtest.BOTH: "Průměr modelů", backtest.MARKET: "Trh (Pinnacle)", backtest.BLEND: "Směs model+trh"}
+_SRC_ORDER = tuple(SRC_NAMES)
+LEAGUE_NOTE = "zavírací kurzy Pinnacle"  # skupiny lig ve zpetnem testu (backtest.run_all)
+MARKET_ORDER = ("1X2", "OU_1.5", "OU_2.5", "OU_3.5", "OU_4.5", "BTTS", "TTH_0.5", "TTH_1.5", "TTA_0.5", "TTA_1.5")
+
+
+def _verdict(skill: float, vs_market: float | None) -> tuple[str, str]:
+    if vs_market is not None:
+        if vs_market > 0.003:
+            return "přesnější než trh", "tipb"
+        return ("na úrovni trhu", "") if vs_market > -0.005 else ("horší než trh", "bad")
+    if skill > 0.01:
+        return "model pomáhá", "tipb"
+    return ("slabý přínos", "warn") if skill > 0.002 else ("bez přínosu", "bad")
+
+
+def _bt_view(bt: dict | None) -> dict | None:
+    """Zpetny test pro panel: po soutezich tabulka trh x zdroj a souhrn lig (vazeny poctem zapasu)."""
+    if not bt or not bt.get("groups"):
+        return None
+    groups = []
+    for g in bt["groups"]:
+        markets: dict[str, dict] = {}
+        for r in g["rows"]:
+            markets.setdefault(r["market"], {"market": r["market"], "n": r["n"], "src": {}})["src"][r["source"]] = r
+        sources = [x for x in _SRC_ORDER if any(x in m["src"] for m in markets.values())]
+        groups.append({"name": g["name"], "note": g["note"], "markets": list(markets.values()), "sources": sources})
+    pool = [g for g in bt["groups"] if g["note"] == LEAGUE_NOTE] or bt["groups"][:1]
+    acc: dict[str, dict] = {}
+    for g in pool:
+        for r in g["rows"]:
+            n, tot = acc.setdefault(r["market"], {}).get(r["source"], (0, 0.0))
+            acc[r["market"]][r["source"]] = (n + r["n"], tot + r["n"] * r["logloss"])
+    summary = []
+    for market, a in acc.items():
+        ll = {src: tot / n for src, (n, tot) in a.items() if n}
+        if backtest.OURS not in ll or backtest.NO_MODEL not in ll:
+            continue
+        skill = 1.0 - ll[backtest.OURS] / ll[backtest.NO_MODEL]
+        vs = (1.0 - ll[backtest.OURS] / ll[backtest.MARKET]) if backtest.MARKET in ll else None
+        verdict, cls = _verdict(skill, vs)
+        summary.append({"market": market, "n": a[backtest.OURS][0], "skill": skill, "vs_market": vs, "verdict": verdict, "cls": cls})
+    summary.sort(key=lambda m: (MARKET_ORDER.index(m["market"]) if m["market"] in MARKET_ORDER else 99, m["market"]))
+    name = f"{len(pool)} lig dohromady" if pool[0]["note"] == LEAGUE_NOTE else pool[0]["name"]
+    return {"summary": summary, "summary_name": name, "groups": groups}
+
+
+def _track_markets(picks) -> list[dict]:
+    """Vyhodnocene vybery ze Sledovani (vsechny profily) podle trhu, nejvic vyberu nahore."""
+    by = paper.stats([p for p in picks if p.result is not None]).get("by_market", {})
+    rows = [{"market": m, "name": MARKET_NAMES.get(m, m), "n": n, "profit": pr, "roi": roi} for m, (n, pr, roi) in by.items()]
+    return sorted(rows, key=lambda r: -r["n"])
 
 
 def _bet(market: str | None, selection: str | None, match: str | None = "") -> str:
@@ -847,6 +928,9 @@ def create_app(database_url: str | None = None) -> Flask:
             czech_entries=czech_entries,
             second_gap=secondopinion.GAP,
             bt=json.loads(led._get(backtest.STATE_KEY, "") or "null"),
+            btv=_bt_view(json.loads(led._get(backtest.STATE_KEY, "") or "null")),
+            src_names=SRC_NAMES,
+            track_markets=_track_markets(all_picks),
             bt_running=led._get(backtest.RUNNING_KEY, ""),
             czech_books=sorted(czechodds._BOOKS, key=lambda b: (b != "tipsport", b)),
             form_markets=czechodds.FORM_MARKETS,

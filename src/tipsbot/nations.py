@@ -60,6 +60,7 @@ def load_international(path: Path | str | None = None, neutral: bool = False) ->
 # Podil zapasu reprezentaci s danym vysledkem (Liga narodu a kvalifikace od 9/2024, 976 zapasu, neutralni vynechany).
 GOAL_BASE_RATES = {
     "OU_1.5:over": 0.717, "OU_2.5:over": 0.496, "OU_3.5:over": 0.301, "BTTS:yes": 0.405,
+    "OU_4.5:over": 0.151,  # soutěže UEFA reprezentací, 4 029 zápasů (doplněno s linií 4.5)
     "TTH_0.5:over": 0.732, "TTH_1.5:over": 0.449, "TTH_2.5:over": 0.234,
     "TTA_0.5:over": 0.586, "TTA_1.5:over": 0.276, "TTA_2.5:over": 0.119,
 }
@@ -68,7 +69,7 @@ GOAL_BASE_RATES = {
 def goal_base_rates(df: pd.DataFrame) -> dict[str, float]:
     """Podily vysledku golovych trhu v danych zapasech (stejne klice jako GOAL_BASE_RATES)."""
     hg, ag = df["home_goals"], df["away_goals"]
-    out = {f"OU_{line:g}:over": float((hg + ag > line).mean()) for line in (1.5, 2.5, 3.5)}
+    out = {f"OU_{line:g}:over": float((hg + ag > line).mean()) for line in (1.5, 2.5, 3.5, 4.5)}
     out["BTTS:yes"] = float(((hg > 0) & (ag > 0)).mean())
     for line in (0.5, 1.5, 2.5):
         out[f"TTH_{line:g}:over"] = float((hg > line).mean())

@@ -305,6 +305,9 @@ def equivalent_probability(ev: float, odds: float) -> float:
     return (ev + 1.0) / odds
 
 
+OU_LINES = (1.5, 2.5, 3.5, 4.5)  # pocet golu v zapase, ktery model pocita (i ve zpetnem testu)
+
+
 def market_probabilities(
     params: DCParams, home: str, away: str, scale: tuple[float, float] = (1.0, 1.0)
 ) -> dict[str, float]:
@@ -326,7 +329,7 @@ def market_probabilities(
         "DNB:home": p1 / (p1 + p2),
         "DNB:away": p2 / (p1 + p2),
     }
-    for line in (1.5, 2.5, 3.5):
+    for line in OU_LINES:
         over = prob_over(m, line)
         out[f"OU_{line:g}:over"], out[f"OU_{line:g}:under"] = over, 1.0 - over
     btts = float(m[1:, 1:].sum())

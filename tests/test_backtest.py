@@ -86,3 +86,26 @@ def test_chances_blend_into_training_goals():
     assert football._blend_chances(df.copy(), 0.0)["home_goals"].tolist() == [2, 0, 1]
     plain = df[["home_goals", "away_goals"]]
     assert football._blend_chances(plain.copy(), 0.5).equals(plain)
+
+
+def test_compare_scores_all_goal_markets_and_panel_summary():
+    import numpy as np
+
+    from tipsbot import backtest, web
+
+    rng = np.random.default_rng(3)
+    n = 400
+    hg, ag = rng.poisson(1.5, n), rng.poisson(1.1, n)
+    preds = pd.DataFrame({"home_goals": hg, "away_goals": ag, "p1": 0.45, "px": 0.27, "p2": 0.28, "p_over": 0.5})
+    for k in backtest.EVAL_KEYS:  # model, ktery skutecnost zna trochu predem -> musi porazit cetnosti
+        truth = backtest._outcome(k, hg, ag) == 0
+        preds[f"p:{k}"] = np.where(truth, 0.7, 0.3)
+    rows = backtest.compare(preds)
+    markets = {r["market"] for r in rows}
+    assert {"OU_1.5", "OU_3.5", "OU_4.5", "BTTS", "TTH_0.5", "TTA_1.5"} <= markets
+    btts = {r["source"]: r["logloss"] for r in rows if r["market"] == "BTTS"}
+    assert btts[backtest.OURS] < btts[backtest.NO_MODEL]
+    view = web._bt_view({"groups": [backtest._group("Bundesliga", web.LEAGUE_NOTE, rows)]})
+    s = {m["market"]: m for m in view["summary"]}
+    assert s["BTTS"]["skill"] > 0.05 and s["BTTS"]["vs_market"] is None and s["BTTS"]["verdict"] == "model pomáhá"
+    assert view["summary"][0]["market"] == "1X2" and view["summary_name"] == "1 lig dohromady"

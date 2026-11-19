@@ -71,7 +71,7 @@ def probabilities(model, home: str, away: str, neutral: bool = False) -> dict[st
     p1, px, p2 = (float(x) for x in g.home_draw_away)
     out = {"1X2:1": p1, "1X2:X": px, "1X2:2": p2, "DC:1X": p1 + px, "DC:X2": px + p2, "DC:12": p1 + p2,
            "DNB:home": p1 / (p1 + p2), "DNB:away": p2 / (p1 + p2)}
-    for line in (1.5, 2.5, 3.5):
+    for line in (1.5, 2.5, 3.5, 4.5):
         over = float(g.total_goals("over", line))
         out[f"OU_{line:g}:over"], out[f"OU_{line:g}:under"] = over, 1.0 - over
     yes = float(g.btts_yes)

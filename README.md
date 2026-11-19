@@ -4,6 +4,11 @@ Value-betting poradce pro NHL a evropský fotbal. Počítá férové kurzy, hled
 sázky u českých kanceláří, doporučuje výši vkladu a vede evidenci. Sázku nepodává –
 tu podáš ručně a tiket zapíšeš do panelu.
 
+
+## Hybrid Premium redesign
+
+Projekt obsahuje redesign webového panelu ve stylu Hybrid Premium. Přehled změn je v `REDESIGN-HYBRID-PREMIUM.md` a navazující kompletní zadání pro Claude Code v `CLAUDE_CODE_REDESIGN_HANDOFF.md`.
+
 ## Instalace (Python 3.10+)
 
     python -m venv .venv
@@ -124,3 +129,102 @@ ostatních evropských kanceláří. Tip pak čti jako cíl: u české kancelá�
 tehdy, když nabízí aspoň „minimální kurz" uvedený u tipu.
 
 Bez stažených dat pro model bot vyhodnocuje sázky jen proti férové linii trhu.
+
+## Profil 4 – Hybridní expert
+
+Samostatný analytik fotbalu nad **API-Football** (jediný placený sportovní zdroj). Sám projde nadcházející zápasy,
+levně vyřadí nezajímavé, vybrané rozebere do hloubky a řekne, jestli sázka dává smysl – a proč. Ostatní profily
+(Základ, Profil 2, Profil 3, Rohy a karty) běží beze změny; Profil 4 má vlastní databázi `data/profil4.db`
+a vypíná se proměnnou `TIPSBOT_PROFIL4=0`.
+
+**Filozofie:** matematika rozhoduje o číslech, AI rozumí kontextu, rozhodovací engine určuje, zda sázet.
+Kontextový analytik nikdy nemění pravděpodobnosti, EV, férové kurzy ani simulace.
+
+### Nastavení
+
+    set TIPSBOT_API_FOOTBALL_KEY=tvuj_klic        (Windows; Linux: export ...)
+
+Nebo stačí klíč uložený v panelu (Nastavení → API-Football). Klíč se nikdy neukládá do kódu ani do logů.
+Kvóta: skutečný denní limit se čte z hlaviček API (`x-ratelimit-requests-*`, minutový `X-RateLimit-*`);
+bez nich platí 100/den. Nastavení (prahy, váhy, TTL cache, limity) je v `src/tipsbot/profil4/config.py`.
+
+### Příkazy
+
+    tipsbot profil4                       stav: klíč, kvóta, soutěže, watchlist, historie
+    tipsbot profil4 daily                 DAILY SCAN – dnešní zápasy (quick scan → hloubková analýza nejlepších)
+    tipsbot profil4 upcoming --hours 48   UPCOMING SCAN
+    tipsbot profil4 analyze 1234567       DEEP SCAN jednoho zápasu (id z API-Football, je ve výpisu skenu)
+    tipsbot profil4 odds --fixture 1234567 --file tipsport.txt     ruční kurzy (řádky jako v Profilu 2: trh | kurzy)
+    tipsbot profil4 odds --csv kurzy.csv   |   --json kurzy.json   import (fixture_id, bookmaker, market, selection, odds[, time])
+    tipsbot profil4 watchlist add 1234567 --market 1X2 --selection 1 --min-odds 2.10 --lineups
+    tipsbot profil4 watchlist check       upozornění jen se skutečným důvodem (kurz, EV, sestavy, změna rozhodnutí)
+    tipsbot profil4 settle                vyhodnocení skončených zápasů (90 min, půlvýhry, vrácení, CLV)
+    tipsbot profil4 evaluate              Brier, log loss, ROI, yield, úspěšnost, CLV po modelech/trzích/soutěžích/…
+    tipsbot profil4 backtest --league 39 --season 2025      walk-forward modelu A bez data leakage
+    tipsbot profil4 competitions --disable 848 --priority 345 1 --add 207 --name "Super League"
+    tipsbot profil4 auto --every-hours 6  plánované skenování (vynechá sken, když kvóta dochází)
+
+V panelu je záložka **Profil 4 – Expert** (sken, analýza podle id, ruční kurzy z Tipsportu, vyhodnocení).
+
+### Architektura (`src/tipsbot/profil4/`)
+
+- **Data:** `apiclient` (centrální klient: cache podle endpointu a parametrů, deduplikace, retry s exponenciálním
+  backoffem, timeouty, rozpoznání chyb v těle odpovědi), `budget` (denní a minutová kvóta, priority HIGH/MEDIUM/LOW
+  s rezervou 2/15/40 %, strop 12 požadavků na zápas a 60 na sken), `provider` (normalizované zápasy, kurzy, absence,
+  sestavy, tabulka, predikce, H2H), `coverage` (Coverage Report a kvalita dat 0–100 %), `odds` (kurzy s časem, zdrojem
+  a stavem AKTUÁLNÍ / ZASTARALÝ / HISTORICKÝ / ORIENTAČNÍ).
+- **Matematika:** `mathcore` (EV, férový kurz, settlement – sdílený výpočet linií s Profilem 2), `models` (A–D),
+  `montecarlo`, `stress` (stress test, robustnost), `correlation`, `surebet`.
+- **AI analytik:** `analyst` (fakta se zdrojem, časem, stavem ověření a jistotou; ochrana proti prompt injection).
+- **Rozhodování a hledání:** `decision`, `analysis` (hloubková analýza), `hunter` (quick/deep, daily/upcoming),
+  `watchlist`, `history` (evidence, vyhodnocení, backtest), `report` (český report).
+
+### Modely
+
+- **A – vlastní:** Dixon-Coles z bota (útok/obrana, domácí výhoda po týmech, exponenciální útlum starších zápasů,
+  korekce nízkých skóre, síla soupeřů je součástí odhadu) na výsledcích z API-Football (aktuální + minulá sezóna).
+  Používá jen zápasy odehrané před výkopem.
+- **B – tržní:** kurzy bez marže (výchozí p_i = (1/kurz_i) / Σ 1/kurz; volitelně Shin, Power), přednost má Pinnacle,
+  jinak medián kanceláří. Uchovají se původní kurzy, hrubé i očištěné pravděpodobnosti. Z 1X2 a gólových linií se
+  dopočtou očekávané góly.
+- **C – kombinovaný:** směs matic w·A + (1−w)·B. Výchozí w = 0,5; když je soutěž ve zpětném testu bota (top ligy),
+  použije se váha z něj (u lig 0,10 – zpětný test ukázal, že vyšší váha modelu zhoršuje odhad). Bez jednoho zdroje je
+  C označen jako omezený a sázka nemůže být schválená.
+- **D – konzervativní:** nejhorší EV z {C s nejistotou parametrů, A s nejistotou, B}. Nejistota očekávaných gólů je
+  gama směs (±20 % při dobrých datech, ±33 % při slabých). Odděleně se ukazuje náhodnost výsledku, simulační chyba,
+  nejistota parametrů, kvalita dat a rozdíl modelů.
+- **Monte Carlo:** 50 000 simulací (nastavitelné), pevný seed, simulace zahrnuje i nejistotu gólů; výstup má
+  simulační chybu a 95% interval. Víc simulací nezvyšuje přesnost modelu.
+
+### EV, férový kurz, linie
+
+EV = p × kurz − 1, férový kurz = 1/p. U linií s vrácením (celé linie, DNB, čtvrtinové asijské linie) je výnos
+lineární v kurzu (a·kurz + b), proto férový kurz = (1 − b)/a a EV se počítá z celé skórové matice včetně
+půlvýher a půlproher – ne binárním vzorcem.
+
+### Robustnost a rozhodnutí
+
+Robustnost 0–100 = shoda modelu a trhu (20) + stabilita EV ve scénářích (25) + kvalita dat (15) + aktuálnost kurzu
+(10) + jistota sestav (10) + citlivost na parametry (10) + nejhorší scénář (10). **Není to pravděpodobnost výhry.**
+
+- **APPROVED BET:** EV(C) ≥ 3 %, EV(D) ≥ 0, robustnost ≥ 60, kvalita dat ≥ 60 %, aktuální kurz 1,20–5,00,
+  model a trh se liší max. o 10 p.b., EV pod 25 % (vyšší = podezřelé).
+- **WATCH:** kladné EV, ale něco chybí (sestavy, starý kurz, slabší data, podezřelé EV…).
+- **NO BET:** bez prokázané hodnoty nebo tvrdé porušení (kurz mimo pásmo, výrazně záporné konzervativní EV…).
+- **BEST AVAILABLE:** nejlepší nalezená možnost, když nic není schválené – s důvodem, proč není schválená.
+- Kategorie **A – nejrozumnější**, **B – value tip** (schválený, kurz ≥ 1,50), **C – maximum value**. Nejsou zárukou výhry.
+
+### Známá omezení
+
+- **Tipsport:** API-Football nemusí Tipsport obsahovat; „Tipsport“ z API se nebere jako český tipsport.cz
+  (může jít o jinou zemskou verzi). České kurzy se zadávají ručně nebo importem; scraping se nedělá. OCR screenshotů
+  zatím není (vstup přes `odds.parse_manual` je připravený).
+- Kurzy z API: 1–14 dní před zápasem, obnova zhruba po 3 h, historie jen 7 dní → historický ROI z API spočítat nejde;
+  ROI a CLV se měří dopředu na uložených tipech. Zavírací kurz = poslední uložený kurz před výkopem.
+- Sestavy obvykle 20–40 min před výkopem; stahují se až 75 min před výkopem. Absence API obnovuje po ~4 h.
+- Absence a sestavy nemění pravděpodobnosti (není ověřené pravidlo) – jen se zobrazí a promítnou do rizik a robustnosti.
+- Forma a odpočinek jen ze zápasů dané soutěže; u pohárů má model A málo dat (často nedostupný).
+- Jazykový model (LLM) pro vyprávění kontextu je připravený (`analyst.LLMBackend`), ale vypnutý – placenou službu
+  je potřeba schválit. Výchozí analytik je pravidlový nad daty API a titulky Google News RSS (neověřené).
+- Surebet se označí jako ověřený jen se známými limity kanceláří; jinak „POTENCIÁLNÍ – NEOVĚŘENO“.
+- Krátké období výsledků není důkazem dlouhodobé profitability (pod 100 tipů je výsledek označen jako neprůkazný).

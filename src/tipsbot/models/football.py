@@ -342,3 +342,35 @@ def market_probabilities(
     out["AH_-1.5:home"] = float(m[(i - j) >= 2].sum())
     out["AH_+1.5:away"] = 1.0 - out["AH_-1.5:home"]
     return out
+
+
+GOAL_PREFIXES = ("OU_", "BTTS:", "TTH_", "TTA_")  # trhy, ktere urcuje uroven golu
+
+
+def anchored_probabilities(
+    params: DCParams, home: str, away: str, anchor: tuple[str, float], scale: tuple[float, float] = (1.0, 1.0)
+) -> dict[str, float]:
+    """Jako market_probabilities, ale celkova uroven golu se sladi s ferovou linii trhu (napr. ("OU_2.5:over", 0.62)).
+
+    Pomer sil tymu (rozdeleni golu) zustava z modelu, meni se jen soucet ocekavanych golu. Zpetny test 11/2026
+    (6 lig, 3 026 zapasu, zaviraci Pinnacle): lepsi log-loss u vsech golovych trhu (1,5-4,5, oba daji gol,
+    goly tymu) nez stazeni k prumeru ligy; drive model u zapasu s vysokym totalem goly podcenoval (Over 62 % proti
+    skutecnym 71 %), coz delalo falesne vyhodne Under. Vysledek 1X2 se nemeni.
+    """
+    base = market_probabilities(params, home, away, scale)
+    key, target = anchor
+    line = float(key.split(":")[0].split("_")[1])
+    lam, mu_ = base["lambda_home"], base["lambda_away"]
+    lo, hi = 0.25, 4.0
+    for _ in range(40):  # P(over) roste s nasobkem golu -> puleni intervalu
+        mid = (lo + hi) / 2
+        if prob_over(score_matrix(lam * mid, mu_ * mid, params.rho), line) < target:
+            lo = mid
+        else:
+            hi = mid
+    k = (lo + hi) / 2
+    goals = market_probabilities(params, home, away, (scale[0] * k, scale[1] * k))
+    out = {**base, **{m: p for m, p in goals.items() if m.startswith(GOAL_PREFIXES)}}
+    out["lambda_home"], out["lambda_away"] = goals["lambda_home"], goals["lambda_away"]
+    out["anchored"] = 1.0
+    return out

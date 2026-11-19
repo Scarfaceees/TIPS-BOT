@@ -41,7 +41,8 @@ class ScanReport:
         return text + "".join(f"\n  - {n}" for n in self.notes)
 
 
-_ANCHOR_LINES = {"OU_4.5", "OU_5.5", "OU_6.5", "OU_7.5"}
+_ANCHOR_LINES = {"OU_4.5", "OU_5.5", "OU_6.5", "OU_7.5"}  # NHL
+_FOOTBALL_ANCHOR_LINES = {f"OU_{x:g}" for x in football.OU_LINES}
 
 
 def calibration_path(league: str, settings: Settings = SETTINGS):
@@ -57,11 +58,11 @@ def apply_calibration(probs: dict[str, float], scalers) -> dict[str, float]:
     return out
 
 
-def _total_anchor(ev: oddsapi.Event, settings: Settings) -> tuple[str, float] | None:
+def _total_anchor(ev: oddsapi.Event, settings: Settings, lines: set[str] = _ANCHOR_LINES) -> tuple[str, float] | None:
     """Trzni total (nejblizsi 50 %) z ferove linie ostrych kancelari - ukotveni urovne golu modelu."""
     best: tuple[str, float] | None = None
     for market in ev.markets.values():
-        if market.market not in _ANCHOR_LINES:  # jen pulbodove linie, ktere model pocita (cela cisla maji vraceni)
+        if market.market not in lines:  # jen pulbodove linie, ktere model pocita (cela cisla maji vraceni)
             continue
         sharp, _ = oddsapi.sharp_and_offers(market, settings)
         try:
@@ -154,11 +155,16 @@ class ModelProvider:
             if not home or not away:
                 self.unmatched.update(n for n, m in ((ev.home, home), (ev.away, away)) if not m)
                 return None
-            probs = football.market_probabilities(self.params, home, away, self.scales.get(ev.match_id, (1.0, 1.0)))
-            if self.league == "UNL":
-                probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
-            elif self.goal_base:
-                probs = nations.shrink_goal_markets(probs, self.settings.football.league_goal_shrink, self.goal_base)
+            scale = self.scales.get(ev.match_id, (1.0, 1.0))
+            anchor = _total_anchor(ev, self.settings, _FOOTBALL_ANCHOR_LINES)
+            if anchor is not None:  # uroven golu z ferove linie trhu (viz football.anchored_probabilities)
+                probs = football.anchored_probabilities(self.params, home, away, anchor, scale)
+            else:  # bez linie trhu: stazeni golovych trhu k prumeru jako drive
+                probs = football.market_probabilities(self.params, home, away, scale)
+                if self.league == "UNL":
+                    probs = nations.shrink_goal_markets(probs, self.settings.football.national_goal_shrink)
+                elif self.goal_base:
+                    probs = nations.shrink_goal_markets(probs, self.settings.football.league_goal_shrink, self.goal_base)
             probs = apply_calibration(probs, self.scalers) if self.scalers else probs
             if self.props:
                 if ev.match_id not in self.referees:

@@ -31,7 +31,7 @@ from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_fac
 # (klic, nazev, ikona); prvni ctyri jsou na mobilu ve spodni liste, ostatni pod "Více"
 TABS = (("prehled", "Přehled", "⚽", "Přehled"), ("tikety", "Moje tikety", "🎫", "Tikety"),
         ("sledovani", "Sledování", "📈", "Sledování"), ("overeni", "Ověření modelu", "🔬", "Ověření"),
-        ("profil2", "Ruční rozbor", "✍️", "Rozbor"), ("kalkulacka", "Kalkulačka", "🧮", "Kalkulačka"),
+        ("profil2", "Ruční rozbor", "✍️", "Rozbor"), ("profil4", "Profil 4 – Expert", "🧠", "Expert"), ("kalkulacka", "Kalkulačka", "🧮", "Kalkulačka"),
         ("nastaveni", "Nastavení", "⚙️", "Nastavení"))
 MAIN_TABS = 4
 P2_FORM_KEY = "profil2_form"  # posledni vyplneny formular rucniho rozboru (aby po prepoctu zustal vyplneny)
@@ -170,6 +170,164 @@ table.cardt td{border:0;padding:0;text-align:left}table.cardt td:first-child,tab
 table.cardt td[data-l]::before{content:attr(data-l) " ";color:var(--muted);font-weight:400}
 table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-radius:6px;font-size:11px}
 }
+
+/* TIPS BOT — HYBRID PREMIUM DESIGN SYSTEM */
+:root{color-scheme:light;--bg:#edf3fb;--card:#fff;--line:#dce6f3;--text:#14243d;--muted:#667892;--ok:#09865d;--okbg:#e4f7ef;--bad:#d44b59;--badbg:#fff0f1;--acc:#1769dc;--accbg:#e8f1ff;--warn:#a56a08;--warnbg:#fff5df;--navy:#071a32;--navy2:#0c2b50;--shadow:0 8px 24px rgba(19,52,91,.07)}
+html{background:var(--bg)}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:linear-gradient(135deg,#f4f8fd 0%,#eaf1fa 100%);color:var(--text);font-size:14px;min-height:100vh}
+.app-shell{min-height:100vh}.sidebar{position:fixed;z-index:30;inset:0 auto 0 0;width:228px;padding:22px 14px 18px;background:linear-gradient(180deg,#071a32 0%,#0a2545 60%,#0b3158 100%);color:#d8e8ff;display:flex;flex-direction:column;box-shadow:8px 0 30px rgba(8,28,54,.12)}
+.brand{display:flex;align-items:center;gap:11px;padding:4px 8px 25px}.brandmark{width:48px;height:48px;border-radius:15px;display:grid;place-items:center;background:linear-gradient(145deg,#1478e8,#0a2b51);font-size:28px;box-shadow:0 8px 24px #0066d955}.brandname{font-size:20px;font-weight:850;letter-spacing:-.6px;color:#fff;line-height:1.1}.brandname small{display:block;font-size:10px;letter-spacing:.2px;color:#68c9ff;font-weight:600;margin-top:4px}
+.side-label{font-size:10px;letter-spacing:1.5px;color:#7592b5;font-weight:800;padding:8px 12px 9px;text-transform:uppercase}.side-nav{display:grid;gap:5px}.side-nav a{display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:11px;text-decoration:none;color:#b9cce4;font-weight:650;transition:.18s}.side-nav a .navico{width:22px;text-align:center;font-size:17px}.side-nav a:hover{background:#ffffff12;color:#fff}.side-nav a.on{background:linear-gradient(100deg,#1769d8,#104b93);color:#fff;box-shadow:0 7px 18px #0065d633}.side-nav .cnt{margin-left:auto}.side-bottom{margin-top:auto;display:grid;gap:12px}.system-card{padding:13px;border:1px solid #24476b;border-radius:13px;background:#ffffff09}.system-card b{display:block;color:#fff;font-size:12px}.system-card small{color:#9db4d0;font-size:11px}.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#27d59a;box-shadow:0 0 0 4px #27d59a22;margin-right:7px}
+.app-main{margin-left:228px;min-width:0}.topbar{height:76px;position:sticky;top:0;z-index:20;background:rgba(7,26,50,.96);backdrop-filter:blur(16px);border:0;box-shadow:0 8px 25px rgba(4,24,48,.12);color:#fff}.topbar .wrap{max-width:none;padding:0 30px;height:100%;display:flex;align-items:center}.topbar .top{width:100%;padding:0;display:flex;align-items:center;gap:16px}.topbar .top h1{font-size:20px;color:#fff;font-weight:750;letter-spacing:-.4px}.topbar .top .badge{margin-left:4px}.topbar .chips{margin-left:auto;display:flex;align-items:center;gap:20px;color:#9eb4ce;font-size:12px}.topbar .chips b{color:#fff;font-size:13px}.topbar .topnav{display:none}.top-meta{display:flex;align-items:center;gap:12px;margin-left:auto}.top-status{display:flex;align-items:center;gap:9px;color:#b8cce4;font-size:12px}.top-status strong{display:block;color:#fff;font-size:13px}.status-orb{width:32px;height:32px;display:grid;place-items:center;border-radius:50%;background:#0e9b72;color:white;font-size:16px;box-shadow:0 0 0 5px #0e9b7222}.top-profile{display:flex;align-items:center;gap:9px;padding:7px 11px;border:1px solid #244362;border-radius:12px;color:#dbe9fb;font-size:12px}.top-profile .avatar{width:30px;height:30px;border-radius:50%;background:#1b5b9f;display:grid;place-items:center;font-size:16px}
+.wrap{max-width:1700px;padding:0 26px}main{padding:24px 0 54px}main>.wrap{max-width:none}h2{font-size:18px;font-weight:800;letter-spacing:-.3px;margin:26px 0 12px;color:#132b4a}h2:first-child{margin-top:0}.card,.stat,.prof{border:1px solid #dce6f2;border-radius:15px;background:#fff;box-shadow:var(--shadow)}.card{padding:17px 19px;margin-bottom:13px}.stat{padding:16px 17px;min-height:105px;position:relative;overflow:hidden}.stat:after{content:"";position:absolute;right:-20px;bottom:-34px;width:100px;height:100px;border-radius:50%;background:linear-gradient(135deg,#eaf3ff,#f7fbff);z-index:0}.stat>*{position:relative;z-index:1}.stat span{font-size:12px;font-weight:650;color:#6d7f98}.stat b{font-size:25px;letter-spacing:-.6px;color:#142c4a}.stat small{font-size:11px;color:#8292a8;margin-top:3px}.stats{gap:12px;margin-bottom:16px}.cols{grid-template-columns:minmax(0,1fr) 370px;gap:20px}.cols>aside .stats{grid-template-columns:repeat(2,1fr)}
+button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padding:10px 16px;box-shadow:0 4px 12px #1769dc22;transition:transform .15s,box-shadow .15s}button:hover{transform:translateY(-1px);box-shadow:0 7px 18px #1769dc35}button.ghost{background:#edf3fb;color:#29415f;box-shadow:none}button.ok{background:linear-gradient(135deg,#0eaa78,#087b58)}button.bad{background:#d84b5a}input,select,textarea{background:#f9fbfe;border:1px solid #d5e0ee;border-radius:9px;padding:10px 12px;color:#18304e}input:focus,select:focus,textarea:focus{outline:3px solid #1769dc22;border-color:#4388e7}label{font-size:12px;font-weight:650;color:#647894}.badge{border-radius:7px;background:#e9f1ff;color:#1b62c1;padding:4px 9px;font-size:11px}.badge.tipb{background:#dcf7eb;color:#08794f}.badge.warn{background:#fff3d8;color:#94600a}.badge.bad{background:#ffe9eb;color:#bd3344}.msg{border-radius:11px;box-shadow:var(--shadow)}.note{background:#fff8e8;border-color:#f1dfb9;color:#865a0a}.tipbox{border-radius:12px}.tipbox.alt{border-radius:12px}.verdict{border-radius:12px}.tile{border-radius:11px;background:#f1f6fd}.tile.good{background:#e4f7ef}.tile.bad{background:#fff0f1}.prof{border-radius:12px}.prof.on{background:#edf4ff}.match{border-radius:12px}.ms{padding:14px 17px}.ms:hover{background:#f5f9ff}.mbody{padding:8px 17px 16px}.box{border-radius:12px;background:#f9fbfe;border-color:#e2eaf4}.czbox{background:#f7faff;border-radius:12px;border-color:#e0eaf6}.day{color:#6f86a3}.tablewrap{border-radius:10px}table{font-size:13px}td,th{border-color:#e8eef6}th{color:#70829b}tr.best td{background:#eff6ff}
+.autobar{background:linear-gradient(110deg,#092344,#0e3763);color:#e9f4ff;border:1px solid #174a7a;box-shadow:0 12px 28px #092b5030}.autobar .muted,.autobar .fold>summary{color:#aec6e2}.autobar .badge{background:#dff8ec;color:#08794f}.autobar .fold{margin-top:8px}.autobar .notes{color:#d5e5f7}.arow b{font-size:16px}.autobar button.ghost{background:#1c4d7d;color:white}
+.bottomnav{display:none}.side-nav a .cnt{background:#e64e60}
+@media(max-width:1100px){.sidebar{width:205px}.app-main{margin-left:205px}.wrap{padding:0 18px}.cols{grid-template-columns:1fr}.cols>aside,.cols>.colmain{grid-column:1;grid-row:auto}.cols>aside .stats{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:720px){body{padding-bottom:calc(72px + env(safe-area-inset-bottom));background:#edf3fb}.sidebar{display:none}.app-main{margin-left:0}.topbar{height:62px;position:sticky}.topbar .wrap{padding:0 14px}.topbar .top{gap:8px}.topbar .top h1{font-size:17px}.topbar .chips{display:none}.top-status{font-size:10px}.top-status strong{font-size:11px}.status-orb{width:28px;height:28px}.top-profile{padding:4px 7px}.top-profile .avatar{width:27px;height:27px}.wrap{padding:0 12px}main{padding:14px 0 24px}.card{padding:13px;border-radius:13px}.stats,.cols>aside .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.stat{min-height:88px;padding:11px}.stat b{font-size:20px}.cols{gap:12px}.cols>aside .stats{grid-template-columns:repeat(2,minmax(0,1fr))}.bottomnav{display:flex;position:fixed;left:8px;right:8px;bottom:calc(7px + env(safe-area-inset-bottom));z-index:40;background:rgba(7,26,50,.97);border:1px solid #244668;border-radius:17px;padding:5px 5px;box-shadow:0 8px 28px #071a3255;backdrop-filter:blur(14px)}.bottomnav>a,.bottomnav summary{color:#a9bfd9;font-size:10px;padding:5px 2px}.bottomnav i{font-size:19px}.bottomnav .on{color:#fff;background:#155cae}.bottomnav .sheet{bottom:calc(82px + env(safe-area-inset-bottom));background:#0b2441;border-color:#284a70}.bottomnav .sheet a{color:#e2efff}.bottomnav .sheet a.on{background:#155cae;color:#fff}.msg{position:relative;top:auto}.ms{padding:11px 12px}.mbody{padding:6px 10px 12px}.mgrid{grid-template-columns:1fr}.topbar .top .badge{display:none}}
+@media(min-width:721px) and (max-width:1100px){.sidebar{width:76px;padding:18px 9px}.brand{justify-content:center;padding:4px 0 22px}.brandname,.side-label,.side-nav a span:not(.navico),.side-bottom{display:none}.side-nav a{justify-content:center;padding:12px 6px}.side-nav a .navico{font-size:20px}.app-main{margin-left:76px}}
+
+
+/* HYBRID PREMIUM — dashboard composition and component polish */
+.dashboard-kpis{margin:0 0 18px}
+.dashboard-kpis .stats{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0}
+.dashboard-layout{grid-template-columns:minmax(0,1fr) 332px;gap:18px;align-items:start}
+.dashboard-layout>.dashboard-rail{grid-column:2;grid-row:1;min-width:0}
+.dashboard-layout>.dashboard-main-column{grid-column:1;grid-row:1;min-width:0}
+.dashboard-rail .card{box-shadow:0 8px 22px rgba(19,52,91,.055)}
+.dashboard-rail h2{font-size:16px}
+.dashboard-main-column>h2{margin-top:22px}
+.dashboard-main-column>h2:first-of-type{margin-top:0}
+.section-heading{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:0 0 12px}
+.section-heading h2{margin:3px 0 0;font-size:19px}
+.eyebrow{display:block;color:#4380c8;font-size:10px;letter-spacing:1.5px;font-weight:850}
+.text-link{color:#1769dc;text-decoration:none;font-size:12px;font-weight:750;white-space:nowrap}
+.opportunity-panel{margin:2px 0 20px}
+.opportunity-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}
+.opportunity-card{min-width:0;padding:15px;border:1px solid #d9e6f5;border-radius:15px;background:linear-gradient(145deg,#fff 0%,#f6faff 100%);box-shadow:0 8px 22px rgba(19,52,91,.06)}
+.opportunity-top{display:flex;align-items:center;justify-content:space-between;gap:7px;margin-bottom:12px}
+.market-icon{width:29px;height:29px;display:grid;place-items:center;border-radius:9px;background:#e6f1ff;color:#1769dc;font-size:19px}
+.opportunity-match{font-size:14px;line-height:1.35;font-weight:800;color:#172e4d;min-height:38px}
+.opportunity-pick{margin-top:4px;color:#1769dc;font-size:13px;font-weight:750}
+.opportunity-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:13px}
+.opportunity-metrics>div{padding:9px 7px;border-radius:9px;background:#edf4ff;min-width:0}
+.opportunity-metrics small{display:block;color:#7185a0;font-size:10px;line-height:1.25}
+.opportunity-metrics b{display:block;margin-top:4px;color:#183453;font-size:17px;white-space:nowrap}
+.opportunity-metrics .metric-positive{background:#e3f8ee}
+.opportunity-metrics .metric-positive b{color:#078457}
+.opportunity-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:12px;padding-top:10px;border-top:1px solid #e4edf7;color:#7185a0;font-size:11px}
+.opportunity-foot a{color:#1769dc;text-decoration:none;font-weight:750}
+.welcome-panel{position:relative;display:flex;align-items:center;justify-content:space-between;gap:22px;min-height:235px;margin:2px 0 20px;padding:27px 30px;overflow:hidden;border:1px solid #1b4e83;border-radius:18px;background:radial-gradient(circle at 82% 45%,#1a5b9a 0,#123d6a 27%,transparent 54%),linear-gradient(120deg,#071d38 0%,#0c2e54 65%,#123f70 100%);box-shadow:0 14px 30px rgba(7,35,68,.16);color:#fff}
+.welcome-copy{position:relative;z-index:2;max-width:690px}
+.welcome-copy .eyebrow{color:#7bcaff}
+.welcome-copy h2{max-width:650px;margin:9px 0 10px;color:#fff;font-size:clamp(21px,2.3vw,29px);line-height:1.16;letter-spacing:-.7px}
+.welcome-copy p{max-width:650px;margin:0;color:#c3d7ee;font-size:13px;line-height:1.7}
+.welcome-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:19px}
+.welcome-actions form{margin:0}
+.welcome-actions button,.primary-link{display:inline-flex;align-items:center;gap:9px;padding:11px 16px;border-radius:9px;background:linear-gradient(135deg,#2b8bff,#1260ce);color:#fff;text-decoration:none;font-size:13px;font-weight:800;box-shadow:0 7px 18px #0066d955}
+.secondary-link{padding:10px 13px;border:1px solid #527ba6;border-radius:9px;color:#d6eaff;text-decoration:none;font-size:12px;font-weight:700}
+.welcome-visual{position:relative;flex:0 0 240px;height:190px;display:grid;place-items:center}
+.bot-core{position:relative;z-index:2;width:94px;height:94px;display:grid;place-items:center;border:1px solid #67c9ff;border-radius:28px;background:linear-gradient(145deg,#2a91e8,#092a4e);box-shadow:0 0 0 12px #54bfff12,0 0 45px #39aaff77;font-size:52px}
+.orbit{position:absolute;left:50%;top:50%;border:1px solid #71caff55;border-radius:50%;transform:translate(-50%,-50%) rotate(-24deg)}
+.orbit-one{width:205px;height:92px}.orbit-two{width:165px;height:155px;transform:translate(-50%,-50%) rotate(42deg)}
+.orbit-dot{position:absolute;width:10px;height:10px;border-radius:50%;background:#62d7ff;box-shadow:0 0 16px #62d7ff}
+.dot-one{top:25px;right:30px}.dot-two{bottom:22px;left:27px;background:#44e0b1;box-shadow:0 0 16px #44e0b1}
+.visual-chip{position:absolute;z-index:3;display:grid;gap:1px;padding:7px 10px;border:1px solid #477eae;border-radius:9px;background:#0a2949eF;box-shadow:0 8px 18px #06182e55}
+.visual-chip span{color:#80b8e9;font-size:9px;font-weight:800;letter-spacing:1px}.visual-chip b{color:#fff;font-size:11px}
+.chip-one{top:9px;right:-4px}.chip-two{bottom:7px;left:-5px}
+.count-pill{display:inline-flex;min-width:24px;height:24px;align-items:center;justify-content:center;padding:0 7px;border-radius:99px;background:#e7f0ff;color:#1769dc;font-size:12px}
+.empty-list-card{display:flex;align-items:center;gap:16px;padding:21px;border:1px dashed #c4d7ec;border-radius:14px;background:linear-gradient(120deg,#fff,#f5f9ff)}
+.empty-icon{flex:0 0 46px;width:46px;height:46px;display:grid;place-items:center;border-radius:14px;background:#e8f2ff;color:#2875d2;font-size:24px}
+.empty-list-card h3{margin:0 0 4px;color:#1b3556;font-size:15px}
+.empty-list-card p{margin:0;color:#71839b;font-size:12px;line-height:1.6}
+.empty-list-card .empty-action{margin-left:auto;white-space:nowrap}
+.empty-action a{display:inline-flex;padding:9px 12px;border-radius:8px;background:#1769dc;color:white;text-decoration:none;font-size:12px;font-weight:750}
+.dashboard-rail .note{box-shadow:none}
+.dashboard-rail .row{align-items:flex-end}
+.dashboard-rail .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+.dashboard-rail .stat b{font-size:21px}
+.dashboard-main-column .tablewrap{border:1px solid #dce6f3;border-radius:13px;background:#fff;box-shadow:var(--shadow)}
+.dashboard-main-column .filters button{border-radius:8px}
+.dashboard-main-column .match{box-shadow:0 5px 16px rgba(19,52,91,.045)}
+.dashboard-main-column .match[open]{box-shadow:0 9px 22px rgba(19,52,91,.08)}
+.dashboard-main-column .czbox{background:#f7faff}
+.dashboard-main-column .det{margin-top:12px}
+/* Shared visual language for every workspace tab */
+.app-main main h2{scroll-margin-top:90px}
+.app-main main .card{transition:border-color .16s,box-shadow .16s}
+.app-main main .card:hover{border-color:#c9d9ed}
+.app-main main details.card>summary{padding:2px 0}
+.app-main main details.card[open]>summary{margin-bottom:12px}
+.app-main main form.row{gap:12px}
+.app-main main input[type=checkbox]{accent-color:#1769dc}
+.app-main main textarea{line-height:1.55}
+.app-main main .verdict{border:1px solid #f1d7da}
+.app-main main .verdict.yes{border-color:#ccebdc}
+.app-main main .profbar .prof{box-shadow:0 5px 15px rgba(19,52,91,.04)}
+.app-main main .profbar .prof.on{border-color:#a9c9f2;background:linear-gradient(120deg,#edf5ff,#fff)}
+.app-main main .box{box-shadow:0 3px 12px rgba(19,52,91,.035)}
+.app-main main table tr:hover td{background-color:#f8fbff}
+.app-main main table tr.best:hover td{background-color:#eaf3ff}
+@media(max-width:1250px){
+ .dashboard-layout{grid-template-columns:minmax(0,1fr) 310px}
+ .opportunity-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .opportunity-card:nth-child(3){display:none}
+}
+@media(max-width:900px){
+ .dashboard-layout{grid-template-columns:1fr}
+ .dashboard-layout>.dashboard-rail,.dashboard-layout>.dashboard-main-column{grid-column:1;grid-row:auto}
+ .dashboard-kpis .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .dashboard-layout>.dashboard-rail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+ .dashboard-layout>.dashboard-rail>.stats{grid-column:1/-1}
+ .dashboard-layout>.dashboard-rail>h2{grid-column:1/-1}
+}
+@media(max-width:720px){
+ .dashboard-kpis{margin-bottom:12px}
+ .dashboard-kpis .stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .dashboard-layout{gap:12px}
+ .dashboard-layout>.dashboard-rail{display:block}
+ .opportunity-grid{grid-template-columns:1fr}
+ .opportunity-card:nth-child(3){display:block}
+ .welcome-panel{min-height:0;padding:21px 18px;border-radius:15px}
+ .welcome-visual{display:none}
+ .welcome-copy h2{font-size:22px}
+ .welcome-copy p{font-size:12px}
+ .welcome-actions{align-items:stretch}
+ .welcome-actions form,.welcome-actions form button,.primary-link{width:100%;justify-content:center}
+ .secondary-link{text-align:center}
+ .empty-list-card{align-items:flex-start;padding:15px}
+ .empty-list-card .empty-action{margin-left:0}
+ .empty-list-card{flex-wrap:wrap}
+ .section-heading h2{font-size:17px}
+ .opportunity-metrics b{font-size:16px}
+}
+
+
+.no-value-panel{display:flex;align-items:center;gap:15px;margin:2px 0 20px;padding:18px 20px;border:1px solid #d9e6f4;border-radius:14px;background:linear-gradient(110deg,#fff,#f5f9ff);box-shadow:0 7px 20px rgba(19,52,91,.045)}
+.no-value-icon{flex:0 0 42px;width:42px;height:42px;display:grid;place-items:center;border-radius:13px;background:#eaf2ff;color:#2875d2;font-size:25px}
+.no-value-panel h2{margin:4px 0;color:#173352;font-size:16px}
+.no-value-panel p{margin:0;color:#71839b;font-size:12px;line-height:1.55}
+.no-value-panel>a{margin-left:auto;white-space:nowrap;color:#1769dc;font-size:12px;font-weight:800;text-decoration:none}
+@media(max-width:720px){.no-value-panel{align-items:flex-start;flex-wrap:wrap;padding:15px}.no-value-panel>a{margin-left:57px}}
+
+
+/* Profil 4, zahlavi stranek, pristupnost */
+:focus-visible{outline:3px solid #1769dc;outline-offset:2px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.page-head{margin:0 0 18px}.page-head h2{margin:3px 0 4px;font-size:22px}.page-head p{margin:0;color:#6c7f98;font-size:13px;max-width:900px;line-height:1.55}
+.p4stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+.meter{display:block;height:6px;border-radius:9px;background:#e6eef8;margin-top:7px;overflow:hidden}.meter>i{display:block;height:100%;background:linear-gradient(90deg,#1975e8,#0eaa78)}
+.p4actions{display:flex;flex-wrap:wrap;gap:8px}.p4actions form{margin:0}
+.p4verdict{border-radius:14px;padding:16px 18px;margin-bottom:13px;border:1px solid #f3c9cf;background:#fff4f5}.p4verdict b{display:block;font-size:22px;color:#b83242}.p4verdict p{margin:4px 0 0;color:#5f6f86;font-size:13px}
+.p4verdict.yes{background:#e8f8f0;border-color:#b9e8d2}.p4verdict.yes b{color:#08794f}.p4verdict.watch{background:#fff8e8;border-color:#f1dfb9}.p4verdict.watch b{color:#94600a}
+.p4cats{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:0 13px}.p4catnote{display:flex;flex-wrap:wrap;gap:6px 14px;margin:-4px 0 14px;font-size:12px;color:#6c7f98}
+.p4tip{background:#fff;border:1px solid #dce6f2;border-radius:14px;padding:14px 16px;margin-bottom:13px;box-shadow:var(--shadow)}.p4tip.ok{border-color:#9fdcc0}
+.p4tip-head{display:flex;justify-content:space-between;gap:12px}.p4odds{text-align:right}.p4odds b{display:block;font-size:24px;color:#1769dc}.p4odds small{color:#6c7f98}
+.p4metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:10px 0}.p4metrics>div{background:#f4f8fd;border-radius:10px;padding:8px 10px;min-width:0}.p4metrics span,.p4metrics small{display:block;font-size:11px;color:#6c7f98}.p4metrics b{font-size:16px}
+.p4models{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}.p4models span{background:#eef4fc;border-radius:7px;padding:3px 8px;font-size:12px}
+.p4risk{margin-top:6px;color:#94600a;background:#fff8e8;border-radius:8px;padding:6px 9px;font-size:12px}
+.p4nowrap td.num{white-space:nowrap}.p4list{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.55}.p4pre{white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;overflow-x:auto;margin:8px 0 0}
+@media(max-width:1100px){.p4metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:720px){.p4stats{grid-template-columns:repeat(2,minmax(0,1fr))}.p4metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.p4actions form{flex:1 1 calc(50% - 8px)}.p4actions button{width:100%}.page-head h2{font-size:19px}}
 </style></head><body>
 
 {% macro mrow(r, v) %}<tr class="{{ 'best' if r is sameas v.rows[v.recommended] or (v.target is not none and r is sameas v.rows[v.target]) }}">
@@ -182,6 +340,8 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <td class="num {{ 'pos' if r.cz_ev is not none and r.cz_ev > 0 else 'neg' if r.cz_ev is not none else '' }}">{{ '%+.1f %%'|format(r.cz_ev * 100) if r.cz_ev is not none else ('%+.1f %%'|format(r.ev_pct) if r.status != 'model' else '–') }}</td>
 <td>{% if r.cz_ok %}<span class="badge tipb">VSADIT</span>{% elif r.cz_suspect %}<span class="badge warn" title="čekaný zisk nad 15 % – zkontroluj, že kurz patří k tomuto trhu">ověř kurz</span>{% elif r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VÝHODNÉ</span>{% elif r.cz %}<span class="badge bad">nízký kurz</span>{% endif %}</td></tr>{% endmacro %}
 
+{% macro page_head(eyebrow, title, desc='') %}<header class="page-head"><span class="eyebrow">{{ eyebrow }}</span><h2>{{ title }}</h2>{% if desc %}<p>{{ desc }}</p>{% endif %}</header>{% endmacro %}
+
 {% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
 {% if rows %}<div class="card sec-acc"><b>Zadat výsledek zápasu</b>
 <div class="muted">Vyber skóre po 90 minutách (domácí : hosté). Bot podle něj vyhodnotí všechny otevřené tikety i sledované výběry toho zápasu.</div>
@@ -192,18 +352,20 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <button class="ok">Vyhodnotit</button></form></div>{% endif %}
 {% endmacro %}
 
-<header><div class="wrap">
-<div class="top"><h1>Tips Bot</h1>
-{% if s.test_mode %}<span class="badge warn">TESTOVACÍ REŽIM</span>{% endif %}
-{% if s.paused %}<span class="badge bad">STOP-LOSS</span>{% endif %}
-<div class="chips"><span>Bankroll <b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b></span>
-<span>Zisk <b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b></span></div></div>
-{% macro cnt(key) %}{% set n = (pending|selectattr('tikety')|list|length) if key == 'tikety' else (pending|selectattr('vybery')|list|length) if key == 'sledovani' else 0 %}{% if n %}<span class="cnt" title="zápasy čekající na výsledek">{{ n }}</span>{% endif %}{% endmacro %}
-<nav class="topnav">{% for key, label, icon, short in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ label }}{{ cnt(key) }}</a>{% endfor %}</nav>
-</div></header>
-<nav class="bottomnav">{% for key, label, icon, short in tabs[:main_tabs] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}"><i>{{ icon }}</i><span>{{ short }}</span>{{ cnt(key) }}</a>{% endfor %}
-<details class="more"><summary class="{{ 'on' if tab in tabs[main_tabs:]|map('first')|list }}"><i>☰</i><span>Více</span></summary>
-<div class="sheet">{% for key, label, icon, short in tabs[main_tabs:] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ icon }} {{ label }}</a>{% endfor %}</div></details></nav>
+<div class="app-shell">
+<aside class="sidebar">
+  <div class="brand"><div class="brandmark">🤖</div><div class="brandname">TIPS BOT<small>SMART BETTING ANALYTICS</small></div></div>
+  <div class="side-label">Pracovní prostor</div>
+  {% macro cnt(key) %}{% set n = (pending|selectattr('tikety')|list|length) if key == 'tikety' else (pending|selectattr('vybery')|list|length) if key == 'sledovani' else 0 %}{% if n %}<span class="cnt" title="zápasy čekající na výsledek">{{ n }}</span>{% endif %}{% endmacro %}
+  <nav class="side-nav">{% for key, label, icon, short in tabs %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}"><span class="navico">{{ icon }}</span><span>{{ label }}</span>{{ cnt(key) }}</a>{% endfor %}</nav>
+  <div class="side-bottom"><div class="system-card"><b><span class="live-dot"></span>Systém aktivní</b><small>{% if auto_running %}Automat právě pracuje{% elif auto_req %}Automat čeká na spuštění{% elif auto_st %}Poslední běh {{ auto_st.local }}{% else %}Připraven k analýze{% endif %}</small></div><div class="system-card"><b>Bankroll · {{ '%.0f'|format(s.bankroll) }} {{ cur }}</b><small class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">Výsledek {{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</small></div></div>
+</aside>
+<div class="app-main">
+<header class="topbar"><div class="wrap"><div class="top"><h1>{% for key, label, icon, short in tabs %}{% if key == tab %}{{ label }}{% endif %}{% endfor %}</h1>
+{% if s.test_mode %}<span class="badge warn">TESTOVACÍ REŽIM</span>{% endif %}{% if s.paused %}<span class="badge bad">STOP-LOSS</span>{% endif %}
+<div class="top-meta"><div class="top-status"><span class="status-orb">✓</span><span><strong>{% if auto_running %}Automat běží…{% elif auto_req %}Automat se spustí{% else %}Systém připraven{% endif %}</strong><span>{% if auto_running %}Hledám další příležitosti{% elif auto_st %}Poslední kontrola {{ auto_st.local }}{% else %}Čekám na analýzu{% endif %}</span></span></div></div>
+<div class="chips"><span>Bankroll <b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b></span><span>Zisk <b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b></span></div></div></div></header>
+<nav class="bottomnav">{% for key, label, icon, short in tabs[:main_tabs] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}"><i>{{ icon }}</i><span>{{ short }}</span>{{ cnt(key) }}</a>{% endfor %}<details class="more"><summary class="{{ 'on' if tab in tabs[main_tabs:]|map('first')|list }}"><i>☰</i><span>Více</span></summary><div class="sheet">{% for key, label, icon, short in tabs[main_tabs:] %}<a href="{{ url_for('index', tab=key) }}" class="{{ 'on' if tab == key }}">{{ icon }} {{ label }}</a>{% endfor %}</div></details></nav>
 <main><div class="wrap">
 <datalist id="matchlist">{% for n in match_names %}<option value="{{ n }}">{% endfor %}</datalist>
 <datalist id="stakes">{% for x in (50, 100, 200, 300, 500, 1000) %}<option value="{{ x }}">{% endfor %}</datalist>
@@ -217,13 +379,15 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <details class="fold"><summary>Co dělá{% if auto_st %} a co udělal ({{ auto_st.notes|length }}){% endif %}</summary>
 <div class="muted">Každých 6 hodin sám načte kurzy na 48 h dopředu, všechny profily vyberou sázky do Sledování, odehrané zápasy vyhodnotí; jednou týdně ověří model. Běží v Dockeru jako služba tipsbot-auto.</div>
 {% if auto_st %}<div class="muted notes">{% for n in auto_st.notes %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}</details></div>
-<div class="cols"><aside>
-<div class="stats">
+<div class="dashboard-kpis"><div class="stats">
   <div class="stat"><span>Bankroll</span><b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b><small>dnes vsazeno {{ '%.0f'|format(exposure) }} z {{ '%.0f'|format(exposure_cap) }}</small></div>
   <div class="stat"><span>Zisk / ztráta</span><b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b><small>výnos {{ '%+.2f'|format(s.yield_pct) }} % z vsazeného</small></div>
   <div class="stat"><span>Sázky</span><b>{{ '%.0f'|format(s.settled_bets) }}</b><small>úspěšnost {{ '%.1f'|format(s.win_rate_pct) }} % · {{ '%.0f'|format(s.open_bets) }} otevřených</small></div>
   <div class="stat"><span title="o kolik lepší kurz jsi vzal než ten těsně před zápasem; dlouhodobě v plusu = sázíš chytře">Lepší než závěrečný kurz</span><b>{{ '%+.2f'|format(s.avg_clv_pct) }} %</b><small>propad {{ '%.1f'|format(s.drawdown_pct) }} % (limit 15 %)</small></div>
 </div>
+</div>
+
+<div class="cols dashboard-layout"><aside class="dashboard-rail">
 {% if s.bankroll <= 0 %}<div class="card note"><b>Nastav bankroll</b> – bez něj bot nespočítá výši vkladu.
 <form class="row" method="post" action="{{ url_for('deposit') }}">
 <label>Částka ({{ cur }})<input name="amount" type="number" step="1" min="1" list="amounts" required></label>
@@ -236,7 +400,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 {% if nt %}<a href="{{ url_for('index', tab='tikety') }}">{{ nt }} zápasů s tvými tikety →</a>{% endif %}
 {% if nv %}<a href="{{ url_for('index', tab='sledovani') }}">{{ nv }} zápasů se sledovanými výběry modelu →</a>{% endif %}</div>{% endif %}
 
-<details class="card fold"><summary>Ručně načíst kurzy · co znamenají štítky</summary><div class="bar">
+<details class="card fold" id="manual-scan"><summary>Ručně načíst kurzy · co znamenají štítky</summary><div class="bar">
 {% if has_key %}<form class="row" style="margin:0;flex:1" method="post" action="{{ url_for('scan') }}">
 <label style="flex:0 1 260px">Soutěž<select name="league"><option value="all">Všechny soutěže</option>{% for k in scan_leagues %}<option value="{{ k }}">{{ leagues[k].name }}</option>{% endfor %}</select></label>
 <label style="flex:0 0 auto;flex-direction:row;align-items:center;gap:6px"><input type="checkbox" name="force" value="1" style="width:auto"> nová data (stojí kredity)</label><button>Načíst kurzy a rozbor</button></form>
@@ -257,7 +421,47 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 {% for c in combos[1:] %}<tr><td>{% for lg in c.legs %}<div><b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">{{ lg.local }}</span></div>{% endfor %}</td>
 <td class="num"><b>{{ '%.2f'|format(c.odds) }}</b></td><td class="num">{{ '%.1f'|format(c.prob * 100) }} %</td><td class="num">{{ '%+.1f'|format(c.ev_pct) }} %</td><td class="num">{{ '%.2f'|format(c.min_odds) }}</td><td class="num">{{ '%.0f'|format(c.stake) }}</td></tr>{% endfor %}
 </table></div></details>{% endif %}
-</aside><div class="colmain">
+</aside><div class="colmain dashboard-main-column">
+{% if bets %}
+<section class="opportunity-panel">
+  <div class="section-heading"><div><span class="eyebrow">TIPS BOT · VALUE RADAR</span><h2>Nejlepší příležitosti</h2></div><a class="text-link" href="#match-list">Všechny zápasy →</a></div>
+  <div class="opportunity-grid">
+  {% for b in bets[:3] %}{% set v = b.view %}{% set r = b.row %}
+    <article class="opportunity-card">
+      <div class="opportunity-top"><span class="market-icon">✦</span><span class="badge tipb">Hodnota nalezena</span></div>
+      <div class="opportunity-match">{{ v.name }}</div><div class="opportunity-pick">{{ r.label }}</div>
+      <div class="opportunity-metrics">
+        <div><small>Modelová šance</small><b>{{ '%.1f'|format(r.p_final * 100) }} %</b></div>
+        <div><small>Český kurz</small><b>{{ '%.2f'|format(r.cz[0]) }}</b></div>
+        <div class="metric-positive"><small>Očekávaná hodnota</small><b>{{ '%+.1f'|format(r.cz_ev * 100) }} %</b></div>
+      </div>
+      <div class="opportunity-foot"><span>{{ r.cz[1] }}</span><a href="#match-list">Detail zápasu ↓</a></div>
+    </article>
+  {% endfor %}
+  </div>
+</section>
+{% elif views %}
+<section class="no-value-panel">
+  <div class="no-value-icon">⌕</div>
+  <div><span class="eyebrow">ANALÝZA DOKONČENA</span><h2>Žádná sázka teď nesplňuje podmínky pro doporučení.</h2>
+  <p>To je platný výsledek. Projdi níže zápasy, doplň aktuální kurzy české kanceláře a sleduj minimální kurz. Bot nebude označovat nevýhodnou sázku jako tip.</p></div>
+  <a href="#match-list">Prohlédnout zápasy ↓</a>
+</section>
+{% else %}
+<section class="welcome-panel">
+  <div class="welcome-copy">
+    <span class="eyebrow">TIPS BOT · READY TO ANALYZE</span>
+    <h2>Začni analýzou nadcházejících zápasů.</h2>
+    <p>Jakmile načteš zápasy a kurzy, zobrazí se zde nejlepší příležitosti, modelové pravděpodobnosti a přehled rizik. Pokud žádná sázka nemá hodnotu, bot to řekne otevřeně.</p>
+    <div class="welcome-actions">
+      {% if has_key %}<form method="post" action="{{ url_for('scan') }}"><input type="hidden" name="league" value="all"><button>Načíst kurzy a rozbor →</button></form>
+      {% else %}<a class="primary-link" href="{{ url_for('index', tab='nastaveni') }}">Nastavit API a začít →</a>{% endif %}
+      <a class="secondary-link" href="{{ url_for('index', tab='profil4') }}">Otevřít Profil 4 – Expert</a>
+    </div>
+  </div>
+  <div class="welcome-visual" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="bot-core">🤖</div><div class="orbit-dot dot-one"></div><div class="orbit-dot dot-two"></div><div class="visual-chip chip-one"><span>EV</span><b>Value radar</b></div><div class="visual-chip chip-two"><span>MODEL</span><b>A · B · C · D</b></div></div>
+</section>
+{% endif %}
 <h2>Co vsadit</h2>
 {% if bets %}<div class="card tablewrap" style="padding:6px 10px"><table class="bets"><tr><th>Výkop</th><th>Zápas</th><th>Sázka</th><th class="num">Šance</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th>Kurz · kancelář</th><th>Vklad</th><th></th></tr>
 {% for b in bets %}{% set v = b.view %}{% set r = b.row %}<tr>
@@ -274,7 +478,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <table>{% for b in check %}<tr><td>{{ b.view.local }}</td><td>{{ b.view.name }}</td><td>{{ b.row.label }}</td><td class="num">{{ '%.2f'|format(b.row.cz[0]) }}</td><td class="num">{{ '%+.1f'|format(b.row.cz_ev * 100) }} %</td></tr>{% endfor %}</table>
 <div class="muted">Model na trzích s góly zatím nemá ověřenou přesnost (Sledování modelu). Takhle velký čekaný zisk proti kanceláři bývá spíš chyba než příležitost.</div></details>{% endif %}
 
-<h2>Zápasy ({{ views|length }})</h2>
+<h2 id="match-list">Zápasy <span class="count-pill">{{ views|length }}</span></h2>
 <div class="filters" id="flt" style="margin-bottom:6px">
 {% for key, name in (('all', 'Vše'), ('cz', 'Vsadit podle českých kurzů'), ('tip', 'Tipy'), ('cil', 'Cíle – ověř kurz'), ('value', 'Výhodné'), ('none', 'Nevýhodné')) %}
 {% set n = views|length if key == 'all' else tag_counts.get(key, 0) %}
@@ -326,7 +530,11 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
     <h4>Text analýzy ke zkopírování</h4><textarea readonly rows="9" onclick="this.select()">{{ v.post }}</textarea>
   </details></div>
 </details>
-{% else %}<div class="card muted">Zatím žádné zápasy. Klikni na „Načíst kurzy a rozbor".</div>{% endfor %}
+{% else %}<section class="empty-list-card">
+  <div class="empty-icon">⚽</div>
+  <div><h3>Zatím tu nejsou žádné zápasy</h3><p>Načti nadcházející zápasy a jejich kurzy. Potom se zde zobrazí analýzy, modelové pravděpodobnosti, férové kurzy a nalezené příležitosti.</p></div>
+  <div class="empty-action">{% if has_key %}<a href="#manual-scan" class="js-open-scan">Načíst zápasy</a>{% else %}<a href="{{ url_for('index', tab='nastaveni') }}">Nastavit API</a>{% endif %}</div>
+</section>{% endfor %}
 {% for t in orphan_tips %}<div class="card"><b>{{ t.match_name }}</b> – tip {{ t.market }} → {{ t.selection }} @ {{ '%.2f'|format(t.raw_odds) }}
 <form class="row" method="post" action="{{ url_for('tip_cancel', tip_id=t.id) }}"><button class="ghost">Zrušit tip</button></form></div>{% endfor %}
 </div></div>
@@ -339,6 +547,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
   document.querySelectorAll('[data-day]').forEach(function(h){var n=h.nextElementSibling,vis=false;
    while(n&&!n.hasAttribute('data-day')){if(n.matches('details.match')&&n.style.display!='none')vis=true;n=n.nextElementSibling}
    h.style.display=vis?'':'none'});});
+ var scanLink=document.querySelector('.js-open-scan');if(scanLink)scanLink.addEventListener('click',function(e){var panel=document.getElementById('manual-scan');if(panel){panel.open=true;panel.scrollIntoView({behavior:'smooth',block:'center'});}});
  document.querySelectorAll('form.czf').forEach(function(form){var data=JSON.parse(form.dataset.prefill||'{}'),sel=form.elements.book;
   var books=Object.keys(data);if(books.length)sel.value=books[0];
   function fill(){var d=data[sel.value]||{};form.querySelectorAll('.czgrid input').forEach(function(i){i.value=d[i.name]||''})}
@@ -347,6 +556,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 </script>
 
 {% elif tab == 'tikety' %}
+{{ page_head('Peníze', 'Moje tikety', 'Skutečně vsazené sázky: otevřené čekají na výsledek, ukončené tvoří tvoje výsledky (zisk, výnos, proti závěrečnému kurzu).') }}
 <div class="cols"><aside>
 {{ score_form('tikety', 'tikety') }}
 <h2>Zapsat sázku</h2>
@@ -389,6 +599,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 
 
 {% elif tab == 'sledovani' %}
+{{ page_head('Bez peněz', 'Sledování modelu', 'Každý profil si sám vybírá sázky (1 jednotka, bez peněz) a bot je po zápase vyhodnotí. Tak se ukáže, který přístup by vydělával.') }}
 <div class="profbar">{% for pr in profiles %}{% set st = prof_stats[pr.key] %}
 <a class="prof{{ ' on' if pr.key == prof.key }}{{ ' off' if not pr.active }}" href="{{ url_for('index', tab='sledovani', profile=pr.key) }}">
 <b>{{ pr.name }}</b>{% if not pr.active %} <span class="badge warn">nenastaven</span>{% endif %}<small>{{ pr.about }}</small>
@@ -435,8 +646,8 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 </div></div>
 
 {% elif tab == 'overeni' %}
-<div class="card sec-acc"><b>Ověření modelu</b>
-<div class="muted">Dva pohledy: <b>skutečné výběry ve Sledování</b> (reálné kurzy, zatím malý vzorek) a <b>zpětný test</b> za poslední tři sezóny
+{{ page_head('Kontrola kvality', 'Ověření modelu') }}
+<div class="card sec-acc"><div class="muted">Dva pohledy: <b>skutečné výběry ve Sledování</b> (reálné kurzy, zatím malý vzorek) a <b>zpětný test</b> za poslední tři sezóny
 (model se vždy učí jen z dřívějších zápasů – tisíce zápasů, ale u většiny trhů bez historických kurzů). Trh je pro sázení důvěryhodný, až když obojí ukazuje stejným směrem.</div>
 <div class="arow" style="margin-top:8px">{% if bt_running %}<span class="badge warn">zpětný test běží (od {{ bt_running }}), trvá asi 30 minut</span>
 {% else %}<form method="post" action="{{ url_for('backtest_start') }}" style="margin:0"><input type="hidden" name="tab" value="overeni"><button class="sm">Spustit zpětný test znovu</button></form>{% endif %}
@@ -457,7 +668,7 @@ table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-r
 <td class="num {{ 'pos' if m.skill > 0 else 'neg' }}">{{ '%+.1f'|format(m.skill * 100) }} %</td>
 <td class="num">{% if m.vs_market is not none %}<span class="{{ 'pos' if m.vs_market >= 0 else 'neg' }}">{{ '%+.1f'|format(m.vs_market * 100) }} %</span>{% else %}<span class="muted">kurzy nejsou</span>{% endif %}</td>
 <td><span class="badge {{ m.cls }}">{{ m.verdict }}</span></td></tr>{% endfor %}</table>
-<div class="muted" style="margin-top:6px">Procenta = o kolik je odhad přesnější (log-loss). Historické kurzy jsou jen pro výsledek zápasu a počet gólů 2,5; u ostatních trhů jde srovnat jen s odhadem bez modelu.
+<div class="muted" style="margin-top:6px">Procenta = o kolik je odhad přesnější (log-loss). Historické kurzy jsou jen pro výsledek zápasu a počet gólů 2,5; u ostatních trhů jde srovnat jen s odhadem bez modelu. U lig se celková úroveň gólů (v testu i při sázení) sladí s linií Pinnacle, takže u počtu gólů 2,5 je model shodný s trhem; model přidává rozdělení gólů mezi týmy a na ostatní linie.
 To říká, že model zápasy „čte“, ne že porazí kancelář – proto se tyto trhy ověřují ve Sledování na skutečných kurzech.</div></div>
 
 <h2>Podrobně podle soutěží</h2>
@@ -469,7 +680,7 @@ To říká, že model zápasy „čte“, ne že porazí kancelář – proto se
 {% else %}<div class="card muted">Zpětný test zatím nebyl spuštěn.</div>{% endif %}
 
 {% elif tab == 'profil2' %}
-<h2>Ruční rozbor zápasu (Profil 2)</h2>
+{{ page_head('Profil 2', 'Ruční rozbor zápasu', 'Scénáře model / kompromis / trh, nejistota, simulace a sure bety z kurzů, které si opíšeš.') }}
 <div class="card note">K čemu to je: <b>rozbor libovolného zápasu z kurzů, které si opíšeš z Tipsportu</b> – i zápasu, který bot v nabídce nemá
 (jiná liga, pohár, speciální sázky jako „výhra hostů a méně než 3,5 gólu“). Automatické tipy Profilu 2 najdeš v záložce Sledování, tady je jen ruční nástroj.</div>
 <div class="card">
@@ -559,8 +770,95 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 </div></details>
 {% else %}<div class="card muted">Zatím žádný rozbor. Vyplň zápas a kurzy výše.</div>{% endfor %}
 
+{% elif tab == 'profil4' %}
+{{ page_head('Hloubková analýza', 'Profil 4 – Hybridní expert', 'Bot projde nadcházející zápasy z API-Football, levně vyřadí nezajímavé a vybrané rozebere do hloubky: vlastní model A, trh B, kombinace C, konzervativní D, Monte Carlo, stress test a robustnost. Kategorie ani robustnost nejsou zárukou výhry.') }}
+{% macro p4tip(c, title='') %}<div class="p4tip {{ 'ok' if c.approved else '' }}">
+<div class="p4tip-head"><div>{% if title %}<span class="eyebrow">{{ title }}</span>{% endif %}<b>{{ c.label }}</b> <span class="muted">{{ c.key }}</span><div class="muted">{{ c.match }}</div></div>
+<div class="p4odds"><b>{{ c.odds }}</b><small>{{ c.book }}</small></div></div>
+<div class="p4metrics"><div><span>Šance (C)</span><b>{{ c.p_win }}</b>{% if c.p_push %}<small>vrácení {{ c.p_push }}</small>{% endif %}</div><div><span>Férový kurz</span><b>{{ c.fair_c }}</b><small>konzerv. {{ c.fair_d }}</small></div>
+<div><span>EV</span><b class="{{ 'pos' if c.ev_pos else 'neg' }}">{{ c.ev_c }}</b><small>konzerv. {{ c.ev_d }}</small></div><div><span>Min. kurz</span><b>{{ c.min_odds }}</b></div>
+<div><span>Robustnost</span><b>{{ c.robustness }}/100</b><i class="meter" aria-hidden="true"><i style="width:{{ c.robustness }}%"></i></i></div></div>
+<div class="p4models">{% for k, v in c.models.items() %}<span title="model {{ k }}"><b>{{ k }}</b> {{ v }}</span>{% endfor %}</div>
+<div class="arow"><span class="badge {{ 'tipb' if c.approved else 'warn' if c.decision == 'WATCH' else 'bad' }}">{{ c.decision }}</span>
+<span class="muted">{{ c.source }} · {{ c.quote_status }} · získáno {{ c.quote_time }} ({{ c.quote_age }}){% if c.note %} · {{ c.note }}{% endif %}</span></div>
+{% if c.reasons %}<div class="muted">Proč: {{ c.reasons|join('; ') }}</div>{% endif %}
+{% if c.risks %}<div class="p4risk">Rizika: {{ c.risks|join('; ') }}</div>{% endif %}
+{% if c.stress %}<details class="fold"><summary>Stress test a robustnost</summary><div class="tablewrap"><table class="mkt"><tr><th>Scénář</th><th class="num">EV</th></tr>
+{% for n, ev, ok in c.stress %}<tr><td>{{ n }}</td><td class="num {{ 'pos' if ok else 'neg' }}">{{ ev }}</td></tr>{% endfor %}</table></div>
+<div class="muted">Robustnost: {{ c.robust_parts|join(', ') }}</div></details>{% endif %}
+</div>{% endmacro %}
+{% macro p4verdict(v) %}<div class="p4verdict {{ 'yes' if v.verdict == 'APPROVED BET' else 'watch' if v.verdict == 'WATCH' else 'no' }}"><span class="eyebrow">Verdikt</span><b>{{ v.verdict or 'NO BET' }}</b><p>{{ v.explanation }}</p></div>
+{% if v.best_available %}{{ p4tip(v.best_available, 'BEST AVAILABLE – není schválená sázka') }}{% endif %}
+<div class="p4cats">{% for cat in v.categories if cat.tip and not cat.same_as_a %}{{ p4tip(cat.tip, cat.name) }}{% endfor %}</div>
+<div class="p4catnote">{% for cat in v.categories if not cat.tip or cat.same_as_a %}<span><b>{{ cat.name }}</b>: {{ 'stejný tip jako A' if cat.same_as_a else 'nic nesplňuje podmínky' }}</span>{% endfor %}</div>{% endmacro %}
+
+<div class="stats p4stats">
+<div class="stat"><span>Klíč API-Football</span><b class="{{ 'pos' if p4.key else 'neg' }}">{{ 'nastaven' if p4.key else 'chybí' }}</b><small>{% if not p4.key %}<a href="{{ url_for('index', tab='nastaveni') }}">uložit v Nastavení</a>{% else %}API-Football v3{% endif %}</small></div>
+{% if p4.budget %}<div class="stat"><span>Kvóta dnes</span><b>{{ p4.budget.used }} / {{ p4.budget.limit }}</b><small>využito požadavků</small><i class="meter" aria-hidden="true"><i style="width:{{ (100 * p4.budget.used / p4.budget.limit)|round|int if p4.budget.limit else 0 }}%"></i></i></div>
+<div class="stat"><span>Zbývá</span><b>{{ p4.budget.remaining }}</b><small>jeden sken spotřebuje nejvýš {{ p4.run_limit }}</small></div>{% endif %}
+<div class="stat"><span>Poslední výsledek</span><b>{{ p4.view.verdict if p4.view and p4.view.verdict else '–' }}</b><small>{{ (p4.view.mode ~ ' · ' ~ p4.view.when) if p4.view and p4.view.kind == 'scan' else (p4.view.name if p4.view else 'zatím nic nespuštěno') }}</small></div>
+</div>
+{% if p4.error %}<div class="card note">{{ p4.status }}</div>{% endif %}
+
+<div class="card"><div class="section-heading"><div><span class="eyebrow">Sken</span><h2>Spustit</h2></div></div>
+<div class="p4actions">
+<form method="post" action="{{ url_for('profil4_scan') }}"><input type="hidden" name="mode" value="daily"><button class="ok">Dnešní sken</button></form>
+<form method="post" action="{{ url_for('profil4_scan') }}"><input type="hidden" name="mode" value="upcoming"><button>Nadcházející 48 h</button></form>
+<form method="post" action="{{ url_for('profil4_settle') }}"><button class="ghost">Vyhodnotit skončené</button></form>
+<form method="post" action="{{ url_for('profil4_eval') }}"><button class="ghost">Úspěšnost modelů</button></form></div>
+<div class="muted" style="margin-top:8px">Sken trvá desítky sekund až pár minut. <b>APPROVED BET</b> = splňuje všechna kritéria, <b>WATCH</b> = zajímavé, ale něco chybí, <b>NO BET</b> = bez hodnoty, <b>BEST AVAILABLE</b> = nejlepší nalezená možnost s důvodem, proč není schválená.</div></div>
+
+<div class="grid2 p4forms">
+<div class="card"><form method="post" action="{{ url_for('profil4_analyze') }}">
+<label for="p4fid">Hloubková analýza jednoho zápasu – id z API-Football</label>
+<div class="row" style="gap:8px"><input id="p4fid" name="fixture_id" inputmode="numeric" pattern="[0-9]+" required list="p4fixtures" placeholder="např. 1208021" style="max-width:220px"><button>Analyzovat</button></div>
+<datalist id="p4fixtures">{% if p4.view and p4.view.kind == 'scan' %}{% for q in p4.view.quick %}<option value="{{ q.fixture_id }}">{{ q.name }}</option>{% endfor %}{% endif %}</datalist>
+<div class="muted">Id najdeš ve výsledcích skenu níže, nebo ho vybereš ze seznamu.</div></form></div>
+<div class="card"><form method="post" action="{{ url_for('profil4_odds') }}">
+<label for="p4oid">Kurzy z Tipsportu (ručně)</label>
+<input id="p4oid" name="fixture_id" inputmode="numeric" pattern="[0-9]+" required list="p4fixtures" placeholder="id zápasu" style="max-width:220px;margin-bottom:6px">
+<label for="p4odds" class="sr">Řádky s kurzy</label><textarea id="p4odds" name="odds" rows="4" placeholder="1X2 | 2.10 3.40 3.60&#10;OU_2.5 | 1.90 1.95&#10;fortuna | BTTS | 1.80 2.00"></textarea>
+<div class="muted">Řádek = <code>trh | kurzy</code> nebo <code>kancelář | trh | kurzy</code>. Ručně opsaný kurz platí 2 hodiny.</div>
+<button style="margin-top:6px">Uložit kurzy</button></form></div></div>
+
+{% set v = p4.view %}
+{% if v and v.kind == 'scan' %}
+<div class="section-heading"><div><span class="eyebrow">{{ v.mode }} · {{ v.when }}</span><h2>Výsledek skenu</h2></div><span class="muted">{{ v.fixtures }} zápasů · {{ v.deep }} rozebráno do hloubky · API tento sken {{ v.budget.run_used }}/{{ v.budget.run_limit }}</span></div>
+{{ p4verdict(v) }}
+<h2>Rozebrané zápasy ({{ v.matches|length }})</h2>
+<div class="card tablewrap"><table class="cardt"><tr><th>Výkop</th><th>Zápas</th><th>Verdikt</th><th>Nejlepší možnost</th><th class="num">Data</th><th></th></tr>
+{% for m in v.matches %}<tr><td class="muted">{{ m.kickoff }}</td><td><b>{{ m.name }}</b><div class="muted">{{ m.league }}</div></td>
+<td><span class="badge {{ 'tipb' if m.verdict == 'APPROVED BET' else 'warn' if m.verdict == 'WATCH' else 'bad' }}">{{ m.verdict }}</span></td>
+<td>{% if m.best %}{{ m.best.label }} @ <b>{{ m.best.odds }}</b> <span class="muted">EV {{ m.best.ev_c }} · robustnost {{ m.best.robustness }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
+<td class="num" data-l="data">{{ m.quality }}</td>
+<td><form method="post" action="{{ url_for('profil4_analyze') }}" style="margin:0"><input type="hidden" name="fixture_id" value="{{ m.fixture_id }}"><button class="ghost sm">Detail</button></form></td></tr>
+{% else %}<tr><td colspan="6" class="muted">Do hloubkové analýzy nepostoupil žádný zápas.</td></tr>{% endfor %}</table></div>
+<details class="fold card"><summary>Rychlý průchod – všechny zápasy ({{ v.quick|length }})</summary><div class="tablewrap"><table class="cardt"><tr><th>Výkop</th><th>Zápas</th><th>Stav</th><th>Důvod</th></tr>
+{% for q in v.quick %}<tr><td class="muted">{{ q.kickoff }}</td><td><b>{{ q.name }}</b><div class="muted">{{ q.league }} · id {{ q.fixture_id }}</div></td><td>{% if q.candidate %}<span class="badge">hloubková</span>{% else %}<span class="badge bad">vyřazen</span>{% endif %}</td><td class="muted">{{ q.reason }}</td></tr>{% endfor %}</table></div></details>
+{% if v.notes %}<div class="card note"><b>Poznámky</b><ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
+{% elif v and v.kind == 'analysis' %}
+<div class="section-heading"><div><span class="eyebrow">{{ v.league }} · {{ v.kickoff }} · {{ v.status }}</span><h2>{{ v.name }}</h2></div><span class="muted">id {{ v.fixture_id }} · kvalita dat {{ v.quality }}</span></div>
+{{ p4verdict(v) }}
+{% for t in v.tips if t.title == 'SCHVÁLENO' %}{{ p4tip(t.tip, t.title) }}{% endfor %}
+<div class="grid2">
+<div class="card"><h3>Modely (1X2: domácí / remíza / hosté)</h3>{% if v.models %}<div class="tablewrap"><table class="mkt p4nowrap"><tr><th>Model</th><th class="num">Pravděpodobnost</th><th class="num">Férové kurzy</th></tr>
+{% for m in v.models %}<tr><td><b>{{ m.name }}</b><div class="muted">{{ m.note }}</div></td>{% if m.probs %}<td class="num">{{ m.probs|join(' / ') }}</td><td class="num">{{ m.fair|join(' / ') }}</td>{% else %}<td class="muted" colspan="2">nedostupný</td>{% endif %}</tr>{% endfor %}</table></div>{% else %}<div class="muted">Modely nejsou k dispozici.</div>{% endif %}</div>
+<div class="card"><h3>Monte Carlo</h3>{% if v.mc %}<div class="muted">{{ v.mc.n }} simulací · očekávané skóre {{ v.mc.expected }} · 1X2 {{ v.mc.one_x_two|join(' / ') }}</div>
+<div class="muted">Nejčastější výsledky: {% for s, p in v.mc.top_scores %}{{ s }} ({{ p }}){{ ', ' if not loop.last }}{% endfor %}</div>
+<div class="tablewrap"><table class="mkt"><tr><th>Trh</th><th class="num">Šance</th><th class="num">95% interval</th><th class="num">Férový kurz</th><th class="num">EV</th></tr>
+{% for m in v.mc.markets %}<tr><td>{{ m.key }}</td><td class="num">{{ m.prob }}</td><td class="num">{{ m.ci }}</td><td class="num">{{ m.fair }}</td><td class="num">{{ m.ev or '–' }}</td></tr>{% endfor %}</table></div>
+<div class="muted">Víc simulací zmenší jen simulační chybu, ne chybu vstupního modelu.</div>{% else %}<div class="muted">Neproběhla (chybí model).</div>{% endif %}</div></div>
+<div class="grid2">
+<div class="card"><h3>Kvalita dat · {{ v.quality }}</h3><ul class="p4list">{% for l in v.coverage %}<li>{{ l }}</li>{% endfor %}</ul>
+<div class="muted">Chybí: {{ v.missing|join(', ') or 'nic' }}</div>{% if not v.tipsport %}<div class="p4risk">Tipsport: kurzy nejsou zadané – doplň je formulářem výše.</div>{% endif %}</div>
+<div class="card"><h3>Kontext zápasu</h3>{% if v.context %}<ul class="p4list">{% for l in v.context %}<li>{{ l }}</li>{% endfor %}</ul>{% else %}<div class="muted">Bez kontextových informací.</div>{% endif %}
+{% if v.narrative %}<div class="muted">Shrnutí: {{ v.narrative }}</div>{% endif %}<div class="muted">Kontext je jen informace – matematické výsledky nemění.</div></div></div>
+{% if v.notes %}<div class="card note"><b>Poznámky</b><ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
+{% elif not p4.error %}<div class="card empty-list-card"><span class="empty-icon">🧠</span><div><b>Zatím žádný sken</b><div class="muted">Spusť „Dnešní sken“ nebo „Nadcházející 48 h“. Výsledky se tu zobrazí jako karty s verdiktem a nejlepšími možnostmi.</div></div></div>{% endif %}
+{% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
+
 {% elif tab == 'kalkulacka' %}
-<h2>Rychlá value kalkulačka</h2>
+{{ page_head('Nástroje', 'Value kalkulačka', 'Spočítá čekaný zisk, férový kurz a doporučený vklad podle Kellyho pro jakoukoli sázku. Nic se neukládá.') }}
 <div class="card"><div class="muted">Zadej kurz a svůj odhad pravděpodobnosti (nejdřív odhad, až potom se dívej na kurz). Počítá se přímo v prohlížeči.</div>
 <div class="grid2" style="margin-top:12px">
   <label>Formát kurzu<select id="vf"><option value="dec">Decimální (2.50)</option><option value="frac">Zlomkový (3/2)</option><option value="us">Americký (+150 / -200)</option></select></label>
@@ -611,6 +909,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 </div>{% endif %}</div>
 
 {% elif tab == 'nastaveni' %}
+{{ page_head('Správa', 'Nastavení', 'Data pro model, klíče k API, české kurzy a bankroll.') }}
 <div class="setgrid">
 <section><h2>Data pro model</h2>
 <div class="card">Stáhne nejnovější výsledky lig, pohárů, reprezentací a NHL (zdarma, trvá zhruba minutu). Dělej to jednou denně před načtením kurzů.
@@ -639,6 +938,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 </div>
 {% endif %}
 </div></main>
+</div></div>
 <script>
 (function(){
  // vyber podle trhu: nabidne jen platne moznosti (u "jiny trh" se pise text)
@@ -960,7 +1260,112 @@ def create_app(database_url: str | None = None) -> Flask:
             p2text=[profile2.format_text(a, SETTINGS.currency) for a in p2],
             p2f=type("F", (), {k: "" for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds", "use_czech")} | (p2form or {})),
             p2st=type("P", (), paper.stats([p for p in all_picks if p.profile == "profil2"])),
+            p4=_p4_view(led) if tab == "profil4" else {},
         )
+
+    def _p4_view(led) -> dict:
+        try:
+            from .profil4.cli import build
+
+            store, prov = build(database_url)
+            try:
+                b = prov.client.budget.status()
+                key = prov.client.key() or led.api_football_key()
+                st = (f"Klíč API-Football: {'nastaven' if key else 'CHYBÍ – ulož ho v Nastavení'} · kvóta dnes "
+                      f"{b['used']}/{b['limit']}, zbývá {b['remaining']}")
+                from .profil4.config import P4
+
+                return {"status": st, "key": bool(key), "budget": b, "run_limit": P4.budget.max_per_run, "report": store.get("web_last_report", ""),
+                        "view": json.loads(store.get("web_last_view", "") or "null")}
+            finally:
+                store.close()
+        except Exception as e:  # noqa: BLE001 - panel nesmi spadnout kvuli Profilu 4
+            return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None}
+
+    def _p4_run(fn, view=None):
+        """Spusti akci Profilu 4; `fn` vraci vysledek, `view` z nej udela karty pro panel (text zustava jako zaloha)."""
+        from .profil4.cli import build
+
+        store, prov = build(database_url)
+        try:
+            now = utcnow()
+            res = fn(store, prov, now)
+            text = res if view is None else view[0](res, now)
+            store.set("web_last_report", text)
+            if view is not None:
+                store.set("web_last_view", json.dumps(view[1](res, now), ensure_ascii=False, default=str))
+            return text
+        finally:
+            store.close()
+
+    @app.post("/profil4/scan")
+    def profil4_scan():
+        from .profil4 import hunter, report, view
+        from .profil4.config import P4
+
+        mode = "daily" if request.form.get("mode") == "daily" else "upcoming"
+        try:
+            _p4_run(lambda st, pv, now: hunter.run_scan(pv, mode, now, P4),
+                    (lambda r, now: report.format_scan(r), lambda r, now: view.scan(r)))
+            flash("Sken hotový – výsledek je dole.")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba skenu: {e}")
+        return redirect(url_for("index", tab="profil4"))
+
+    @app.post("/profil4/analyze")
+    def profil4_analyze():
+        from .profil4 import hunter, report, view
+        from .profil4.config import P4
+
+        try:
+            fid = int(request.form["fixture_id"])
+            _p4_run(lambda st, pv, now: hunter.analyze_fixture(pv, fid, now, P4),
+                    (report.format_analysis, view.analysis))
+            flash(f"Analýza zápasu {fid} hotová.")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba analýzy: {e}")
+        return redirect(url_for("index", tab="profil4"))
+
+    @app.post("/profil4/odds")
+    def profil4_odds():
+        from .profil4 import odds as p4odds
+
+        try:
+            fid = int(request.form["fixture_id"])
+
+            def fn(st, pv, now):
+                got = pv.fixtures_by_ids([fid])
+                fx = got.data[0] if got.data else None
+                q, errors = p4odds.parse_manual(request.form.get("odds", ""), fid, fx.name if fx else str(fid), now,
+                                                fx.kickoff if fx else None)
+                n = p4odds.save(st, q)
+                return f"Uloženo {n} kurzů k zápasu {fid}." + (f" Přeskočeno: {'; '.join(errors)}" if errors else "")
+
+            flash(_p4_run(fn))
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba: {e}")
+        return redirect(url_for("index", tab="profil4"))
+
+    @app.post("/profil4/settle")
+    def profil4_settle():
+        from .profil4 import history
+
+        try:
+            flash(_p4_run(lambda st, pv, now: "\n".join(history.settle(st, pv, now)) or "Nic k vyhodnocení."))
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba: {e}")
+        return redirect(url_for("index", tab="profil4"))
+
+    @app.post("/profil4/evaluate")
+    def profil4_eval():
+        from .profil4 import history, report
+
+        try:
+            _p4_run(lambda st, pv, now: report.format_evaluation(history.evaluate(st)))
+            flash("Vyhodnocení hotové.")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba: {e}")
+        return redirect(url_for("index", tab="profil4"))
 
     def done(msg: str, tab: str):
         """Po uspesnem odeslani formulare presmeruje na bezne zobrazeni (obnoveni stranky nic znovu neodesle)."""

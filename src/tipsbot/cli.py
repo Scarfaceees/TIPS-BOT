@@ -83,6 +83,9 @@ def _parser() -> argparse.ArgumentParser:
     p2.add_argument("--save", action="store_true", help="ulozi rozbor do panelu (zalozka Profil 2)")
     p2.add_argument("--track", action="store_true", help="doporucene sazky prida do Sledovani (zdroj profil2)")
 
+    from .profil4.cli import add_parser as _p4
+
+    _p4(sub)
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
     ak.add_argument("key")
 
@@ -194,6 +197,10 @@ def _scan(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.cmd == "profil4":
+        from .profil4.cli import run as run_profil4
+
+        return run_profil4(args)
     if args.cmd == "web":
         from .web import run
 

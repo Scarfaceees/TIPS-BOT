@@ -58,6 +58,18 @@ def _outcome(key: str, hg: np.ndarray, ag: np.ndarray) -> np.ndarray:
     return np.where(yes, 0, 1)
 
 
+def _ou25_anchor(r) -> tuple[str, float] | None:
+    """Ferova pravdepodobnost over 2.5 z kurzu Pinnacle v radku dat (None, kdyz kurzy chybi)."""
+    o, u = r.get("sharp_o25"), r.get("sharp_u25")
+    try:
+        o, u = float(o), float(u)
+    except (TypeError, ValueError):
+        return None
+    if not (o > 1.0 and u > 1.0):  # chybejici (NaN) nebo nesmyslny kurz
+        return None
+    return "OU_2.5:over", (1 / o) / (1 / o + 1 / u)
+
+
 def walk_forward(
     matches: pd.DataFrame,
     start,
@@ -68,6 +80,7 @@ def walk_forward(
     goal_shrink: float | None = None,
     only=None,
     goal_base: dict[str, float] | None = None,
+    anchor_goals: bool = False,
 ) -> pd.DataFrame:
     """Predikce 1X2 a over 2.5 pro zapasy od `start`, model se odhaduje jen z drivejsich zapasu.
 
@@ -76,7 +89,8 @@ def walk_forward(
     model (penaltyblog) jako q1, qx, q2, q_over. `cfg` = jine nastaveni modelu (reprezentace),
     `goal_shrink` = stazeni golovych trhu k prumeru jako u reprezentaci. `only(df)` vybere,
     ktere zapasy se predpovidaji (model se dal uci ze vsech). `goal_base` = prumery, ke kterym
-    se golove trhy stahuji (vychozi: reprezentace).
+    se golove trhy stahuji (vychozi: reprezentace). `anchor_goals` = uroven golu se sladi s ferovou linii
+    Pinnacle na 2,5 golu (sloupce sharp_o25/sharp_u25) jako v ostrem provozu; bez linie se pouzije stazeni.
     """
     from . import nations, secondopinion
 
@@ -99,11 +113,13 @@ def walk_forward(
             if second:
                 other = secondopinion.fit(df, d, cfg.xi, cfg.max_history_seasons)
         for _, r in day.iterrows():
+            anchor = _ou25_anchor(r) if anchor_goals else None
             try:
-                probs = football.market_probabilities(params, r["home"], r["away"])
+                probs = (football.anchored_probabilities(params, r["home"], r["away"], anchor) if anchor
+                         else football.market_probabilities(params, r["home"], r["away"]))
             except football.ModelError:
                 continue
-            if goal_shrink is not None:  # stejne stazeni golovych trhu jako v ostrem provozu
+            if goal_shrink is not None and anchor is None:  # stejne stazeni golovych trhu jako v ostrem provozu
                 probs = nations.shrink_goal_markets(probs, goal_shrink, goal_base)
             row = {**r.to_dict(), "p1": probs["1X2:1"], "px": probs["1X2:X"], "p2": probs["1X2:2"],
                    "p_over": probs["OU_2.5:over"], **{f"p:{k}": probs[k] for k in EVAL_KEYS if k in probs}}
@@ -437,7 +453,7 @@ def run_all(seasons: int = 3, settings: Settings = SETTINGS, progress=print) -> 
         before = df[df["date"] < first]
         base = nations.goal_base_rates(before if len(before) >= 200 else df)  # prumery z drivejska, bez nahledu do testu
         preds = walk_forward(df, first, second=True, settings=settings, goal_shrink=settings.football.league_goal_shrink,
-                             goal_base=base)
+                             goal_base=base, anchor_goals=True)
         rows = compare(preds, settings.value.for_league(lg).model_weight)
         if rows:
             groups.append(_group(LEAGUES[lg].name, "zavírací kurzy Pinnacle", rows))

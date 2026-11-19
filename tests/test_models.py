@@ -65,6 +65,20 @@ def test_fit_recovers_structure(league):
         params.expected_goals("neexistuje", teams[0])
 
 
+def test_goal_markets_anchored_to_market_line(league):
+    df, truth = league
+    params = football.fit(df, date(2026, 1, 1))
+    home, away = truth["teams"][0], truth["teams"][1]
+    raw = football.market_probabilities(params, home, away)
+    for target in (0.35, 0.72):
+        p = football.anchored_probabilities(params, home, away, ("OU_2.5:over", target))
+        assert p["OU_2.5:over"] == pytest.approx(target, abs=1e-4)
+        assert p["OU_2.5:under"] == pytest.approx(1 - target, abs=1e-4)
+        assert p["1X2:1"] == raw["1X2:1"]  # vysledek zapasu se nemeni, jen uroven golu
+        assert (p["OU_3.5:over"] > raw["OU_3.5:over"]) == (target > raw["OU_2.5:over"])
+        assert p["anchored"] == 1.0
+
+
 def test_fit_uses_only_past_and_drops_old(league):
     df, _ = league
     first = df["date"].min()

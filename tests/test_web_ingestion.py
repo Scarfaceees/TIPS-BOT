@@ -123,7 +123,7 @@ def test_quick_value_calculator_rendered(client):
     c, _ = client
     c.post("/deposit", data={"amount": "10000", "test": "1"})
     html = c.get("/?tab=kalkulacka").get_data(as_text=True)
-    assert "Rychlá value kalkulačka" in html and "K=0.125" in html and "CAP=0.02" in html
+    assert "Value kalkulačka" in html and "K=0.125" in html and "CAP=0.02" in html
 
 
 def test_history_shows_track_record(client):
@@ -188,3 +188,29 @@ def test_post_redirects_and_mobile_ui(client):
         assert r.status_code == 200 and "zapsán" in r.get_data(as_text=True), market
     html = c.get("/?tab=tikety").get_data(as_text=True)
     assert 'data-for="market"' in html and 'list="matchlist"' in html and 'list="stakes"' in html
+
+
+def test_every_tab_renders_and_every_post_route_has_a_form(client):
+    """Redesign nesmi ztratit zadny formular: kazda POST adresa panelu je v nejake zalozce (bez zapasu a bankrollu)."""
+    import re
+
+    from tipsbot.web import MAIN_TABS, PAGE, TABS
+
+    c, _ = client
+    app = c.application
+    html = ""
+    for key, label, _icon, _short in TABS:
+        r = c.get(f"/?tab={key}")
+        page = r.get_data(as_text=True)
+        assert r.status_code == 200 and label in page, key
+        assert 'class="bottomnav"' in page and 'class="page-head"' in page or key == "prehled", key
+        html += page
+    assert len(TABS) > MAIN_TABS  # zbytek je v mobilni nabidce Vice
+    actions = set(re.findall(r'action="([^"?]+)', html))
+    for rule in app.url_map.iter_rules():
+        if "POST" not in rule.methods or rule.arguments:  # adresy s id (konkretni tiket/vyber) jsou u radku tabulek
+            continue
+        if rule.rule in actions:
+            continue
+        # formulare, ktere se ukazi az s daty (zapasy, vysledky, rozbory, stop-loss): aspon musi byt v sablone
+        assert f"url_for('{rule.endpoint}'" in PAGE, f"chybi formular pro {rule.rule}"

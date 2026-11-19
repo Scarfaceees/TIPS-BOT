@@ -194,3 +194,18 @@ def test_backtest_reports_market_benchmark():
     rep = backtest.evaluate(df)
     assert rep.market_brier is not None and rep.blend_brier is not None and rep.baseline_brier > rep.brier
     assert "trh" in rep.summary()
+
+
+def test_nhl_goal_totals_regulation_and_with_overtime():
+    import numpy as np
+
+    from tipsbot import detail
+
+    p = nhl.market_probabilities(_ctx(), rng=np.random.default_rng(1))
+    for x in nhl.TOTAL_LINES:
+        assert p[f"OU_{x:g}:over"] + p[f"OU_{x:g}:under"] == pytest.approx(1.0)
+        # za 60 minut padne nejvys tolik golu jako vcetne prodlouzeni
+        assert p[f"OU60_{x:g}:over"] <= p[f"OU_{x:g}:over"] + 1e-9
+    assert p["OU_4.5:over"] > p["OU_6.5:over"] > p["OU_8.5:over"]
+    sec = detail.nhl_goals_section("A", "B", {**p, "anchored": 0.0})
+    assert "Pinnacle" in sec["lines"][0] and any(line.startswith("Za 60 minut (základní doba): 4.5") for line in sec["lines"])

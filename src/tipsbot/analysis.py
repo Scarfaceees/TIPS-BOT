@@ -67,6 +67,8 @@ def label(market: str, selection: str, home: str, away: str) -> str:
         return f"Asijský handicap {home if selection == 'home' else away} {market[3:]}"
     if market == "REG":
         return {"1": f"Základní doba: {home}", "X": "Základní doba: remíza", "2": f"Základní doba: {away}"}[selection]
+    if market.startswith("OU60_"):
+        return f"Základní doba: {'víc' if selection == 'over' else 'míň'} než {market[5:]} gólů"
     if market.startswith("OU_"):
         return f"{'Over' if selection == 'over' else 'Under'} {market[3:]} gólů"
     if market.startswith(("ROHY_", "KARTY_")):
@@ -150,7 +152,7 @@ def model_rows(model: dict[str, float], priced: set[tuple[str, str]], home: str,
         market, sel = key.split(":", 1)
         if (market, sel) in priced or market == "REG" or not (min_p <= p <= max_p):
             continue
-        if model.get("anchored", 1.0) < 0.5 and market.startswith(("OU_", "TTH_", "TTA_")):
+        if model.get("anchored", 1.0) < 0.5 and market.startswith(("OU_", "OU60_", "TTH_", "TTA_")):
             continue  # NHL bez trzniho totalu: uroven golu modelu je nespolehliva
         min_odds = max((1.0 + thr + 0.02) / p, settings.value.min_odds)
         if min_odds > settings.value.max_odds:

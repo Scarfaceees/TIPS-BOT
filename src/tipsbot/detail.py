@@ -28,6 +28,7 @@ def nhl_sections(ratings, home: str, away: str, day: date, probs: dict[str, floa
         f"prodloužení {probs['REG:X'] * 100:.0f} %, {away} {probs['REG:2'] * 100:.0f} %",
         f"Celkově vč. prodloužení: {home} {probs['MONEYLINE:home'] * 100:.1f} %, {away} {probs['MONEYLINE:away'] * 100:.1f} %",
     ]})
+    out.append(nhl_goals_section(home, away, probs))
     # sila tymu: xG rozdil na 60 minut a poradi v lize
     table = sorted(ratings.ratings.items(), key=lambda kv: kv[1].xgf60 - kv[1].xga60, reverse=True)
     rank = {t: i + 1 for i, (t, _) in enumerate(table)}
@@ -65,6 +66,24 @@ def nhl_sections(ratings, home: str, away: str, day: date, probs: dict[str, floa
         flags.append(f"{away}: druhý zápas ve dvou dnech + cesta přes časové pásmo (−5 % gólů)")
     out.append({"title": "Odpočinek a cestování", "lines": rest + (flags or ["Žádný tým nehraje back-to-back s cestou."])})
     return out
+
+
+def nhl_goals_section(home: str, away: str, probs: dict[str, float]) -> Section:
+    """Pocet golu v zapase: za 60 minut (jak pocita Tipsport) i vcetne prodlouzeni, a goly tymu."""
+    from .models.nhl import TEAM_LINES, TOTAL_LINES
+
+    def pair(key: str, x: float) -> str:
+        po = probs.get(f"{key}_{x:g}:over", 0.0)
+        pu = 1.0 - po
+        fair = lambda p: f"{1 / p:.2f}" if p > 0.005 else "–"  # noqa: E731
+        return f"{x:g}: víc {po * 100:.0f} % (férový kurz {fair(po)}) · míň {pu * 100:.0f} % ({fair(pu)})"
+
+    lines = [] if probs.get("anchored", 1.0) >= 0.5 else [
+        "⚠️ Kancelář s férovou linií (Pinnacle) zatím nevypsala počet gólů, úroveň gólů je jen z modelu – ber s rezervou."]
+    lines += [f"Za 60 minut (základní doba): {pair('OU60', x)}" for x in TOTAL_LINES]
+    lines += [f"Vč. prodloužení a nájezdů: {pair('OU', x)}" for x in TOTAL_LINES]
+    lines += [f"{team} (vč. prodl.): {pair(m, x)}" for m, team in (("TTH", home), ("TTA", away)) for x in TEAM_LINES]
+    return {"title": "Počet gólů (model) – výhodné je vsadit nad férovým kurzem", "lines": lines}
 
 
 def props_section(models: dict, home: str, away: str, probs: dict[str, float], referee: str | None) -> Section:

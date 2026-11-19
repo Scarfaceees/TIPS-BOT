@@ -99,6 +99,11 @@ def expected_goals(ctx: GameContext, cfg: NHLModelConfig | None = None) -> tuple
     return max(lam_h, cfg.min_expected_goals), max(lam_a, cfg.min_expected_goals)
 
 
+TOTAL_LINES = (3.5, 4.5, 5.5, 6.5, 7.5, 8.5)  # pocet golu v zapase (vc. rozhodujiciho golu prodlouzeni/najezdu)
+TEAM_LINES = (1.5, 2.5, 3.5, 4.5)
+_SIDES = (("over", np.greater), ("under", np.less))
+
+
 def simulate(
     lam_h: float,
     lam_a: float,
@@ -145,25 +150,13 @@ def simulate(
         "PUCKLINE_1.5:away+1.5": float(np.mean(margin < 2)),
         "PUCKLINE_1.5R:home+1.5": float(np.mean(margin > -2)),
         "PUCKLINE_1.5R:away-1.5": float(np.mean(margin <= -2)),
-        "OU_5.5:over": float(np.mean(total > 5.5)),
-        "OU_5.5:under": float(np.mean(total < 5.5)),
-        "OU_6.5:over": float(np.mean(total > 6.5)),
-        "OU_6.5:under": float(np.mean(total < 6.5)),
-        "OU_4.5:over": float(np.mean(total > 4.5)),
-        "OU_4.5:under": float(np.mean(total < 4.5)),
-        "OU_7.5:over": float(np.mean(total > 7.5)),
-        "OU_7.5:under": float(np.mean(total < 7.5)),
-        "TTH_2.5:over": float(np.mean(fh > 2.5)),
-        "TTH_2.5:under": float(np.mean(fh < 2.5)),
-        "TTA_2.5:over": float(np.mean(fa > 2.5)),
-        "TTA_2.5:under": float(np.mean(fa < 2.5)),
-        "TTH_3.5:over": float(np.mean(fh > 3.5)),
-        "TTH_3.5:under": float(np.mean(fh < 3.5)),
-        "TTA_3.5:over": float(np.mean(fa > 3.5)),
-        "TTA_3.5:under": float(np.mean(fa < 3.5)),
         "OT:yes": float(np.mean(tie)),
         "OT:no": float(np.mean(~tie)),
         "p_overtime": float(np.mean(tie)),
+        **{f"OU_{x:g}:{k}": float(np.mean(f(total, x))) for x in TOTAL_LINES for k, f in _SIDES},
+        # jen zakladni hraci doba (60 min) - tak pocty golu v hokeji obvykle pocitaji ceske kancelare
+        **{f"OU60_{x:g}:{k}": float(np.mean(f(h + a, x))) for x in TOTAL_LINES for k, f in _SIDES},
+        **{f"{m}_{x:g}:{k}": float(np.mean(f(g, x))) for m, g in (("TTH", fh), ("TTA", fa)) for x in TEAM_LINES for k, f in _SIDES},
     }
 
 

@@ -69,7 +69,7 @@ def profile(key: str | None) -> Profile:
 
 
 def selections(market: str) -> tuple[str, ...] | None:
-    if market.startswith(("OU_", "TTH_", "TTA_", "ROHY_", "KARTY_")):
+    if market.startswith(("OU_", "OU60_", "TTH_", "TTA_", "ROHY_", "KARTY_")):
         return ("over", "under")
     return SELECTIONS.get(market)
 

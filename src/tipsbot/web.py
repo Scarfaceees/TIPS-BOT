@@ -119,6 +119,17 @@ table.bets td{vertical-align:middle}
 @media(max-width:1000px){.mgrid{grid-template-columns:1fr}}
 @media(max-width:720px){.cols>aside .stats{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}.tip{grid-template-columns:1fr}.big{text-align:left}
 .ms{grid-template-columns:44px 1fr 14px}.ms .rc{grid-column:2;text-align:left}.chips{margin-left:0;width:100%}}
+/* telefon: vetsi dotykove prvky, zadne vodorovne posouvani stranky, siroke tabulky se posouvaji samy */
+.boxes{grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr))}.czgrid{grid-template-columns:repeat(auto-fill,minmax(min(250px,100%),1fr))}
+.profbar{grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr))}
+@media(max-width:720px){body{font-size:15px;overflow-x:hidden}.wrap{padding:0 12px}main{padding:12px 0 40px}
+.top{padding:8px 0 4px}.top h1{font-size:18px}.chips{gap:10px;font-size:13px;flex-wrap:wrap}
+nav{margin:0 -12px;padding:0 6px}nav a{padding:10px 10px}
+input,select,textarea{font-size:16px}button{padding:11px 16px;font-size:15px}button.sm{padding:8px 12px;font-size:14px}
+.card{padding:12px}.mbody{padding:4px 10px 12px}main table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tiles{grid-template-columns:repeat(3,minmax(0,1fr))}.tile b{font-size:16px}.big{font-size:20px}
+.bar{gap:8px}.filters{overflow-x:auto;flex-wrap:nowrap;padding-bottom:4px}.filters button{flex:0 0 auto}
+.setgrid{columns:1}.scorebox label.sc{flex:1 1 70px}label{flex-basis:100%}.czgrid label,.scorebox label.sc,.betrow label{flex-basis:0}}
 </style></head><body>
 
 {% macro mrow(r, v) %}<tr class="{{ 'best' if r is sameas v.rows[v.recommended] or (v.target is not none and r is sameas v.rows[v.target]) }}">
@@ -250,7 +261,7 @@ table.bets td{vertical-align:middle}
   <input type="hidden" name="match" value="{{ v.name }}"><input type="hidden" name="league" value="{{ v.league }}">
   <div class="row" style="margin-top:4px"><label style="flex:0 1 200px">Kancelář<select name="book">{% for b in czech_books %}<option value="{{ b }}">{{ b }}</option>{% endfor %}</select></label>
   <span class="muted" style="flex:1 1 160px">Vyplň jen trhy, které chceš (trh vždy celý). Přepočet nestojí kredity.</span></div>
-  <div class="czgrid">{% for m, sels, names in form_markets %}<fieldset><legend>{{ market_names[m] }}</legend>
+  <div class="czgrid">{% for m, sels, names in (nhl_form_markets if v.league == 'NHL' else form_markets) %}<fieldset><legend>{{ market_names[m] }}</legend>
     {% for s in sels %}<label>{{ names[loop.index0] }}<input name="{{ m }}:{{ s }}" inputmode="decimal" autocomplete="off"></label>{% endfor %}</fieldset>{% endfor %}</div>
   <div class="row"><button class="ok">Uložit kurzy a přepočítat</button></div></form></div></div>
 
@@ -559,7 +570,9 @@ MARKET_NAMES = {"1X2": "Výsledek", "DC": "Dvojitá šance", "DNB": "Sázka bez 
                 "TTA_1.5": "Góly hostů 1.5", "BTTS": "Oba týmy dají gól", "TTH_0.5": "Domácí dají gól",
                 "TTA_0.5": "Hosté dají gól", "MONEYLINE": "Vítěz zápasu (vč. prodloužení)",
                 "OU_5.5": "Góly 5.5", "OU_6.5": "Góly 6.5", "ROHY_8.5": "Rohy 8.5", "ROHY_9.5": "Rohy 9.5",
-                "ROHY_10.5": "Rohy 10.5", "KARTY_3.5": "Karty 3.5", "KARTY_4.5": "Karty 4.5", "KARTY_5.5": "Karty 5.5"}
+                "ROHY_10.5": "Rohy 10.5", "KARTY_3.5": "Karty 3.5", "KARTY_4.5": "Karty 4.5", "KARTY_5.5": "Karty 5.5",
+                "OU_7.5": "Góly 7.5",
+                **{f"OU60_{x}": f"Góly za 60 min {x}" for x in ("3.5", "4.5", "5.5", "6.5", "7.5", "8.5")}}
 
 
 def _decorate(v, czech_entries) -> None:
@@ -733,6 +746,7 @@ def create_app(database_url: str | None = None) -> Flask:
             bt_running=led._get(backtest.RUNNING_KEY, ""),
             czech_books=sorted(czechodds._BOOKS, key=lambda b: (b != "tipsport", b)),
             form_markets=czechodds.FORM_MARKETS,
+            nhl_form_markets=czechodds.NHL_FORM_MARKETS,
             market_names=MARKET_NAMES,
             bets=bets,
             check=check,

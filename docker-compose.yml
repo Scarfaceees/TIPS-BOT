@@ -5,7 +5,7 @@ services:
     container_name: tipsbot
     restart: always
     ports:
-      - "127.0.0.1:8000:8000"   # jen z tohoto pocitace
+      - "8000:8000"   # i z telefonu v domaci siti: http://<IP tohoto pocitace>:8000 (panel nema heslo, jen domaci sit)
     volumes:
       - ./data:/app/data
     environment:

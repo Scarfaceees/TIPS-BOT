@@ -96,7 +96,7 @@ def parse_text(text: str, now: datetime) -> tuple[list[Entry], list[str]]:
 
 
 # trhy "vic / min nez linie": goly, goly tymu, rohy a karty
-COUNT_PREFIXES = ("OU_", "TTH_", "TTA_", "ROHY_", "KARTY_")
+COUNT_PREFIXES = ("OU_", "OU60_", "TTH_", "TTA_", "ROHY_", "KARTY_")
 
 
 # Trhy ve formulari u zapasu: (trh, vybery v poradi ulozeni, popisky).
@@ -123,6 +123,13 @@ FORM_MARKETS = (
     ("KARTY_5.5", ("over", "under"), ("karet víc než 5.5", "míň než 5.5")),
 )
 
+# NHL ma ve formulari vlastni trhy: pocty golu v zakladni hraci dobe (jak je vypisuje Tipsport) i vc. prodlouzeni.
+NHL_FORM_MARKETS = (
+    ("MONEYLINE", ("home", "away"), ("domácí (vč. prodl.)", "hosté (vč. prodl.)")),
+    *((f"OU60_{x}", ("over", "under"), (f"víc než {x}", f"míň než {x}")) for x in ("4.5", "5.5", "6.5", "7.5")),
+    *((f"OU_{x}", ("over", "under"), (f"víc než {x}", f"míň než {x}")) for x in ("5.5", "6.5")),
+)
+
 
 def from_form(book: str, match_name: str, values: dict[str, str], now: datetime) -> tuple[list[Entry], list[str]]:
     """Kurzy z formulare u zapasu (`values`: {"OU_2.5:over": "1.85", ...}). Trh se ulozi, jen kdyz je vyplneny cely."""
@@ -131,7 +138,7 @@ def from_form(book: str, match_name: str, values: dict[str, str], now: datetime)
         raise ValueError(f"Neznámá kancelář '{book}'.")
     home, away = (p.strip() for p in match_name.split(" - ", 1))
     entries, errors = [], []
-    for market, sels, _ in FORM_MARKETS:
+    for market, sels, _ in {m[0]: m for m in FORM_MARKETS + NHL_FORM_MARKETS}.values():
         raw = [(values.get(f"{market}:{s}") or "").strip().replace(",", ".") for s in sels]
         if not any(raw):
             continue
@@ -203,8 +210,8 @@ def apply(events: list[Event], entries: list[Entry]) -> list[str]:
         if ev is None:
             continue  # zapas neni v dnesnim skenu (jina liga, jiny den)
         market = ev.markets.get(e.market)
-        if market is None and e.market.startswith(("ROHY_", "KARTY_")):
-            continue  # rohy a karty kurzove API nema, porovnaji se s modelem
+        if market is None and e.market.startswith(("ROHY_", "KARTY_", "OU60_")):
+            continue  # rohy, karty a goly za 60 minut kurzove API nema, porovnaji se s modelem
         if market is None:
             notes.append(f"{e.book} {ev.name} {e.market}: trh nema ferovou linii, nelze ohodnotit")
             continue

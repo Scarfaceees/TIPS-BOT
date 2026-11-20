@@ -27,6 +27,7 @@ def candidate(c: Candidate, now: datetime) -> dict:
         "label": c.label, "key": f"{c.market}:{c.selection}", "match": c.match, "fixture_id": c.fixture_id,
         "book": q.bookmaker, "odds": odds_s(c.odds), "source": q.source_label(), "quote_status": q.status(now, _cfg().odds),
         "quote_time": local(q.stamp), "quote_age": age(q.stamp, now), "note": q.note,
+        "quote_fetched": local(q.fetched_at) if q.fetched_at != q.stamp else "",
         "p_win": pct(c.p_win_c), "p_push": pct(c.p_push_c) if c.p_push_c > 0.005 else "",
         "fair_c": odds_s(c.fair_odds_c), "fair_d": odds_s(c.fair_odds_d),
         "ev_c": pct(c.ev_c), "ev_d": pct(c.ev_d), "ev_pos": c.ev_c >= 0, "min_odds": odds_s(c.min_odds),

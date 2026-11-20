@@ -184,8 +184,10 @@ class DataProvider:
         return Fetched(status if out or status != AVAILABLE else UNAVAILABLE, out, when, errors=errors)
 
     # --- kurzy ----------------------------------------------------------
-    def odds_fixture(self, fixture: Fixture, priority: str = "HIGH") -> Fetched:
-        res = self.client.get_all("odds", {"fixture": fixture.id}, priority=priority, fixture_id=fixture.id, ttl_key="odds")
+    def odds_fixture(self, fixture: Fixture, priority: str = "HIGH", force: bool = False) -> Fetched:
+        """Kurzy zapasu; `force` obejde cache (zaviraci kurz tesne pred vykopem)."""
+        res = self.client.get_all("odds", {"fixture": fixture.id}, priority=priority, fixture_id=fixture.id, ttl_key="odds",
+                                  force=force)
         quotes = parse_api_odds(res.response, res.fetched_at or self.client.clock(), {fixture.id: fixture.name})
         st = _status(res) if res.status != "partial" else PARTIAL
         if st == UNAVAILABLE and fixture.kickoff and (fixture.kickoff - self.client.clock()).days >= 14:

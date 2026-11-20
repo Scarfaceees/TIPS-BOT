@@ -187,5 +187,17 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
             _set(factory, RUNNING_KEY, "")
         waited = 0
         while waited < every and not _take_request(factory):  # tlacitko v panelu zkrati cekani
+            _profil4_tick()
             time.sleep(60)
             waited += 60
+
+
+def _profil4_tick() -> None:
+    """Profil 4: zaviraci kurzy pred vykopem a vyhodnoceni po zapase (sam se omezuje, chyba nezastavi automat)."""
+    try:
+        from .profil4.closing import tick
+
+        for n in tick():
+            print(n, flush=True)
+    except Exception:  # noqa: BLE001
+        log.exception("automat: Profil 4 (závěrečné kurzy / vyhodnocení) selhal")

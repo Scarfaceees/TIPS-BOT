@@ -39,6 +39,10 @@ _ODDS_COLUMNS = {
     "max_2": ("MaxA", "BbMxA"),
     "sharp_o25": ("PC>2.5", "P>2.5", "BbAv>2.5"),  # Pinnacle na goly: zaviraci, jinak predzapasovy
     "sharp_u25": ("PC<2.5", "P<2.5", "BbAv<2.5"),
+    # jen PREDZAPASOVE kurzy (bez zaviracich): vstup do historickych predikci. Zaviraci kurz v case predikce
+    # jeste neexistuje, smi slouzit jen jako meritko pri vyhodnoceni.
+    "pre_o25": ("P>2.5", "BbAv>2.5"),
+    "pre_u25": ("P<2.5", "BbAv<2.5"),
 }
 
 # statistiky zapasu pro odhad sanci (viz models.football._prepare); xG je v datech az od sezony 2026/27

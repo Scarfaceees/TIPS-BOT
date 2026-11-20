@@ -229,10 +229,11 @@ class ApiFootballClient:
         return ApiResult(endpoint, params, "error", errors=[last_err or "neznámá chyba"])
 
     def get_all(self, endpoint: str, params: dict | None = None, priority: str = "MEDIUM",
-                fixture_id: int | None = None, ttl_key: str | None = None, max_pages: int = 5) -> ApiResult:
+                fixture_id: int | None = None, ttl_key: str | None = None, max_pages: int = 5,
+                force: bool = False) -> ApiResult:
         """Vsechny stranky strankovaneho endpointu (kazda stranka = 1 pozadavek a vlastni cache)."""
         params = dict(params or {})
-        first = self.get(endpoint, params, priority, fixture_id, ttl_key)
+        first = self.get(endpoint, params, priority, fixture_id, ttl_key, force=force)
         if not first.ok:
             return first
         total = int(first.paging.get("total", 1) or 1) if first.status != "cached" else \
@@ -240,7 +241,7 @@ class ApiFootballClient:
         out = list(first.response)
         status = first.status
         for page in range(2, min(total, max_pages) + 1):
-            res = self.get(endpoint, {**params, "page": page}, priority, fixture_id, ttl_key)
+            res = self.get(endpoint, {**params, "page": page}, priority, fixture_id, ttl_key, force=force)
             if not res.ok:
                 status = "partial"
                 break

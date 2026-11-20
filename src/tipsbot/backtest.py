@@ -59,8 +59,11 @@ def _outcome(key: str, hg: np.ndarray, ag: np.ndarray) -> np.ndarray:
 
 
 def _ou25_anchor(r) -> tuple[str, float] | None:
-    """Ferova pravdepodobnost over 2.5 z kurzu Pinnacle v radku dat (None, kdyz kurzy chybi)."""
-    o, u = r.get("sharp_o25"), r.get("sharp_u25")
+    """Ferova pravdepodobnost over 2.5 z PREDZAPASOVEHO kurzu Pinnacle v radku dat (None, kdyz kurzy chybi).
+
+    Zaviraci kurz (sharp_o25) se zamerne nepouziva: v case predikce neni znamy (data leakage) a slouzi jen jako
+    meritko trhu pri vyhodnoceni."""
+    o, u = r.get("pre_o25"), r.get("pre_u25")
     try:
         o, u = float(o), float(u)
     except (TypeError, ValueError):
@@ -90,7 +93,8 @@ def walk_forward(
     `goal_shrink` = stazeni golovych trhu k prumeru jako u reprezentaci. `only(df)` vybere,
     ktere zapasy se predpovidaji (model se dal uci ze vsech). `goal_base` = prumery, ke kterym
     se golove trhy stahuji (vychozi: reprezentace). `anchor_goals` = uroven golu se sladi s ferovou linii
-    Pinnacle na 2,5 golu (sloupce sharp_o25/sharp_u25) jako v ostrem provozu; bez linie se pouzije stazeni.
+    Pinnacle na 2,5 golu jako v ostrem provozu – jen predzapasovy kurz (pre_o25/pre_u25), nikdy zaviraci;
+    bez linie se pouzije stazeni.
     """
     from . import nations, secondopinion
 

@@ -134,17 +134,31 @@ def validate(c, mat: np.ndarray) -> tuple[list[str], list[str]]:
 # ---------------------------------------------------------------------------
 
 def pairing(q: O.OddsQuote, quotes: list[O.OddsQuote], cfg) -> tuple[list[str], list[str]]:
-    """Ma kurz u te same kancelare protistranu a davaji kurzy trhu dohromady rozumnou marzi?"""
+    """Ma kurz u te same kancelare protistranu a davaji kurzy trhu dohromady rozumnou marzi?
+
+    Proc soucet pod 100 % znamena chybu: kancelar, ktera vypisuje vsechny vzajemne vylucne vysledky trhu, musi mit
+    sum(1/kurz) >= 1, jinak by sama proti sobe nabizela jistou vyhru (vsadit 1/kurz na kazdou stranu vrati 1
+    pri vkladu sum(1/kurz) < 1). Plati i pro asijske linie: u cele linie se pri vraceni vraci obe strany,
+    u ctvrtinove linie dava pul-vyhra/pul-prohra zisk 0.5·(1 − sum(1/kurz)). U dvojite sance pokryva kazdy vysledek
+    dva vybery, proto se porovnava s 2. Provize burzy kurz jen snizuje (soucet roste), nikdy nevytvori soucet pod
+    100 %. Burza muze mit soucet tesne kolem 100 %, proto tolerance (cfg.min_book_overround = −1 %).
+    Strany se paruji jen ze STEJNEHO casu zdroje: kurzy z ruznych aktualizaci spolu netvori jeden trh.
+    Overeno na 2 443 kompletnich trzich z API-Football (20.11.2026): nejnizsi marze +1.3 %, zadna pod 100 %.
+    """
     sels = profile2.selections(q.market) if q.market != "EXPR" else None
     if not sels:
         return [], ([] if q.source != "api" else [f"trh {q.market} nelze spárovat s protistranou"])
-    per = {x.selection: x.odds for x in quotes
-           if x.bookmaker == q.bookmaker and x.market == q.market and x.fixture_id == q.fixture_id}
+    same = [x for x in quotes if x.bookmaker == q.bookmaker and x.market == q.market and x.fixture_id == q.fixture_id]
+    per = {x.selection: x.odds for x in same if x.stamp == q.stamp}
     per[q.selection] = q.odds
     missing = [s for s in sels if s not in per]
     if missing:
         if q.source != "api":
             return [], []  # rucne opsany jediny kurz je vedome zadani uzivatele
+        other_time = [s for s in missing if any(x.selection == s for x in same)]
+        if other_time:
+            return [], [f"protistrana {q.bookmaker} ({', '.join(other_time)}) je z jiné aktualizace kurzů – "
+                        f"spárování trhu nelze ověřit"]
         return [], [f"{q.bookmaker} nenabízí protistranu ({', '.join(missing)}) – spárování trhu nelze ověřit"]
     expected = 2.0 if q.market == "DC" else 1.0
     over = sum(1.0 / per[s] for s in sels) - expected

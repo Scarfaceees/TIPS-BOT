@@ -780,7 +780,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div><span>Robustnost</span><b>{{ c.robustness }}/100</b><i class="meter" aria-hidden="true"><i style="width:{{ c.robustness }}%"></i></i></div></div>
 <div class="p4models">{% for k, v in c.models.items() %}<span title="model {{ k }}"><b>{{ k }}</b> {{ v }}</span>{% endfor %}{% if c.market %}<span title="férová pravděpodobnost trhu pro přesně tento výběr ({{ c.market.src }})"><b>Trh</b> {{ c.market.p }} · kurz vs trh {{ c.market.ev }}</span>{% endif %}</div>
 <div class="arow"><span class="badge {{ 'tipb' if c.approved else 'warn' if c.decision == 'WATCH' else 'bad' }}">{{ c.decision }}</span>
-<span class="muted">{{ c.source }} · {{ c.quote_status }} · získáno {{ c.quote_time }} ({{ c.quote_age }}){% if c.note %} · {{ c.note }}{% endif %}</span></div>
+<span class="muted">{{ c.source }} · {{ c.book }} · {{ c.key }} · <b>{{ c.quote_status }}</b> v čase analýzy · kurz u zdroje z {{ c.quote_time }} (stáří {{ c.quote_age }}){% if c.quote_fetched %} · staženo {{ c.quote_fetched }}{% endif %}{% if c.note %} · {{ c.note }}{% endif %}</span></div>
 {% if c.reasons %}<div class="muted">Proč: {{ c.reasons|join('; ') }}</div>{% endif %}
 {% if c.risks %}<div class="p4risk">Rizika: {{ c.risks|join('; ') }}</div>{% endif %}
 {% if c.stress %}<details class="fold"><summary>Stress test a robustnost</summary><div class="tablewrap"><table class="mkt"><tr><th>Scénář</th><th class="num">EV</th></tr>

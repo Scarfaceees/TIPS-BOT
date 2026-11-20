@@ -59,7 +59,22 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, note TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL, match TEXT, league_id INTEGER, league TEXT,
+    kickoff TEXT, market TEXT NOT NULL, selection TEXT NOT NULL, market_type TEXT NOT NULL, model TEXT NOT NULL,
+    p REAL NOT NULL, p_market REAL, market_covered INTEGER, odds REAL, bookmaker TEXT, odds_source TEXT, odds_time TEXT,
+    odds_status TEXT, predicted_at TEXT NOT NULL, model_version TEXT NOT NULL, config_hash TEXT NOT NULL,
+    outcome REAL, result TEXT, score TEXT, settled_at TEXT,
+    UNIQUE(fixture_id, market, selection, model, model_version)
+);
+CREATE INDEX IF NOT EXISTS predictions_fixture ON predictions(fixture_id);
 """
+
+# sloupce pridane pozdeji (ALTER TABLE u existujicich databazi)
+LATER_COLUMNS = {
+    "tips": {"odds_fetched_at": "TEXT", "odds_age_min": "REAL", "odds_status": "TEXT", "p_market": "REAL",
+             "clv_status": "TEXT", "closing_time": "TEXT"},
+}
 
 
 def utcnow() -> datetime:
@@ -91,7 +106,12 @@ class Store:
         self._migrate()
 
     def _migrate(self) -> None:
-        """Jednorazove opravy dat (kazda jen jednou, poznamenana v kv)."""
+        """Jednorazove opravy dat (kazda jen jednou, poznamenana v kv) a doplneni pozdeji pridanych sloupcu."""
+        for table, cols in LATER_COLUMNS.items():
+            have = {r["name"] for r in self.query(f"PRAGMA table_info({table})")}
+            for name, typ in cols.items():
+                if name not in have:
+                    self.execute(f"ALTER TABLE {table} ADD COLUMN {name} {typ}")
         if not self.get("fix_ah_away_sign_v1"):
             # Do 20.11.2026 se u asijskeho handicapu z API-Football otacelo znamenko u strany "Away" (API uvadi
             # u obou stran handicap domacich). Kurzy "Away" z API proto popisovaly jiny vysledek nez jejich trh.

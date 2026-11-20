@@ -66,39 +66,112 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
         if dup:
             continue
         decision = c.decision if c is not an.selection.best_available or c.decision == APPROVED else f"{BEST} ({c.decision})"
+        q = c.quote
         store.execute(
             "INSERT INTO tips(fixture_id, match, league_id, league, kickoff, market, selection, label, probs, fair_odds, "
             "odds, bookmaker, odds_source, odds_time, ev, ev_conservative, robustness, decision, category, predicted_at, "
-            "model_version, config_hash, data_sources) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "model_version, config_hash, data_sources, odds_fetched_at, odds_age_min, odds_status, p_market) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (fx.id, fx.name, fx.league_id, fx.league, iso(fx.kickoff), c.market, c.selection, c.label, json.dumps(c.p),
-             c.fair_odds_c, c.odds, c.quote.bookmaker, c.quote.source, iso(c.quote.stamp), c.ev_c, c.ev_d, c.robustness,
-             decision, c.category, when, MODEL_VERSION, h, sources))
+             c.fair_odds_c, c.odds, q.bookmaker, q.source, iso(q.stamp), c.ev_c, c.ev_d, c.robustness,
+             decision, c.category, when, MODEL_VERSION, h, sources, iso(q.fetched_at), q.age_minutes(an.created),
+             c.quote_status, c.p_market))
         n += 1
+    record_predictions(store, an, cfg)
     return n
 
 
-def _closing(store: Store, fid: int, book: str, market: str, sel: str, kickoff: datetime) -> tuple[float | None, float | None]:
-    """Posledni kurz stejne kancelare pred vykopem a jeho ferova hodnota (bez marze, kdyz je trh kompletni)."""
-    last = [q for q in O.latest(store, fid, before=kickoff) if q.bookmaker == book and q.market == market]
-    mine = next((q for q in last if q.selection == sel), None)
-    if mine is None:
-        return None, None
+def market_type(market: str) -> str:
+    """Typ sazky: 1X2, DC, DNB, BTTS, OU, TTH, TTA, AH, EXPR."""
+    return market.split("_", 1)[0]
+
+
+def odds_band(odds: float | None) -> str:
+    if odds is None:
+        return "bez kurzu"
+    for hi, name in ((1.5, "do 1.50"), (2.0, "1.50–1.99"), (3.0, "2.00–2.99"), (5.0, "3.00–4.99")):
+        if odds < hi:
+            return name
+    return "5.00 a výš"
+
+
+def record_predictions(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
+    """Pravdepodobnost kazdeho modelu (A, B, C, D) pro kazdy trh s kurzem – pro dlouhodobou kalibraci.
+
+    Jen predzapasove predikce (cas analyzy < vykop). Opakovany sken pred vykopem predikci prepise, takze se
+    vyhodnocuje posledni predikce pred zapasem; vyhodnocena (settled) predikce se uz nikdy nemeni.
+    `p` je efektivni pravdepodobnost vyhry (u linii s vracenim podminena tim, ze sazka neni vracena)."""
+    fx = an.fixture
+    if an.created >= fx.kickoff or an.models is None:
+        return 0
+    when, h, n = iso(an.created), cfg.config_hash(), 0
+    for c in an.candidates:
+        for model, p in c.p.items():
+            if p is None or not (0.0 < p < 1.0):
+                continue
+            store.execute(
+                "INSERT INTO predictions(fixture_id, match, league_id, league, kickoff, market, selection, market_type, "
+                "model, p, p_market, market_covered, odds, bookmaker, odds_source, odds_time, odds_status, predicted_at, "
+                "model_version, config_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(fixture_id, market, selection, model, model_version) DO UPDATE SET p=excluded.p, "
+                "p_market=excluded.p_market, market_covered=excluded.market_covered, odds=excluded.odds, "
+                "bookmaker=excluded.bookmaker, odds_source=excluded.odds_source, odds_time=excluded.odds_time, "
+                "odds_status=excluded.odds_status, predicted_at=excluded.predicted_at, config_hash=excluded.config_hash "
+                "WHERE predictions.result IS NULL AND excluded.predicted_at >= predictions.predicted_at",
+                (fx.id, fx.name, fx.league_id, fx.league, iso(fx.kickoff), c.market, c.selection, market_type(c.market),
+                 model, float(p), c.p_market, int(c.market_covered), c.odds, c.quote.bookmaker, c.quote.source,
+                 iso(c.quote.stamp), c.quote_status, when, MODEL_VERSION, h))
+            n += 1
+    return n
+
+
+CLV_POS, CLV_NEG, CLV_ZERO, CLV_MISSING, CLV_LINE = (
+    "kladné", "záporné", "nulové", "chybí závěrečný kurz", "změna trhu nebo linie")
+
+
+def _closing(store: Store, fid: int, book: str, market: str, sel: str, kickoff: datetime,
+             rec_time: datetime | None = None, max_gap_min: float | None = None) -> dict:
+    """Zaviraci kurz STEJNE kancelare na STEJNY trh a vyber: posledni kurz pred vykopem, ktery je novejsi nez kurz
+    pri doporuceni (jinak by se porovnaval kurz sam se sebou).
+
+    Vraci {"odds", "fair", "time", "status"}; status None = zaviraci kurz je k dispozici. Ferova hodnota se
+    pocita jen z kompletniho trhu te kancelare ze stejne aktualizace (bez marze); jinak CLV z hrubeho kurzu.
+    Kdyz kancelar po doporuceni nabizi jen jinou linii stejneho typu trhu, status = zmena trhu nebo linie."""
     from .. import profile2
 
+    after = [q for q in O.history(store, fid) if q.bookmaker == book and q.stamp < kickoff
+             and (rec_time is None or q.stamp > rec_time)]
+    mine = [q for q in after if q.market == market and q.selection == sel]
+    if not mine:
+        fam = market_type(market)
+        moved = any(market_type(q.market) == fam and q.market != market for q in after) and "_" in market
+        return {"odds": None, "fair": None, "time": None, "status": CLV_LINE if moved else CLV_MISSING}
+    last = max(mine, key=lambda q: q.stamp)
+    if max_gap_min is not None and (kickoff - last.stamp).total_seconds() / 60 > max_gap_min:
+        gap = (kickoff - last.stamp).total_seconds() / 3600
+        return {"odds": last.odds, "fair": None, "time": last.stamp,
+                "status": f"{CLV_MISSING} (poslední kurz {gap:.1f} h před výkopem)"}
     sels = profile2.selections(market)
-    per = {q.selection: q.odds for q in last}
+    per = {q.selection: q.odds for q in after if q.market == market and q.stamp == last.stamp}
     fair = None
     if sels and all(s in per for s in sels) and market not in ("DNB",) and not market.startswith("AH_"):
         _, probs = mathcore.devig([per[s] for s in sels])
         fair = 1.0 / probs[sels.index(sel)]
-    return mine.odds, fair
+    return {"odds": last.odds, "fair": fair, "time": last.stamp, "status": None}
+
+
+def outcome_value(result: str) -> float | None:
+    """Vysledek pro kalibraci efektivni pravdepodobnosti: vyhra 1, prohra 0; pulvyhra = vyhrana nevracena cast
+    (1), pulprohra = prohrana nevracena cast (0); vraceni a neplatna sazka se nehodnoti (None)."""
+    return {mathcore.WON: 1.0, mathcore.HALF_WON: 1.0, mathcore.LOST: 0.0, mathcore.HALF_LOST: 0.0}.get(result)
 
 
 def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
     """Vyhodnoti tipy a predikce zapasu, ktere uz skoncily (1 pozadavek na 20 zapasu)."""
     rows = store.query("SELECT DISTINCT fixture_id FROM tips WHERE result IS NULL AND kickoff < ? "
-                       "UNION SELECT DISTINCT fixture_id FROM forecasts WHERE result IS NULL AND kickoff < ?",
-                       (iso(now - timedelta(hours=2, minutes=30)),) * 2)
+                       "UNION SELECT DISTINCT fixture_id FROM forecasts WHERE result IS NULL AND kickoff < ? "
+                       "UNION SELECT DISTINCT fixture_id FROM predictions WHERE result IS NULL AND kickoff < ?",
+                       (iso(now - timedelta(hours=2, minutes=30)),) * 3)
     ids = [r["fixture_id"] for r in rows]
     if not ids:
         return []
@@ -109,6 +182,8 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
             for t in store.query("SELECT * FROM tips WHERE fixture_id=? AND result IS NULL", (fx.id,)):
                 store.execute("UPDATE tips SET result=?, profit=0, settled_at=? WHERE id=?", (mathcore.VOID, iso(now), t["id"]))
             store.execute("UPDATE forecasts SET result='void' WHERE fixture_id=? AND result IS NULL", (fx.id,))
+            store.execute("UPDATE predictions SET result=?, settled_at=? WHERE fixture_id=? AND result IS NULL",
+                          (mathcore.VOID, iso(now), fx.id))
             msgs.append(f"{fx.name}: zápas {fx.status} – sázky neplatné")
             continue
         if not fx.finished:
@@ -123,12 +198,27 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
                 msgs.append(f"{fx.name} {t['label']}: nelze vyhodnotit ({e})")
                 continue
             profit = mathcore.unit_profit(out, t["odds"])
-            close, close_fair = _closing(store, fx.id, t["bookmaker"], t["market"], t["selection"], fx.kickoff)
-            clv = (t["odds"] / close_fair - 1.0) if close_fair else (t["odds"] / close - 1.0) if close else None
+            cl = _closing(store, fx.id, t["bookmaker"], t["market"], t["selection"], fx.kickoff,
+                          parse_dt(t["odds_time"]), CLOSING_MAX_GAP_MIN)
+            clv, status = None, cl["status"]
+            if status is None:
+                clv = t["odds"] / cl["fair"] - 1.0 if cl["fair"] else t["odds"] / cl["odds"] - 1.0
+                status = CLV_POS if clv > 1e-9 else CLV_NEG if clv < -1e-9 else CLV_ZERO
             store.execute("UPDATE tips SET result=?, score=?, profit=?, closing_odds=?, closing_fair_odds=?, clv=?, "
-                          "settled_at=? WHERE id=?", (out, score, profit, close, close_fair, clv, iso(now), t["id"]))
+                          "clv_status=?, closing_time=?, settled_at=? WHERE id=?",
+                          (out, score, profit, cl["odds"], cl["fair"], clv, status, iso(cl["time"]), iso(now), t["id"]))
             msgs.append(f"{fx.name} {score}: {t['label']} @ {t['odds']:.2f} – {mathcore.SETTLE_CZ[out]} ({profit:+.2f} j.)")
+        for p in store.query("SELECT id, market, selection FROM predictions WHERE fixture_id=? AND result IS NULL", (fx.id,)):
+            try:
+                out = mathcore.settle(p["market"], p["selection"], fx.ft_home, fx.ft_away)
+            except ValueError:
+                continue
+            store.execute("UPDATE predictions SET result=?, outcome=?, score=?, settled_at=? WHERE id=?",
+                          (out, outcome_value(out), score, iso(now), p["id"]))
     return msgs
+
+
+CLOSING_MAX_GAP_MIN = 180  # posledni kurz starsi nez 3 h pred vykopem neni zaviraci kurz
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +268,7 @@ def evaluate(store: Store) -> dict:
     tips = [dict(r) for r in store.query("SELECT * FROM tips")]
     out["all"] = bet_stats(tips)
     keys = {"trh": lambda r: r["market"].split("_")[0], "soutěž": lambda r: r["league"] or "?",
+            "kurzové pásmo": lambda r: odds_band(r["odds"]),
             "kategorie": lambda r: (r["category"] or "bez kategorie").split(" · ")[0],
             "kancelář": lambda r: r["bookmaker"], "rozhodnutí": lambda r: r["decision"],
             "měsíc": lambda r: (r["kickoff"] or "")[:7], "verze": lambda r: f"{r['model_version']}/{r['config_hash']}"}
@@ -186,7 +277,94 @@ def evaluate(store: Store) -> dict:
         for r in tips:
             groups[fn(r)].append(r)
         out["groups"][gname] = {k: bet_stats(v) for k, v in sorted(groups.items())}
+    settled = [r for r in tips if r["result"] and r["result"] != mathcore.VOID]
+    out["clv_status"] = dict(sorted(_count(r.get("clv_status") or "neurčeno (starší záznam)" for r in settled).items()))
+    out["calibration"] = calibration(store)
+    out["data_quality"] = data_quality(store)
     return out
+
+
+def _count(items) -> dict[str, int]:
+    c: dict[str, int] = defaultdict(int)
+    for x in items:
+        c[x] += 1
+    return c
+
+
+def prob_scores(p: list[float], y: list[float], eps: float = 1e-12) -> dict:
+    """Brier a log loss binarni predikce (y muze byt 0/1)."""
+    pa, ya = np.clip(np.asarray(p, float), eps, 1 - eps), np.asarray(y, float)
+    return {"n": len(pa), "brier": float(np.mean((pa - ya) ** 2)) if len(pa) else math.nan,
+            "log_loss": float(-np.mean(ya * np.log(pa) + (1 - ya) * np.log(1 - pa))) if len(pa) else math.nan,
+            "mean_p": float(pa.mean()) if len(pa) else math.nan, "rate": float(ya.mean()) if len(pa) else math.nan}
+
+
+def calibration(store: Store, bins: int = 10) -> dict:
+    """Kalibrace modelu A–D na vyhodnocenych predpovedich vsech trhu (ne jen 1X2).
+
+    Celkove a po ligach, typech trhu a kurzovych pasmech; kalibracni krivka (predpoved vs. skutecnost po decilech).
+    Jeden zapas dava mnoho korelovanych predpovedi, proto se uvadi i pocet zapasu – prukaznost se posuzuje podle
+    nej (MIN_SAMPLE zapasu), ne podle poctu radku. Model B na trzich bez aktualnich kurzu je jen dopocet; jeho
+    hodnoceni 'B (tržní trhy)' bere jen predpovedi, kde trh mel aktualni kurzy."""
+    rows = [dict(r) for r in store.query("SELECT * FROM predictions WHERE outcome IS NOT NULL")]
+    out: dict = {"models": {}, "by": {}, "curves": {}, "matches": len({r["fixture_id"] for r in rows})}
+    groups = {"liga": lambda r: r["league"] or "?", "typ trhu": lambda r: r["market_type"],
+              "kurzové pásmo": lambda r: odds_band(r["odds"])}
+    for model in ("A", "B", "C", "D"):
+        mine = [r for r in rows if r["model"] == model]
+        variants = [(model, mine)]
+        if model == "B":
+            variants.append(("B (tržní trhy)", [r for r in mine if r["market_covered"]]))
+        for name, rs in variants:
+            if not rs:
+                continue
+            sc = prob_scores([r["p"] for r in rs], [r["outcome"] for r in rs])
+            sc["matches"] = len({r["fixture_id"] for r in rs})
+            sc["significant"] = sc["matches"] >= MIN_SAMPLE
+            out["models"][name] = sc
+            out["curves"][name] = calibration_table([r["p"] for r in rs], [r["outcome"] for r in rs], bins)
+            for gname, fn in groups.items():
+                g: dict[str, list] = defaultdict(list)
+                for r in rs:
+                    g[fn(r)].append(r)
+                out["by"].setdefault(gname, {})[name] = {
+                    k: {**prob_scores([r["p"] for r in v], [r["outcome"] for r in v]),
+                        "matches": len({r["fixture_id"] for r in v})} for k, v in sorted(g.items())}
+    # trh (ferova pravdepodobnost bez marze) jako meritko pro stejne radky
+    mk = [r for r in rows if r["model"] == "C" and r["p_market"] is not None and 0 < r["p_market"] < 1]
+    if mk:
+        out["models"]["trh (bez marže)"] = {**prob_scores([r["p_market"] for r in mk], [r["outcome"] for r in mk]),
+                                            "matches": len({r["fixture_id"] for r in mk})}
+        out["models"]["C na stejných řádcích"] = {**prob_scores([r["p"] for r in mk], [r["outcome"] for r in mk]),
+                                                  "matches": len({r["fixture_id"] for r in mk})}
+    return out
+
+
+def data_quality(store: Store) -> dict:
+    """Prehled kvality dat: stari kurzu pri stazeni a pri doporuceni, pokryti trhu aktualnimi kurzy, CLV."""
+    q = store.query("SELECT source, fetched_at, source_time FROM odds_quotes")
+    lag = []
+    for r in q:
+        f, s = parse_dt(r["fetched_at"]), parse_dt(r["source_time"])
+        if f and s:
+            lag.append((f - s).total_seconds() / 3600)
+    lag_a = np.asarray(lag) if lag else np.asarray([0.0])
+    tips = [dict(r) for r in store.query("SELECT odds_age_min, odds_status, clv_status, result FROM tips")]
+    ages = [r["odds_age_min"] for r in tips if r["odds_age_min"] is not None]
+    preds = store.query("SELECT market_type, market_covered, result FROM predictions WHERE model='C'")
+    cover: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for r in preds:
+        cover[r["market_type"]][0] += 1
+        cover[r["market_type"]][1] += int(bool(r["market_covered"]))
+    return {
+        "quotes": len(q), "books": len({r[0] for r in store.query("SELECT DISTINCT bookmaker FROM odds_quotes")}),
+        "lag_median_h": float(np.median(lag_a)) if lag else None,
+        "lag_over_6h": float(np.mean(lag_a > 6)) if lag else None,
+        "tips": len(tips), "tip_age_median_min": float(np.median(ages)) if ages else None,
+        "tip_status": dict(_count(r["odds_status"] or "neuloženo (starší záznam)" for r in tips)),
+        "predictions": len(preds), "predictions_settled": sum(1 for r in preds if r["result"]),
+        "market_covered": {k: (v[1], v[0]) for k, v in sorted(cover.items())},
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +398,7 @@ def backtest(history: list[Fixture], test_start: date, refit_days: int = 7) -> d
     }
 
 
-def calibration_table(p: list[float], y: list[int], bins: int = 5) -> list[dict]:
+def calibration_table(p: list[float], y: list[float], bins: int = 5) -> list[dict]:
     edges = np.linspace(0, 1, bins + 1)
     out = []
     for lo, hi in zip(edges[:-1], edges[1:]):

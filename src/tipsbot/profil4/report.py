@@ -40,7 +40,8 @@ def tip_block(c: Candidate, now: datetime, title: str = "") -> list[str]:
     head = f"  {title + ': ' if title else ''}{c.label} ({c.market}:{c.selection})"
     lines = [head,
              f"    kancelář {q.bookmaker} · kurz {c.odds:.2f} · {q.source_label()} · {q.status(now, _cfg().odds)} "
-             f"(získáno {local(q.stamp)}, stáří {age(q.stamp, now)})" + (f" · {q.note}" if q.note else ""),
+             f"v čase analýzy (kurz u zdroje z {local(q.stamp)}, stáří {age(q.stamp, now)}, staženo {local(q.fetched_at)})"
+             + (f" · {q.note}" if q.note else ""),
              f"    pravděpodobnost výhry (C) {pct(c.p_win_c)}" + (f", vrácení {pct(c.p_push_c)}" if c.p_push_c > 0.005 else "")
              + f" · férový kurz {odds_s(c.fair_odds_c)} (konzervativně {odds_s(c.fair_odds_d)})",
              f"    EV {pct(c.ev_c)} (konzervativní {pct(c.ev_d)}) · min. přijatelný kurz {odds_s(c.min_odds)} · "
@@ -231,4 +232,55 @@ def format_evaluation(ev: dict) -> str:
         for k, s in rows.items():
             L.append(f"  {k}: n={s['n']}, zisk {s['profit']:+.2f}, yield {pct(s['yield'])}, úspěšnost {pct(s['win_rate'])}, "
                      f"CLV {pct(s['avg_clv'])}")
+    if ev.get("clv_status"):
+        L += ["", "CLV (kurz při doporučení vs. závěrečný kurz stejné kanceláře na stejný trh):"]
+        L += [f"  {k}: {v}" for k, v in ev["clv_status"].items()]
+    L += format_calibration(ev.get("calibration")) + format_data_quality(ev.get("data_quality"))
     return "\n".join(L)
+
+
+def _f(x, fmt=".4f") -> str:
+    return "–" if x is None or (isinstance(x, float) and math.isnan(x)) else format(x, fmt)
+
+
+def format_calibration(cal: dict | None) -> list[str]:
+    if not cal:
+        return []
+    L = ["", "=" * 60, "KALIBRACE MODELŮ (všechny trhy s kurzem, poslední předpověď před výkopem)"]
+    if not cal["models"]:
+        return L + ["  zatím žádné vyhodnocené předpovědi – sbírají se při každém skenu, vyhodnotí se po zápase"]
+    L.append(f"  vyhodnocených zápasů: {cal['matches']} (průkazné až od 100 zápasů; jeden zápas = mnoho korelovaných trhů)")
+    for name, m in cal["models"].items():
+        L.append(f"  {name}: n={m['n']} ({m['matches']} záp.), Brier {_f(m['brier'])}, log loss {_f(m['log_loss'])}, "
+                 f"průměr předpovědi {pct(m['mean_p'])} vs. skutečnost {pct(m['rate'])}"
+                 + ("" if m.get("significant", True) else " – neprůkazné"))
+    for name, curve in cal["curves"].items():
+        if curve:
+            L.append(f"  křivka {name}: " + "; ".join(f"{r['bin']} → {r['actual']:.0%} (n={r['n']})" for r in curve))
+    for gname, per_model in cal["by"].items():
+        L += ["", f"  Podle: {gname} (log loss; n zápasů)"]
+        keys = sorted({k for m in per_model.values() for k in m})
+        for k in keys:
+            parts = [f"{name} {_f(per_model[name][k]['log_loss'])}" for name in per_model if k in per_model[name]]
+            n = max(per_model[name][k]["matches"] for name in per_model if k in per_model[name])
+            L.append(f"    {k} ({n} záp.): " + ", ".join(parts))
+    return L
+
+
+def format_data_quality(dq: dict | None) -> list[str]:
+    if not dq:
+        return []
+    L = ["", "=" * 60, "KVALITA DAT",
+         f"  uložené kurzy: {dq['quotes']} od {dq['books']} kanceláří"]
+    if dq["lag_median_h"] is not None:
+        L.append(f"  stáří kurzu u zdroje v okamžiku stažení: medián {dq['lag_median_h']:.1f} h, "
+                 f"starších než 6 h už při stažení {dq['lag_over_6h']:.0%}")
+    L.append(f"  uložené tipy: {dq['tips']}" + (f", medián stáří kurzu při doporučení {dq['tip_age_median_min']:.0f} min"
+                                               if dq["tip_age_median_min"] is not None else ""))
+    if dq["tip_status"]:
+        L.append("  stav kurzu při doporučení: " + ", ".join(f"{k} {v}" for k, v in dq["tip_status"].items()))
+    L.append(f"  předpovědi (model C): {dq['predictions']}, vyhodnocené {dq['predictions_settled']}")
+    if dq["market_covered"]:
+        L.append("  trh s aktuálními kurzy (cena trhu ověřitelná): " +
+                 ", ".join(f"{k} {c}/{n}" for k, (c, n) in dq["market_covered"].items()))
+    return L

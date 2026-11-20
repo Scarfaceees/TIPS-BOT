@@ -69,7 +69,8 @@ def model_a(fixture: Fixture, history: list[Fixture], cfg: Profil4Config) -> Mod
     counts = {t: int(((df["home"] == t) | (df["away"] == t)).sum()) for t in (fixture.home, fixture.away)}
     if min(counts.values()) < 5:
         return unavailable("A – vlastní", f"tým má v datech málo zápasů ({counts})")
-    season = [f.kickoff.date() for f in history if f.season == fixture.season and f.finished]
+    season = [f.kickoff.date() for f in history if f.season == fixture.season and f.finished
+              and f.kickoff < fixture.kickoff]  # i zacatek sezony jen z toho, co bylo pred zapasem znamo
     start = min(season) if season else None
     try:
         params = football.fit(df, fixture.kickoff.date(), season_start=start)

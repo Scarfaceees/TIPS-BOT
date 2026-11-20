@@ -34,6 +34,8 @@ def candidate(c: Candidate, now: datetime) -> dict:
         "decision": c.decision, "approved": c.decision == APPROVED, "reasons": list(c.reasons),
         "risks": list(dict.fromkeys(c.risks)), "stress": [(n, pct(ev), ev >= 0) for n, ev in c.stress],
         "robust_parts": Robustness(0, c.robustness_parts).lines(),
+        "market": ({"p": pct(c.p_market), "ev": pct(c.ev_market), "src": c.market_src}
+                   if c.p_market is not None else None),
     }
 
 

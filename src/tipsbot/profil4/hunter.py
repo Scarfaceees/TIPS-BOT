@@ -72,7 +72,7 @@ def quick_scan(provider: DataProvider, fixtures: list[Fixture], now: datetime, c
             fq = O.with_kickoff([q for q in O.latest(provider.client.store, f.id)], f.kickoff, f.name)
             cur = [q for q in fq if q.status(now, cfg.odds) == O.CURRENT]
             a = M.model_a(f, history, cfg)
-            b = M.model_b(cur, cfg, prior_total=(a.lam_home + a.lam_away) if a.available else None)
+            b = M.model_b(cur, cfg)
             qr = QuickResult(f, comp, None, None, None)
             if a.available:
                 qr.p_model = tuple(mathcore.evaluate("1X2", s, a.matrix).p_win for s in ("1", "X", "2"))

@@ -88,6 +88,19 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Jednorazove opravy dat (kazda jen jednou, poznamenana v kv)."""
+        if not self.get("fix_ah_away_sign_v1"):
+            # Do 20.11.2026 se u asijskeho handicapu z API-Football otacelo znamenko u strany "Away" (API uvadi
+            # u obou stran handicap domacich). Kurzy "Away" z API proto popisovaly jiny vysledek nez jejich trh.
+            # Kurzy se smazou (pri dalsim cteni se z cache API rozparsuji spravne) a tipy na ne se zneplatni
+            # (void = nepocitaji se do vysledku), aby historie nevykazovala zisk ze spatne sparovaneho kurzu.
+            self.execute("DELETE FROM odds_quotes WHERE source='api' AND market LIKE 'AH%' AND selection='away'")
+            self.execute("UPDATE tips SET result='void', profit=0, settled_at=? WHERE odds_source='api' AND "
+                         "market LIKE 'AH%' AND selection='away'", (iso(utcnow()),))
+            self.set("fix_ah_away_sign_v1", iso(utcnow()))
 
     # --- obecne ---------------------------------------------------------
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:

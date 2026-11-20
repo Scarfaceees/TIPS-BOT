@@ -129,8 +129,15 @@ def market_table(quotes: list[OddsQuote], method: str = "multiplicative",
     return {"books": books, "consensus": consensus, "sources": sources}
 
 
+PRIOR_TOTAL = 2.6  # jen pro rozhodnuti remizy fitu bez golove linie; nesmi prebit samotny trh
+
+
 def fit_market_lambdas(consensus: dict[str, float], prior_total: float | None = None) -> tuple[float, float] | None:
-    """Ocekavane goly, ktere nejlepe vysvetli ferove pravdepodobnosti trhu (Poisson)."""
+    """Ocekavane goly, ktere nejlepe vysvetli ferove pravdepodobnosti trhu (Poisson).
+
+    Bez golove linie urci obe lambdy samotne 1X2 (dva stupne volnosti, dva parametry). Prior na soucet golu ma jen
+    zanedbatelnou vahu: drive (vaha 0.02) prebijel trh a model B pak neodpovidal ani vlastnim kurzum 1X2
+    (Schalke–Stuttgart: remiza trh 23 %, model B 28 %)."""
     if not all(f"1X2:{s}" in consensus for s in ("1", "X", "2")):
         return None
     targets = [(k.rsplit(":", 1)[0], k.rsplit(":", 1)[1], p) for k, p in consensus.items()]
@@ -142,7 +149,7 @@ def fit_market_lambdas(consensus: dict[str, float], prior_total: float | None = 
         mat = football.score_matrix(lh, la, 0.0, GRID)
         err = sum((float(mat[m].sum()) - p) ** 2 for m, p in masks)
         if not has_goals and prior_total:
-            err += 0.02 * (lh + la - prior_total) ** 2  # bez golove linie jen mekky prior na soucet golu
+            err += 1e-6 * (lh + la - prior_total) ** 2  # jen rozhodne mezi temer stejne dobrymi fity
         return err
 
     best = min((optimize.minimize(loss, np.log(x0), method="Nelder-Mead", options={"xatol": 1e-5, "fatol": 1e-11})
@@ -151,18 +158,22 @@ def fit_market_lambdas(consensus: dict[str, float], prior_total: float | None = 
     return float(lh), float(la)
 
 
-def model_b(quotes: list[OddsQuote], cfg: Profil4Config, prior_total: float | None = None) -> ModelResult:
+def model_b(quotes: list[OddsQuote], cfg: Profil4Config) -> ModelResult:
+    """Ciste trzni model – zavisi jen na kurzech (nikdy na modelu A, jinak by 'shoda s trhem' nic neoverovala)."""
     table = market_table(quotes, cfg.odds.devig_method, cfg.odds.sharp_books)
-    lams = fit_market_lambdas(table["consensus"], prior_total or 2.6)
+    lams = fit_market_lambdas(table["consensus"], PRIOR_TOTAL)
     if lams is None:
         return unavailable("B – tržní", "chybí kompletní trh 1X2 s aktuálními kurzy")
     mat = football.score_matrix(lams[0], lams[1], 0.0, GRID)
     goal_lines = [m for m in table["books"] if m != "1X2"]
     note = "kurzy bez marže (" + cfg.odds.devig_method + "), zdroje 1X2: " + ", ".join(table["sources"]["1X2"])
     if not goal_lines:
-        note += "; bez gólové linie – součet gólů jen odhadnut"
-    return ModelResult("B – tržní", True, mat, lams[0], lams[1], 0.0, note, degraded=not goal_lines,
-                       extra={"table": table})
+        note += "; bez aktuální gólové linie – gólové trhy jen dopočteny z 1X2, nejsou tržní"
+    resid = max(abs(mathcore.evaluate("1X2", s, mat).p_win - table["consensus"][f"1X2:{s}"]) for s in ("1", "X", "2"))
+    if resid > 0.02:
+        note += f"; Poissonův fit se od kurzů 1X2 odchyluje až o {resid * 100:.1f} p.b."
+    return ModelResult("B – tržní", True, mat, lams[0], lams[1], 0.0, note, degraded=not goal_lines or resid > 0.02,
+                       extra={"table": table, "inputs": sorted(table["books"]), "fit_1x2_resid": resid})
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +265,7 @@ class ModelSet:
 def build(fixture: Fixture, history: list[Fixture], quotes: list[OddsQuote], cfg: Profil4Config,
           data_quality: float, bot_league: str = "") -> ModelSet:
     a = model_a(fixture, history, cfg)
-    b = model_b(quotes, cfg, prior_total=(a.lam_home + a.lam_away) if a.available else None)
+    b = model_b(quotes, cfg)
     w, note = model_weight(cfg, bot_league)
     c = model_c(a, b, w, note)
     k = gamma_k(cfg, data_quality, a.n_matches)

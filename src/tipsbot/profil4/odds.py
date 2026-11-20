@@ -99,7 +99,12 @@ def validate(market: str, selection: str, odds: float) -> None:
 # ---------------------------------------------------------------------------
 
 def _ah(value: str) -> tuple[str, str] | None:
-    """'Home -0.75' -> ('AH_-0.75', 'home');  'Away +1' -> ('AH_-1.0', 'away'). Linie je z pohledu domacich."""
+    """'Home -0.75' -> ('AH_-0.75', 'home');  'Away -0.75' -> ('AH_-0.75', 'away') = hoste +0.75.
+
+    API-Football uvadi u OBOU stran cislo handicapu DOMACICH: dvojice jednoho trhu je "Home -1.5" / "Away -1.5"
+    (overeno na zivych datech: Pinnacle Home -1.5 = 1.70 / Away -1.5 = 2.22, marze 3.9 %; "Away +0.5" ma kurz
+    vyhry hostu v 1X2). Zapis Profilu 2 ma linii take z pohledu domacich, takze znamenko se NEOTACI.
+    """
     side, _, raw = value.strip().partition(" ")
     side = side.lower()
     if side not in ("home", "away") or not raw:
@@ -111,8 +116,7 @@ def _ah(value: str) -> tuple[str, str] | None:
     hcp = sum(parts) / len(parts)  # "-0.5,-1" = ctvrtinova linie -0.75
     if abs(hcp * 4 - round(hcp * 4)) > 1e-9:
         return None
-    line = hcp if side == "home" else -hcp
-    return profile2._canon("AH", line + 0.0), side
+    return profile2._canon("AH", hcp + 0.0), side
 
 
 def _ou(value: str) -> tuple[str, float] | None:
@@ -151,6 +155,19 @@ def map_bet(bet_name: str, value: str) -> tuple[str, str] | None:
 
 
 def parse_api_odds(payload: list, fetched_at: datetime, match_names: dict[int, str] | None = None) -> list[OddsQuote]:
+    """Kurzy z odpovedi /odds. Stejny vyber u jedne kancelare dvakrat se stejnym kurzem = jeden kurz; s RUZNYM
+    kurzem je odpoved nejednoznacna a vyber se vynecha (nevime, ktery kurz plati)."""
+    seen: dict[tuple, OddsQuote | None] = {}
+    for q in _parse_api_odds(payload, fetched_at, match_names):
+        k = (q.fixture_id, q.bookmaker, q.market, q.selection, q.stamp)
+        if k not in seen:
+            seen[k] = q
+        elif seen[k] is not None and abs(seen[k].odds - q.odds) > 1e-9:
+            seen[k] = None
+    return [q for q in seen.values() if q is not None]
+
+
+def _parse_api_odds(payload: list, fetched_at: datetime, match_names: dict[int, str] | None = None) -> list[OddsQuote]:
     out: list[OddsQuote] = []
     for item in payload or []:
         fx = item.get("fixture", {}) or {}

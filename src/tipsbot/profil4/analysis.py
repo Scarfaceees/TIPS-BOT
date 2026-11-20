@@ -13,6 +13,7 @@ from datetime import datetime
 
 from .. import profile2
 from . import analyst, correlation, mathcore, montecarlo
+from . import integrity as IN
 from . import models as M
 from . import odds as O
 from . import surebet as SB
@@ -177,8 +178,19 @@ def build_candidates(fx: Fixture, ms: M.ModelSet, quotes: list[O.OddsQuote], now
             min_odds=mathcore.min_odds_for_ev(ec.a, ec.b, cfg.decision.ev_min), robustness=rb.score,
             data_quality=dq, models_complete=ms.a.available and ms.b.available, lineups=lstate,
             stress=st.scenarios, robustness_parts=rb.parts)
+        _check(cand, ms, quotes, now, cfg)
         out.append(decide(cand, cfg.decision))
     return out
+
+
+def _check(cand: Candidate, ms: M.ModelSet, quotes: list[O.OddsQuote], now: datetime, cfg: Profil4Config) -> None:
+    """Kontrolni vrstva (integrity.py): nezavisly prepocet, sparovani kurzu, cena trhu a potvrzeni kurzu."""
+    hard, soft = IN.validate(cand, ms.c.matrix)
+    ph, ps = IN.pairing(cand.quote, quotes, cfg.decision)
+    cand.validation = (hard + ph, soft + ps)
+    cand.p_market, cand.ev_market, cand.market_src = IN.market_price(ms.b, cand.market, cand.selection, cand.odds)
+    cand.market_covered = cand.p_market is not None
+    cand.confirmed_by = IN.confirmations(cand.quote, quotes, now, cfg.odds, cfg.decision.confirm_tolerance)
 
 
 def deep_analysis(provider: DataProvider, fx: Fixture, now: datetime, cfg: Profil4Config,

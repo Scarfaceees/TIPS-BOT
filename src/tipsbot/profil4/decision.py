@@ -7,6 +7,7 @@ proc neni schvalena.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from .config import DecisionConfig
@@ -44,6 +45,13 @@ class Candidate:
     reasons: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     category: str = ""
+    # kontrolni vrstva (integrity.py); validation None = nezavisle overeni neprobehlo => nelze schvalit
+    validation: tuple[list[str], list[str]] | None = None  # (tvrde chyby, mekke vyhrady)
+    p_market: float | None = None  # ferova pravdepodobnost trhu pro presne tento vyber
+    ev_market: float | None = None  # EV kurzu proti ferove cene trhu
+    market_src: str = ""
+    market_covered: bool = False  # ma trh B pro tento typ sazky aktualni kurzy
+    confirmed_by: list[str] = field(default_factory=list)  # jine kancelare s podobnym kurzem
 
     @property
     def odds(self) -> float:
@@ -94,6 +102,7 @@ def decide(c: Candidate, cfg: DecisionConfig) -> Candidate:
         fails_soft.append(f"kvalita dat {c.data_quality:.0%} pod {cfg.data_quality_min:.0%}")
     if c.lineups != "confirmed":
         c.risks.append("sestavy nejsou potvrzené")
+    _integrity(c, cfg, fails_hard, fails_soft)
 
     if not fails_hard and not fails_soft:
         c.decision, c.reasons = APPROVED, ok
@@ -102,6 +111,38 @@ def decide(c: Candidate, cfg: DecisionConfig) -> Candidate:
     else:
         c.decision, c.reasons = NO_BET, fails_hard + fails_soft
     return c
+
+
+def _logit(p: float) -> float:
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return math.log(p / (1 - p))
+
+
+def _integrity(c: Candidate, cfg: DecisionConfig, fails_hard: list[str], fails_soft: list[str]) -> None:
+    """Kontrolni vrstva: bez prokazatelne konzistence kurzu, trhu, pravdepodobnosti a EV neni APPROVED BET."""
+    if c.validation is None:
+        fails_soft.append("výpočet nebyl nezávisle ověřen")
+    else:
+        fails_hard.extend(c.validation[0])
+        fails_soft.extend(c.validation[1])
+    if not c.market_covered:
+        fails_soft.append(f"cenu trhu pro tuto sázku nelze ověřit ({c.market_src or 'trh chybí'})")
+    pa, pb = c.p.get("A"), c.p.get("B")
+    if pa is not None and pb is not None and c.market_covered:
+        lg = abs(_logit(pa) - _logit(pb))
+        if lg > cfg.max_logit_gap:
+            fails_soft.append(f"model A ({pa:.1%}) a trh ({pb:.1%}) se výrazně rozcházejí (poměr šancí {math.exp(lg):.2f}×)")
+    edge = c.ev_market if c.ev_market is not None else c.ev_c
+    if edge > cfg.max_market_edge:
+        missing = []
+        if not c.market_covered:
+            missing.append("cena trhu neznámá")
+        if not c.confirmed_by:
+            missing.append(f"žádná jiná kancelář nenabízí podobný kurz (do −{cfg.confirm_tolerance:.0%})")
+        if missing:
+            where = f"o {edge:+.0%} nad férovou cenou trhu" if c.ev_market is not None else f"EV {edge:+.0%}"
+            fails_soft.append(f"kurz {c.quote.bookmaker} {c.odds:.2f} je {where} – extrémní hodnota nebyla nezávisle "
+                              f"potvrzena: {'; '.join(missing)}")
 
 
 def rank_key(c: Candidate) -> tuple:
@@ -122,7 +163,9 @@ class Selection:
 def select(cands: list[Candidate], cfg: DecisionConfig) -> Selection:
     approved = sorted([c for c in cands if c.decision == APPROVED], key=rank_key)
     watch = sorted([c for c in cands if c.decision == WATCH], key=rank_key)
-    pos = [c for c in cands if c.ev_c > 0 and c.ev_c <= cfg.suspicious_ev]
+    # maximum value jen z kandidatu, jejichz vypocet a sparovani kurzu prosly (jinak by vyhral chybny kurz)
+    pos = [c for c in cands if c.ev_c > 0 and c.ev_c <= cfg.suspicious_ev and c.validation is not None
+           and not c.validation[0]]
 
     def sensible_score(c: Candidate) -> float:
         return c.p_win_c * (c.robustness / 100.0) * c.data_quality

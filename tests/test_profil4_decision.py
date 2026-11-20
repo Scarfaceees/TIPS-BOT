@@ -9,10 +9,35 @@ CFG = DecisionConfig()
 
 
 def cand(odds=2.0, ev_c=0.06, ev_d=0.02, rob=75, dq=0.85, pa=0.55, pb=0.52, status=CURRENT, complete=True,
-         lineups="confirmed", key=("1X2", "1")):
+         lineups="confirmed", key=("1X2", "1"), validation=([], []), covered=True, confirmed=("bet365 2.00",)):
     q = OddsQuote(1, "A - B", "pinnacle", key[0], key[1], odds, NOW, "api", NOW + timedelta(hours=3), NOW)
-    return D.Candidate(1, "A - B", key[0], key[1], "test", q, status, {"A": pa, "B": pb, "C": 0.53, "D": 0.51},
-                       0.53, 0.0, 1.89, 1.96, ev_c, ev_d, 1.95, rob, dq, complete, lineups)
+    c = D.Candidate(1, "A - B", key[0], key[1], "test", q, status, {"A": pa, "B": pb, "C": 0.53, "D": 0.51},
+                    0.53, 0.0, 1.89, 1.96, ev_c, ev_d, 1.95, rob, dq, complete, lineups)
+    c.validation, c.market_covered, c.confirmed_by = validation, covered, list(confirmed)
+    if covered:
+        c.p_market, c.ev_market, c.market_src = pb, pb * odds - 1, "test"
+    return c
+
+
+def test_safety_layer_blocks_unverified_or_inconsistent_tips():
+    assert D.decide(cand(validation=None), CFG).decision == D.WATCH  # bez nezavisleho overeni nikdy APPROVED
+    bad = D.decide(cand(validation=(["EV nesouhlasí s nezávislým výpočtem"], [])), CFG)
+    assert bad.decision == D.NO_BET and "EV nesouhlasí" in " ".join(bad.reasons)
+    assert D.decide(cand(validation=([], ["nenabízí protistranu"])), CFG).decision == D.WATCH
+    assert D.decide(cand(covered=False), CFG).decision == D.WATCH  # cena trhu neznama
+    # outsider: model A 30 % vs trh 18 % (rozdil jen 12 p.b., ale pomer sanci 1.95x)
+    assert "rozcházejí" in " ".join(D.decide(cand(odds=6.0, pa=0.30, pb=0.18, ev_c=0.08), CFG).reasons)
+
+
+def test_extreme_edge_needs_independent_confirmation():
+    # kurz 2.60 na vyber s ferovou cenou trhu 52 % = o 35 % nad trhem
+    lone = D.decide(cand(odds=2.60, ev_c=0.20, pb=0.52, pa=0.53, confirmed=()), CFG)
+    assert lone.decision != D.APPROVED and "nebyla nezávisle potvrzena" in " ".join(lone.reasons)
+    # stejna situace, ale jina kancelar nabizi podobny kurz: hodnota je potvrzena (EV 20 % stale nad 'podezrele' ne)
+    ok = D.decide(cand(odds=2.60, ev_c=0.20, pb=0.52, pa=0.53, confirmed=("bet365 2.55",)), CFG)
+    assert "nebyla nezávisle potvrzena" not in " ".join(ok.reasons)
+    # normalni hodnota (kurz 4 % nad trhem) potvrzeni nepotrebuje
+    assert D.decide(cand(confirmed=()), CFG).decision == D.APPROVED
 
 
 def test_approved_when_all_conditions_met():

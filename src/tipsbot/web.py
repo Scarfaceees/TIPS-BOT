@@ -778,7 +778,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div class="p4metrics"><div><span>Šance (C)</span><b>{{ c.p_win }}</b>{% if c.p_push %}<small>vrácení {{ c.p_push }}</small>{% endif %}</div><div><span>Férový kurz</span><b>{{ c.fair_c }}</b><small>konzerv. {{ c.fair_d }}</small></div>
 <div><span>EV</span><b class="{{ 'pos' if c.ev_pos else 'neg' }}">{{ c.ev_c }}</b><small>konzerv. {{ c.ev_d }}</small></div><div><span>Min. kurz</span><b>{{ c.min_odds }}</b></div>
 <div><span>Robustnost</span><b>{{ c.robustness }}/100</b><i class="meter" aria-hidden="true"><i style="width:{{ c.robustness }}%"></i></i></div></div>
-<div class="p4models">{% for k, v in c.models.items() %}<span title="model {{ k }}"><b>{{ k }}</b> {{ v }}</span>{% endfor %}</div>
+<div class="p4models">{% for k, v in c.models.items() %}<span title="model {{ k }}"><b>{{ k }}</b> {{ v }}</span>{% endfor %}{% if c.market %}<span title="férová pravděpodobnost trhu pro přesně tento výběr ({{ c.market.src }})"><b>Trh</b> {{ c.market.p }} · kurz vs trh {{ c.market.ev }}</span>{% endif %}</div>
 <div class="arow"><span class="badge {{ 'tipb' if c.approved else 'warn' if c.decision == 'WATCH' else 'bad' }}">{{ c.decision }}</span>
 <span class="muted">{{ c.source }} · {{ c.quote_status }} · získáno {{ c.quote_time }} ({{ c.quote_age }}){% if c.note %} · {{ c.note }}{% endif %}</span></div>
 {% if c.reasons %}<div class="muted">Proč: {{ c.reasons|join('; ') }}</div>{% endif %}

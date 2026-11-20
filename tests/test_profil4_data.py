@@ -171,7 +171,8 @@ def test_parse_api_odds_markets_and_books():
     item = odds_item(1, ko, {
         "Pinnacle": {"Match Winner": {"Home": 2.1, "Draw": 3.4, "Away": 3.6},
                      "Goals Over/Under": {"Over 2.5": 1.95, "Under 2.5": 1.9},
-                     "Asian Handicap": {"Home -0.75": 2.05, "Away +0.75": 1.85, "Home -0.5,-1": 2.04},
+                     # API-Football: u obou stran handicap DOMACICH ("Away -0.75" = hoste +0.75)
+                     "Asian Handicap": {"Home -0.75": 2.05, "Away -0.75": 1.85, "Home -1,-1.5": 2.40},
                      "Both Teams Score": {"Yes": 1.8, "No": 2.0}, "Exotic": {"foo": 3.0}},
         "Tipsport": {"Match Winner": {"Home": 2.05, "Draw": 3.3, "Away": 3.5}},
     })
@@ -179,6 +180,7 @@ def test_parse_api_odds_markets_and_books():
     keys = {(x.bookmaker, x.key) for x in q}
     assert ("pinnacle", "1X2:1") in keys and ("pinnacle", "OU_2.5:over") in keys
     assert ("pinnacle", "AH_-0.75:home") in keys and ("pinnacle", "AH_-0.75:away") in keys
+    assert ("pinnacle", "AH_-1.25:home") in keys  # zapis "-1,-1.5" = ctvrtinova linie -1.25
     assert ("pinnacle", "BTTS:yes") in keys
     tip = [x for x in q if x.bookmaker == "tipsport"]
     assert tip and all("jinou zemskou verzi" in x.note for x in tip)  # API Tipsport neni automaticky cesky

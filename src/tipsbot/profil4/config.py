@@ -136,6 +136,12 @@ class DecisionConfig:
     sensible_min_odds: float = 1.25  # kategorie A – nejrozumnejsi tip
     suspicious_ev: float = 0.25  # vys = nejspis chyba kurzu/trhu => jen WATCH s upozornenim
     watch_ev: float = 0.0  # WATCH, kdyz EV(C) > watch_ev ale neco chybi
+    # kontrolni vrstva (integrity.py)
+    max_market_edge: float = 0.10  # kurz o vic nez 10 % nad ferovou cenou trhu = extremni, nutne nezavisle potvrzeni
+    confirm_tolerance: float = 0.05  # potvrzeni = jina kancelar s kurzem nejvys o 5 % nizsim
+    max_logit_gap: float = 0.5  # model A vs trh B v log-sancich (pomer sanci ~1.65) – hlavne u outsideru
+    min_book_overround: float = -0.01  # soucet 1/kurz trhu jedne kancelare pod 99 % = kurzy nejsou jeden trh
+    max_book_overround: float = 0.25  # marze nad 25 % = chybny nebo neuplny trh
 
 
 @dataclass(frozen=True)

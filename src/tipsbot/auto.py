@@ -175,6 +175,7 @@ def status(ledger: Ledger) -> dict | None:
 
 def run_forever(factory, settings: Settings = SETTINGS) -> None:
     every = settings.timing.odds_refresh_seconds
+    _start_profil4()
     while True:
         _take_request(factory)
         _set(factory, RUNNING_KEY, utcnow().isoformat())
@@ -187,17 +188,15 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
             _set(factory, RUNNING_KEY, "")
         waited = 0
         while waited < every and not _take_request(factory):  # tlacitko v panelu zkrati cekani
-            _profil4_tick()
             time.sleep(60)
             waited += 60
 
 
-def _profil4_tick() -> None:
-    """Profil 4: zaviraci kurzy pred vykopem a vyhodnoceni po zapase (sam se omezuje, chyba nezastavi automat)."""
+def _start_profil4() -> None:
+    """Profil 4: kurzy pred vykopem a vyhodnoceni po zapase ve vlastnim vlakne – bezi i behem pruchodu automatu."""
     try:
-        from .profil4.closing import tick
+        from .profil4.closing import start_thread
 
-        for n in tick():
-            print(n, flush=True)
+        start_thread(log)
     except Exception:  # noqa: BLE001
-        log.exception("automat: Profil 4 (závěrečné kurzy / vyhodnocení) selhal")
+        log.exception("automat: Profil 4 se nespustil")

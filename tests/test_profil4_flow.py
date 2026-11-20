@@ -198,6 +198,10 @@ def test_history_settle_evaluate_clv():
     later = [O.OddsQuote(FID, "x", t["bookmaker"], t["market"], t["selection"], round(t["odds"] - 0.1, 2), NOW, "api", KO,
                          KO - timedelta(minutes=10)) for t in store.query("SELECT * FROM tips")]
     O.save(store, later)
+    # automat kurzy stahl 5 min pred vykopem a posledni aktualizace byla ta 10 min pred vykopem => zaviraci kurz
+    store.execute("INSERT INTO odds_observations(fixture_id, kickoff, slot_min, observed_at, status, n_quotes, latest_update) "
+                  "VALUES(?,?,?,?,?,?,?)", (FID, KO.isoformat(), 10, (KO - timedelta(minutes=5)).isoformat(), "AVAILABLE",
+                                           len(later), (KO - timedelta(minutes=10)).isoformat()))
     prov2, _, _, _ = make(routes(finished=(2, 1)), clock=Clock(KO + timedelta(hours=3)))
     prov2.client.store = store
     msgs = history.settle(store, prov2, KO + timedelta(hours=3))
@@ -210,7 +214,7 @@ def test_history_settle_evaluate_clv():
     assert set(ev["models"]) >= {"A", "B", "C"} and ev["all"]["n"] == len(rows)
     assert not ev["all"]["significant"]
     txt = report.format_evaluation(ev)
-    assert "nejsou důkazem" in txt and "Brier" in txt
+    assert "málo dat" in txt and "Brier" in txt and "95% interval" in txt
 
 
 def test_settle_void_for_postponed():

@@ -96,10 +96,13 @@ class OddsConfig:
     # Kurz starsi nez tolik minut se nesmi prezentovat jako aktualni.
     max_age_api_min: int = 6 * 60  # API obnovuje po ~3 h; dvojnasobek = zastarale
     max_age_manual_min: int = 120  # rucne opsany kurz plati 2 h
-    # zaviraci kurzy pro CLV: u zapasu s ulozenymi tipy se kurzy stahnou v tomto okne pred vykopem (1 pozadavek
-    # na zapas a obnoveni); automat bota to dela sam, bez skenu
-    closing_window_min: int = 75
-    closing_refresh_min: int = 30
+    # kurzy pred vykopem pro CLV: u zapasu s tipy/predikcemi se stahnou v techto bodech (minut pred vykopem),
+    # kazdy bod 1 pozadavek; automat bota to dela sam, bez skenu (closing.py)
+    closing_slots_min: tuple[int, ...] = (75, 30, 10)
+    # skutecny zaviraci kurz: pozorovan nejvys 20 min pred vykopem A posledni aktualizace u poskytovatele nejvys
+    # 60 min pred vykopem. Jinak jde jen o posledni pozorovany kurz, pripadne zastaraly (poskytovatel neaktualizoval).
+    closing_observed_within_min: int = 20
+    closing_max_source_age_min: int = 60
     # Ostre kancelare pro trzni model (kdyz jsou v datech, maji prednost pred konsensem vsech).
     sharp_books: tuple[str, ...] = ("pinnacle",)
     # Ceske kancelare: kurzy jen z API (kdyz tam jsou), rucne nebo importem. Nikdy se nenahrazuji jinou kanceleri.

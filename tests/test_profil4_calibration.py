@@ -144,19 +144,62 @@ def test_brier_and_log_loss_values():
     assert s["log_loss"] == pytest.approx(-(pytest.importorskip("math").log(0.8) + pytest.importorskip("math").log(0.7)) / 2)
 
 
+def _observe(store, at, latest_update, status="AVAILABLE", n=50, slot=10, note=""):
+    from tipsbot.profil4.store import iso
+
+    store.execute("INSERT INTO odds_observations(fixture_id, kickoff, slot_min, observed_at, status, n_quotes, "
+                  "latest_update, note) VALUES(?,?,?,?,?,?,?,?)",
+                  (FID, iso(KO), slot, iso(at), status, n, iso(latest_update), note))
+
+
+def _settle_with(close_delta, close_at, obs=None):
+    prov, store, _, _ = make()
+    hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000)
+    if close_delta is not None:
+        O.save(store, [O.OddsQuote(FID, "x", t["bookmaker"], t["market"], t["selection"], round(t["odds"] + close_delta, 2),
+                                   close_at, "api", KO, close_at) for t in store.query("SELECT * FROM tips")])
+    for o in obs or []:
+        _observe(store, *o)
+    prov2, _, _, _ = make(routes(finished=(2, 1)), clock=Clock(KO + timedelta(hours=3)))
+    prov2.client.store = store
+    history.settle(store, prov2, KO + timedelta(hours=3))
+    return store, [dict(r) for r in store.query("SELECT * FROM tips")]
+
+
 @pytest.mark.parametrize("delta,status", [(-0.1, history.CLV_POS), (0.3, history.CLV_NEG)])
-def test_clv_positive_and_negative(delta, status):
-    store = _settled_store(close_delta=delta)
-    rows = store.query("SELECT clv, clv_status, closing_time FROM tips")
-    assert rows and all(r["clv_status"] == status and r["closing_time"] for r in rows)
-    assert all((r["clv"] > 0) == (status == history.CLV_POS) for r in rows)
+def test_true_closing_line_gives_clv(delta, status):
+    """Zaviraci kurz: pozorovan 8 min pred vykopem a poskytovatel ho aktualizoval 15 min pred vykopem."""
+    at = KO - timedelta(minutes=15)
+    _, rows = _settle_with(delta, at, [(KO - timedelta(minutes=8), at)])
+    assert rows and all(r["closing_kind"] == history.CK_CLOSING and r["clv_status"] == status for r in rows)
+    assert all((r["clv"] > 0) == (status == history.CLV_POS) and r["clv_last"] is None for r in rows)
 
 
-def test_clv_missing_when_no_later_quote_or_too_old():
-    store = _settled_store(close_delta=None)  # po doporuceni zadny novejsi kurz
-    assert all(r["clv"] is None and r["clv_status"] == history.CLV_MISSING for r in store.query("SELECT * FROM tips"))
-    store = _settled_store(close_at=KO - timedelta(hours=5))  # posledni kurz 5 h pred vykopem neni zaviraci
-    assert all(r["clv"] is None and r["clv_status"].startswith(history.CLV_MISSING) for r in store.query("SELECT * FROM tips"))
+def test_last_observed_quote_is_not_called_closing():
+    """Cerstvy kurz (40 min pred vykopem), ale posledni stazeni 35 min pred vykopem: pozdejsi stav neznamy => zadne CLV."""
+    at = KO - timedelta(minutes=40)
+    _, rows = _settle_with(-0.1, at, [(KO - timedelta(minutes=35), at, "AVAILABLE", 50, 30)])
+    assert all(r["closing_kind"] == history.CK_LAST and r["clv"] is None and r["clv_last"] > 0 for r in rows)
+
+
+def test_provider_not_updating_gives_stale_not_closing():
+    """Stazeno 10 min pred vykopem, ale poskytovatel kurz naposledy aktualizoval 5 h pred vykopem."""
+    at = KO - timedelta(hours=5)
+    _, rows = _settle_with(-0.1, at, [(KO - timedelta(minutes=10), at)])
+    assert all(r["closing_kind"] == history.CK_STALE and r["clv"] is None and "5.0 h" in r["closing_reason"] for r in rows)
+    # zadny novejsi kurz od doporuceni a posledni pozorovani ma stale stejnou aktualizaci
+    _, rows = _settle_with(None, None, [(KO - timedelta(minutes=10), NOW)])
+    assert all(r["closing_kind"] == history.CK_STALE and "neaktualizoval" in r["closing_reason"] for r in rows)
+
+
+def test_missing_closing_has_reason_and_is_not_zero_clv():
+    store, rows = _settle_with(None, None)
+    assert all(r["closing_kind"] == history.CK_MISSING and r["clv"] is None and "nestáhly" in r["closing_reason"]
+               for r in rows)
+    _, rows = _settle_with(None, None, [(KO - timedelta(minutes=10), None, "SKIPPED_BUDGET", 0, 10, "kvóta šetřena")])
+    assert all(r["closing_kind"] == history.CK_MISSING and "kvóta" in r["closing_reason"] for r in rows)
+    s = history.bet_stats(rows)
+    assert s["clv_n"] == 0 and s["avg_clv"] != s["avg_clv"]  # NaN, ne 0
 
 
 def test_clv_detects_line_change():
@@ -172,31 +215,120 @@ def test_clv_detects_line_change():
     assert all(r["clv_status"] == history.CLV_LINE for r in store.query("SELECT * FROM tips"))
 
 
-def test_closing_tick_fetches_odds_only_before_kickoff_and_settles():
+def test_clv_compares_same_book_market_selection_and_line():
+    """Novejsi kurz jine kancelare, jineho vyberu nebo jine linie se jako zaviraci nepouzije."""
+    prov, store, _, _ = make()
+    hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000)
+    t = dict(store.query("SELECT * FROM tips")[0])
+    at = KO - timedelta(minutes=12)
+    other_sel = {"over": "under", "under": "over", "home": "away", "away": "home"}.get(t["selection"], "X")
+    O.save(store, [O.OddsQuote(FID, "x", "jina", t["market"], t["selection"], 9.9, at, "api", KO, at),
+                   O.OddsQuote(FID, "x", t["bookmaker"], t["market"], other_sel, 9.8, at, "api", KO, at)])
+    _observe(store, KO - timedelta(minutes=8), at)
+    cl = history._closing(store, FID, t["bookmaker"], t["market"], t["selection"], KO, history.parse_dt(t["odds_time"]))
+    assert cl["odds"] not in (9.9, 9.8)
+
+
+def _tick_env(prov, store):
+    import tipsbot.profil4.closing as cl
+
+    store.close = lambda: None
+    orig = cl.open_store
+    cl.open_store = lambda cfg=None: store
+    return cl, orig
+
+
+def test_closing_slots_75_30_10_each_once_and_recorded():
     prov, store, _, _ = make()
     hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000)
     calls = []
     real = prov.odds_fixture
 
     def spy(fx, priority="HIGH", force=False):
-        calls.append((fx.id, force))
+        calls.append((fx.id, force, priority))
         return real(fx, priority, force)
 
     prov.odds_fixture = spy
+    cl, orig = _tick_env(prov, store)
     build = lambda: (store, prov)  # noqa: E731
-    store.close = lambda: None
-    cfg = replace(P4, data_dir=P4.data_dir)
-    import tipsbot.profil4.closing as cl
-
-    orig = cl.open_store
-    cl.open_store = lambda cfg=None: store
     try:
-        assert closing.tick(KO - timedelta(hours=5), cfg, build) == []  # mimo okno nic
-        notes = closing.tick(KO - timedelta(minutes=40), cfg, build)
-        assert calls and calls[0] == (FID, True) and notes
-        assert closing.tick(KO - timedelta(minutes=38), cfg, build) == []  # omezeni frekvence
+        assert closing.tick(KO - timedelta(hours=5), P4, build) == []  # mimo okno nic, zadny pozadavek
+        for m in (74, 60, 29, 20, 9, 3):
+            closing.tick(KO - timedelta(minutes=m), P4, build)
+        assert len(calls) == 3 and all(c[1] for c in calls)  # 75, 30 a 10 min – kazdy bod jednou, mimo cache
+        obs = store.query("SELECT slot_min, status, latest_update FROM odds_observations ORDER BY id")
+        assert [o["slot_min"] for o in obs] == [75, 30, 10] and all(o["latest_update"] for o in obs)
+        assert closing.tick(KO + timedelta(minutes=1), P4, build) == [] or len(calls) == 3  # po vykopu uz ne
+        assert len(calls) == 3
     finally:
         cl.open_store = orig
+
+
+def test_missed_slots_caught_up_with_one_request_and_budget_skip_is_recorded():
+    prov, store, _, _ = make()
+    hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000)
+    cl, orig = _tick_env(prov, store)
+    try:
+        prov.client.budget.check = lambda priority="MEDIUM", fixture_id=None, cost=1: type("D", (), {"allowed": False,
+                                                                                            "reason": "rezerva"})()
+        closing.tick(KO - timedelta(minutes=12), P4, lambda: (store, prov))  # zmeskane 75 a 30 => jedno pozorovani
+        obs = store.query("SELECT slot_min, status, note FROM odds_observations")
+        assert {o["slot_min"] for o in obs} == {75, 30} and all(o["status"] == "SKIPPED_BUDGET" for o in obs)
+        assert "kvóta" in obs[0]["note"]
+    finally:
+        cl.open_store = orig
+
+
+def test_approved_tips_fetched_first():
+    from tipsbot.profil4.store import Store, iso
+
+    st = Store()
+    now = KO - timedelta(minutes=70)
+    for fid, dec in ((1, "WATCH"), (2, "APPROVED BET")):
+        st.execute("INSERT INTO tips(fixture_id, match, kickoff, market, selection, probs, odds, bookmaker, odds_source, "
+                   "decision, predicted_at, model_version, config_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (fid, "A - B", iso(KO), "1X2", "1", "{}", 2.0, "p", "api", dec, iso(NOW), "v", "h"))
+    fixtures, _ = closing.due(st, now, P4)
+    assert [f["fixture_id"] for f in fixtures] == [2, 1] and fixtures[0]["approved"]
+
+
+def test_repeated_scans_do_not_duplicate_tips_and_settled_predictions_stay():
+    prov, store, _, _ = make()
+    hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000)
+    n = store.query("SELECT COUNT(*) n FROM tips")[0]["n"]
+    hunter.analyze_fixture(prov, FID, NOW + timedelta(minutes=20), P4, simulations=1_000)
+    assert store.query("SELECT COUNT(*) n FROM tips")[0]["n"] == n  # vc. BEST AVAILABLE (WATCH)
+    prov2, _, _, _ = make(routes(finished=(2, 1)), clock=Clock(KO + timedelta(hours=3)))
+    prov2.client.store = store
+    history.settle(store, prov2, KO + timedelta(hours=3))
+    before = [tuple(r) for r in store.query("SELECT model, market, selection, p, outcome FROM predictions ORDER BY id")]
+    an = hunter.analyze_fixture(prov, FID, NOW + timedelta(minutes=40), P4, simulations=1_000, record=False)
+    history.record_predictions(store, an, P4)
+    after = [tuple(r) for r in store.query("SELECT model, market, selection, p, outcome FROM predictions ORDER BY id")]
+    assert before == after  # vyhodnocene predikce se uz nemeni
+
+
+def test_duplicate_tip_rows_count_as_one_bet():
+    rows = [{"id": 1, "fixture_id": 7, "market": "OU_2.5", "selection": "under", "result": "won", "profit": 2.2,
+             "decision": "WATCH"},
+            {"id": 2, "fixture_id": 7, "market": "OU_2.5", "selection": "under", "result": "won", "profit": 2.2,
+             "decision": "WATCH"}]
+    bets, dups = history.unique_bets(rows)
+    assert len(bets) == 1 and dups == 1
+
+
+def test_cluster_bootstrap_widens_interval_for_correlated_tips():
+    """10 zapasu po 5 tipech se stejnym vysledkem: interval po zapasech musi byt sirsi nez pri nezavislosti."""
+    rows = [{"fixture_id": f, "profit": (1.0 if f % 2 else -1.0)} for f in range(10) for _ in range(5)]
+    _, lo, hi = history.cluster_ci(history._clusters(rows, lambda r: r["profit"]))
+    _, lo2, hi2 = history.cluster_ci({i: (r["profit"], 1.0) for i, r in enumerate(rows)})
+    assert (hi - lo) > (hi2 - lo2) * 1.5
+
+
+def test_significance_needs_interval_not_just_100_matches():
+    assert history.verdict(-0.05, 0.08, 150).startswith("neprůkazné")  # 150 zapasu, interval pres nulu
+    assert history.verdict(0.01, 0.08, 150) == "průkazně kladné"
+    assert history.verdict(0.01, 0.08, 12).startswith("málo dat")
 
 
 # --- 4. data leakage ----------------------------------------------------------

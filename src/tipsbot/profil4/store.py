@@ -68,12 +68,18 @@ CREATE TABLE IF NOT EXISTS predictions (
     UNIQUE(fixture_id, market, selection, model, model_version)
 );
 CREATE INDEX IF NOT EXISTS predictions_fixture ON predictions(fixture_id);
+CREATE TABLE IF NOT EXISTS odds_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL, kickoff TEXT, slot_min INTEGER NOT NULL,
+    observed_at TEXT NOT NULL, status TEXT NOT NULL, n_quotes INTEGER NOT NULL, latest_update TEXT, note TEXT
+);
+CREATE INDEX IF NOT EXISTS observations_fixture ON odds_observations(fixture_id);
 """
 
 # sloupce pridane pozdeji (ALTER TABLE u existujicich databazi)
 LATER_COLUMNS = {
     "tips": {"odds_fetched_at": "TEXT", "odds_age_min": "REAL", "odds_status": "TEXT", "p_market": "REAL",
-             "clv_status": "TEXT", "closing_time": "TEXT"},
+             "clv_status": "TEXT", "closing_time": "TEXT", "closing_kind": "TEXT", "closing_reason": "TEXT",
+             "clv_last": "REAL"},
 }
 
 

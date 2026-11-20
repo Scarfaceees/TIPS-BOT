@@ -214,51 +214,76 @@ def format_scan(rep: ScanReport) -> str:
     return "\n".join(L)
 
 
-def format_evaluation(ev: dict) -> str:
-    L = ["PROFIL 4 – VYHODNOCENÍ", "=" * 60, "Modely (1X2):"]
-    if not ev["models"]:
-        L.append("  zatím žádné vyhodnocené předpovědi")
-    for name, m in ev["models"].items():
-        L.append(f"  {name}: n={m['n']}, Brier {m['brier']:.4f}, log loss {m['log_loss']:.4f}")
-    a = ev["all"]
-    L += ["", f"Tipy celkem: n={a['n']}, zisk {a['profit']:+.2f} j., yield {pct(a['yield'])}, ROI {pct(a['roi'])} "
-          f"(na 100 j.), úspěšnost {pct(a['win_rate'])}, průměrné CLV {pct(a['avg_clv'])} (z {a['clv_n']})"]
-    if a.get("yield_ci95"):
-        L.append(f"  95% interval yieldu: {pct(a['yield_ci95'][0])} až {pct(a['yield_ci95'][1])}")
-    if not a["significant"]:
-        L.append("  POZOR: méně než 100 vyhodnocených tipů – výsledky nejsou důkazem dlouhodobé profitability.")
-    for g, rows in ev["groups"].items():
-        L += ["", f"Podle: {g}"]
-        for k, s in rows.items():
-            L.append(f"  {k}: n={s['n']}, zisk {s['profit']:+.2f}, yield {pct(s['yield'])}, úspěšnost {pct(s['win_rate'])}, "
-                     f"CLV {pct(s['avg_clv'])}")
-    if ev.get("clv_status"):
-        L += ["", "CLV (kurz při doporučení vs. závěrečný kurz stejné kanceláře na stejný trh):"]
-        L += [f"  {k}: {v}" for k, v in ev["clv_status"].items()]
-    L += format_calibration(ev.get("calibration")) + format_data_quality(ev.get("data_quality"))
-    return "\n".join(L)
+def _ci(ci, f=pct) -> str:
+    return f"{f(ci[0])} až {f(ci[1])}" if ci else "–"
 
 
 def _f(x, fmt=".4f") -> str:
     return "–" if x is None or (isinstance(x, float) and math.isnan(x)) else format(x, fmt)
 
 
+def format_evaluation(ev: dict) -> str:
+    a = ev["all"]
+    L = ["PROFIL 4 – ÚSPĚŠNOST MODELŮ", "=" * 60,
+         "Průkaznost se posuzuje podle 95% intervalu (bootstrap po zápasech – tipy i předpovědi z jednoho zápasu",
+         "nejsou nezávislé), ne podle samotného počtu zápasů. Pod 30 zápasy se o průkaznosti nerozhoduje.",
+         "", "CELKEM – TIPY (jedna sázka = jeden výběr jednoho zápasu, 1 j. vklad)",
+         f"  nezávislých zápasů {a['matches']}, vyhodnocených tipů {a['n']}"
+         + (f" (opakovaně uložených výběrů vyřazeno: {ev['duplicates']})" if ev.get("duplicates") else ""),
+         f"  zisk {a['profit']:+.2f} j. · yield {pct(a['yield'])} (95% interval {_ci(a['yield_ci95'])}) · "
+         f"ROI {pct(a['roi'])} na 100 j. · úspěšnost {pct(a['win_rate'])}",
+         f"  stav: {a['yield_status']}",
+         f"  CLV proti skutečnému závěrečnému kurzu: {pct(a['avg_clv'])} z {a['clv_n']} tipů "
+         f"(95% interval {_ci(a['clv_ci95'])}) – {a['clv_status']}"]
+    if a.get("clv_last_n"):
+        L.append(f"  jen orientačně, NE závěrečný kurz – proti poslednímu pozorovanému/zastaralému kurzu: "
+                 f"{pct(a['avg_clv_last'])} z {a['clv_last_n']} tipů")
+    if ev.get("clv_status"):
+        L.append("  srovnávací kurz: " + ", ".join(f"{k} {v}" for k, v in ev["clv_status"].items()))
+    if ev.get("closing_reasons"):
+        L.append("  proč chybí závěrečný kurz:")
+        L += [f"    {k} ({v}×)" for k, v in ev["closing_reasons"].items()]
+    L += format_calibration(ev.get("calibration"))
+    if ev["models"]:
+        L += ["", "Starší přehled 1X2 (tabulka forecasts):"]
+        L += [f"  {name}: n={m['n']}, Brier {m['brier']:.4f}, log loss {m['log_loss']:.4f}" for name, m in ev["models"].items()]
+    L += ["", "=" * 60, "ROZPAD TIPŮ (orientační – skupiny mají málo zápasů)"]
+    for g, rows in ev["groups"].items():
+        rows = {k: s for k, s in rows.items() if s["n"]}
+        if not rows:
+            continue
+        L += ["", f"Podle: {g}"]
+        for k, s in rows.items():
+            L.append(f"  {k}: {s['matches']} záp./{s['n']} tipů, zisk {s['profit']:+.2f}, yield {pct(s['yield'])} "
+                     f"({_ci(s['yield_ci95'])}), CLV {pct(s['avg_clv'])} – {s['yield_status']}")
+    if not any(s["n"] for rows in ev["groups"].values() for s in rows.values()):
+        L.append("  zatím žádné vyhodnocené tipy")
+    L += format_data_quality(ev.get("data_quality"))
+    return "\n".join(L)
+
+
 def format_calibration(cal: dict | None) -> list[str]:
     if not cal:
         return []
-    L = ["", "=" * 60, "KALIBRACE MODELŮ (všechny trhy s kurzem, poslední předpověď před výkopem)"]
+    L = ["", "=" * 60, "CELKEM – KALIBRACE MODELŮ (všechny trhy s kurzem, poslední předpověď před výkopem)"]
     if not cal["models"]:
         return L + ["  zatím žádné vyhodnocené předpovědi – sbírají se při každém skenu, vyhodnotí se po zápase"]
-    L.append(f"  vyhodnocených zápasů: {cal['matches']} (průkazné až od 100 zápasů; jeden zápas = mnoho korelovaných trhů)")
+    L.append(f"  nezávislých zápasů {cal['matches']}, předpovědí {cal.get('predictions', '–')} (na model a trh jedna)")
     for name, m in cal["models"].items():
-        L.append(f"  {name}: n={m['n']} ({m['matches']} záp.), Brier {_f(m['brier'])}, log loss {_f(m['log_loss'])}, "
-                 f"průměr předpovědi {pct(m['mean_p'])} vs. skutečnost {pct(m['rate'])}"
-                 + ("" if m.get("significant", True) else " – neprůkazné"))
+        line = (f"  {name}: {m['matches']} záp./{m['n']} předpovědí · Brier {_f(m['brier'])} ({_ci(m.get('brier_ci95'), _f)}) · "
+                f"log loss {_f(m['log_loss'])} ({_ci(m.get('log_loss_ci95'), _f)}) · předpověď {pct(m['mean_p'])} "
+                f"vs. skutečnost {pct(m['rate'])}")
+        vm = m.get("vs_market")
+        if vm:
+            line += (f"\n      proti trhu bez marže na stejných {vm['n']} předpovědích: rozdíl log loss {vm['diff']:+.4f} "
+                     f"({_ci(vm['ci95'], lambda x: format(x, '+.4f'))}) – {vm['status']}")
+        L.append(line)
     for name, curve in cal["curves"].items():
         if curve:
-            L.append(f"  křivka {name}: " + "; ".join(f"{r['bin']} → {r['actual']:.0%} (n={r['n']})" for r in curve))
+            L.append(f"  kalibrační křivka {name}: " + "; ".join(f"{r['bin']} → {r['actual']:.0%} (n={r['n']})" for r in curve))
+    L += ["", "ROZPAD KALIBRACE (orientační; log loss, počet zápasů)"]
     for gname, per_model in cal["by"].items():
-        L += ["", f"  Podle: {gname} (log loss; n zápasů)"]
+        L += [f"  Podle: {gname}"]
         keys = sorted({k for m in per_model.values() for k in m})
         for k in keys:
             parts = [f"{name} {_f(per_model[name][k]['log_loss'])}" for name in per_model if k in per_model[name]]
@@ -283,4 +308,10 @@ def format_data_quality(dq: dict | None) -> list[str]:
     if dq["market_covered"]:
         L.append("  trh s aktuálními kurzy (cena trhu ověřitelná): " +
                  ", ".join(f"{k} {c}/{n}" for k, (c, n) in dq["market_covered"].items()))
+    if dq.get("observations"):
+        L.append(f"  stažení kurzů před výkopem: {dq['observations']} (" +
+                 ", ".join(f"{k} {v}" for k, v in dq["observations_status"].items()) + ")")
+        if dq.get("obs_update_age_h") is not None:
+            L.append(f"  poslední aktualizace u poskytovatele při nejpozdějším stažení: medián "
+                     f"{dq['obs_update_age_h']:.1f} h před výkopem")
     return L

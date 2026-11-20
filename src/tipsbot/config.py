@@ -163,6 +163,10 @@ class TimingConfig:
     # a pod touto rezervou kreditu uz jen prepocitava z ulozenych kurzu.
     auto_odds_hours: int = 24
     auto_credit_reserve: int = 50
+    # Ranni analyza: kazdy den v tuto hodinu (cesky cas) probehne pruchod automatu i sken Profilu 4 na 48 h;
+    # kurzy souteze se pri nem obnovi, kdyz jsou starsi nez auto_morning_odds_hours (porad nejvys ~1x denne).
+    auto_morning_hour: int = 7
+    auto_morning_odds_hours: int = 6
     # Tip plati do vykopu (nejdele tuto dobu); hlida ho minimalni kurz.
     tip_validity_seconds: int = 24 * 3600
 

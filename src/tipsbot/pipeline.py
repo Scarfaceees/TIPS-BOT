@@ -472,6 +472,7 @@ def _attach_nhl_reports(league, events, ledger, now, absences, checked, live, se
         return
     season = nhl_data.current_goalie_season(now.date())
     clubs: dict[str, dict] = {}
+    league_stats = nhl_api.fetch_league(season) if events else None
     for ev in events:
         abbrs = {"home": nhl_abbr(ev.home), "away": nhl_abbr(ev.away)}
         sections = sections_by_match.setdefault(ev.match_id, [])
@@ -483,7 +484,8 @@ def _attach_nhl_reports(league, events, ledger, now, absences, checked, live, se
                 clubs[abbr] = nhl_api.fetch_club(abbr, season)
             news, rumours = teamreport.collect_news(name + " NHL")
             rep = nhl_api.build_nhl_report(abbr, name, clubs[abbr], now.date(), side, abbrs[opp_side],
-                                           context.for_match(absences, name, name), news, rumours, checked)
+                                           context.for_match(absences, name, name), news, rumours, checked,
+                                           league_stats)
             ledger.save_team_report(name, rep)
             sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
 

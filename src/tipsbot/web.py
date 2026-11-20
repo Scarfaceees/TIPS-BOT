@@ -121,8 +121,10 @@ table.bets td{vertical-align:middle}
 .sec2{font-size:12px;color:var(--muted)}.sec2.gap{color:var(--warn);font-weight:700}
 .setgrid{columns:2 460px;column-gap:20px}.setgrid>section{break-inside:avoid;margin-bottom:6px}.setgrid>section>h2{margin-top:0}
 @media(max-width:1250px){.cols{grid-template-columns:1fr}.cols>aside,.cols>.colmain{grid-column:1;grid-row:auto}.cols>aside .stats{grid-template-columns:repeat(4,1fr)}}
-.mgrid.one{grid-template-columns:1fr}.mgrid.one .czbox{display:none}
-@media(max-width:1000px){.mgrid{grid-template-columns:1fr}}
+.mgrid.one{grid-template-columns:minmax(0,1fr)}.mgrid.one .czbox{display:none}
+/* polozky mrizky se nesmi roztahnout podle siroke tabulky (jinak karta tabulku orizne a nejde posouvat) */
+.mgrid>*,.cols>*{min-width:0}.tablewrap{max-width:100%;min-width:0}
+@media(max-width:1000px){.mgrid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:720px){.cols>aside .stats{grid-template-columns:repeat(2,1fr)}.stats{grid-template-columns:repeat(2,1fr)}.tip{grid-template-columns:1fr}.big{text-align:left}
 .ms{grid-template-columns:44px 1fr 14px}.ms .rc{grid-column:2;text-align:left}.chips{margin-left:0;width:100%}}
 /* rozbalovani a stav automatu */
@@ -155,7 +157,10 @@ input,select,textarea{font-size:16px}button{padding:11px 16px;font-size:15px}but
 .prof{flex:0 0 auto;max-width:72vw;scroll-snap-align:start;padding:8px 12px}.prof small{display:none}.prof .pst{display:block;font-size:12px}
 .setgrid{columns:1}label{flex-basis:100%}.czgrid label,.scorebox label.sc{flex-basis:0}.scorebox label.sc{flex:1 1 70px}
 .ms{grid-template-columns:44px 1fr 14px;gap:8px;padding:10px 12px}.ms .rc{font-size:13px}
-main table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:13px}td,th{padding:6px}
+main table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch;font-size:13px;max-width:100%}td,th{padding:6px}
+main table:not(.bets) tr>:first-child{position:sticky;left:0;z-index:1;background:var(--card);box-shadow:1px 0 0 var(--line)}
+main tr.best>:first-child{background:#f4f9ff}
+main button{max-width:100%;white-space:normal}
 table.mk td:first-child{min-width:110px}table.mk tr>:nth-child(3),table.mk tr>:nth-child(4){display:none}
 table.bets{display:block}table.bets tr:first-child{display:none}
 table.bets tr{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;padding:10px 2px;border-bottom:1px solid var(--line)}

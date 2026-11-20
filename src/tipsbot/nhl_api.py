@@ -116,13 +116,79 @@ def rest_info(rows: list[dict], as_of: date) -> list[str]:
     return lines
 
 
+NHL_STATS = "https://api.nhle.com/stats/rest/en"
+
+
+def fetch_league(season: int, timeout: int = 20) -> dict:
+    """Tabulka (api-web.nhle.com/v1/standings/now) a tymove statistiky sezony (api.nhle.com/stats/rest):
+    {"standings": {zkratka: radek}, "summary": {zkratka: radek}}. Jedno stazeni na sken; chyba = prazdna cast."""
+    from .names import nhl_abbr
+
+    out: dict = {"standings": {}, "summary": {}}
+    try:
+        for row in _get("standings/now", timeout).get("standings", []):
+            ab = (row.get("teamAbbrev") or {}).get("default")
+            if ab:
+                out["standings"][ab] = row
+    except Exception as e:  # noqa: BLE001
+        log.warning("NHL API standings nedostupne: %s", e)
+    try:
+        r = requests.get(f"{NHL_STATS}/team/summary", params={"cayenneExp": f"seasonId={season}{season + 1} and gameTypeId=2"},
+                         headers={"User-Agent": "tipsbot"}, timeout=timeout)
+        r.raise_for_status()
+        for row in r.json().get("data", []):
+            ab = nhl_abbr(row.get("teamFullName", ""))
+            if ab:
+                out["summary"][ab] = row
+    except Exception as e:  # noqa: BLE001
+        log.warning("NHL stats REST team/summary nedostupne: %s", e)
+    return out
+
+
+def _wlo(row: dict, prefix: str = "") -> str:
+    w, l, o = (row.get(f"{prefix}{k}" if prefix else k[0].lower() + k[1:]) for k in ("Wins", "Losses", "OtLosses"))
+    return f"{w}-{l}-{o}"
+
+
+def league_lines(abbr: str, league: dict | None) -> tuple[list[str], list[str]]:
+    """(radky sekce 'Tabulka a statistiky', co chybi). V-P-PP = vyhry, prohry, prohry po prodl./najezdech."""
+    if not league:
+        return [], ["tabulka a statistiky týmu (NHL API nedostupné)"]
+    lines, missing = [], []
+    s = league.get("standings", {}).get(abbr)
+    if s:
+        lines.append(f"{s.get('leagueSequence', '?')}. v NHL ({s.get('divisionName', '')}: {s.get('divisionSequence', '?')}.), "
+                     f"{s.get('points', 0)} b. z {s.get('gamesPlayed', 0)} zápasů ({s.get('pointPctg', 0):.1%} bodů), "
+                     f"skóre {s.get('goalFor', 0)}:{s.get('goalAgainst', 0)}")
+        lines.append(f"bilance V-P-PP {_wlo(s)}, z toho výher v základní době {s.get('regulationWins', 0)}; "
+                     f"posledních 10: {s.get('l10Wins', 0)}-{s.get('l10Losses', 0)}-{s.get('l10OtLosses', 0)}"
+                     + (f"; série {s['streakCode']}{s.get('streakCount', '')}" if s.get("streakCode") else ""))
+        lines.append(f"doma {s.get('homeWins', 0)}-{s.get('homeLosses', 0)}-{s.get('homeOtLosses', 0)}, "
+                     f"venku {s.get('roadWins', 0)}-{s.get('roadLosses', 0)}-{s.get('roadOtLosses', 0)}")
+    else:
+        missing.append("pořadí v tabulce")
+    t = league.get("summary", {}).get(abbr)
+    if t:
+        lines.append(f"přesilovky {t.get('powerPlayPct') or 0:.1%}, oslabení {t.get('penaltyKillPct') or 0:.1%}, "
+                     f"vhazování {t.get('faceoffWinPct') or 0:.1%}")
+        lines.append(f"střely na zápas {t.get('shotsForPerGame') or 0:.1f} : {t.get('shotsAgainstPerGame') or 0:.1f}, "
+                     f"góly na zápas {t.get('goalsForPerGame') or 0:.2f} : {t.get('goalsAgainstPerGame') or 0:.2f}")
+    else:
+        missing.append("speciální formace a střely")
+    return lines, missing
+
+
 def build_nhl_report(abbr: str, display: str, club: dict, as_of: date, venue: str, opponent: str | None = None,
                      absences: list[Absence] | None = None, news: list[str] | None = None,
-                     rumours: list[str] | None = None, absence_checked: bool = False) -> dict:
+                     rumours: list[str] | None = None, absence_checked: bool = False, league: dict | None = None) -> dict:
     """Analyza jednoho NHL tymu ve stejnem tvaru jako u fotbalu (viz teamreport.build_team_report)."""
     games = [r for r in club.get("games", []) if r["date"] < as_of]
     sections: list[dict] = []
     missing: list[str] = []
+    lines, miss = league_lines(abbr, league)
+    if lines:
+        sections.append({"title": "Tabulka a statistiky týmu (NHL API)", "lines": lines})
+    missing += miss
     if games:
         form = list(reversed(games[-6:]))
         sections.append({"title": f"Forma (posledních {len(form)}): {_summary(form)}", "lines": [_fmt(r) for r in form]})

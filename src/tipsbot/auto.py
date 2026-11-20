@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .config import SETTINGS, Settings
 from .storage import Ledger, utcnow
@@ -23,6 +23,7 @@ VERIFY_KEY = "auto:last_verify"
 RUNNING_KEY = "auto:running"  # cas zacatku behu (panel ukazuje, ze automat prave pracuje)
 REQUEST_KEY = "auto:request"  # tlacitko v panelu: spustit hned
 SCORES_KEY = "auto:scores:"
+MORNING_KEY = "auto:last_morning"  # datum (cesky cas) posledni ranni analyzy
 
 
 def _due(ledger: Ledger, key: str, now: datetime, every: timedelta) -> bool:
@@ -30,14 +31,29 @@ def _due(ledger: Ledger, key: str, now: datetime, every: timedelta) -> bool:
     return not raw or now - datetime.fromisoformat(raw) >= every
 
 
-def wants_fresh_odds(ledger: Ledger, league: str, now: datetime, settings: Settings = SETTINGS) -> bool:
+def wants_fresh_odds(ledger: Ledger, league: str, now: datetime, settings: Settings = SETTINGS,
+                     morning: bool = False) -> bool:
     cached = ledger.odds_cache(league)
     if cached is None:
         return True
     when, _, credits = cached
     if credits is not None and credits < settings.timing.auto_credit_reserve:
         return False
-    return now - when >= timedelta(hours=settings.timing.auto_odds_hours)
+    hours = settings.timing.auto_morning_odds_hours if morning else settings.timing.auto_odds_hours
+    return now - when >= timedelta(hours=hours)
+
+
+def local_now(now_utc: datetime) -> datetime:
+    from zoneinfo import ZoneInfo
+
+    aware = now_utc if now_utc.tzinfo else now_utc.replace(tzinfo=timezone.utc)
+    return aware.astimezone(ZoneInfo("Europe/Prague"))
+
+
+def morning_due(ledger: Ledger, now: datetime, settings: Settings = SETTINGS) -> bool:
+    """Je cas ranni analyzy (od auto_morning_hour ceskeho casu) a dnes jeste neprobehla?"""
+    loc = local_now(now)
+    return loc.hour >= settings.timing.auto_morning_hour and ledger._get(MORNING_KEY, "") != loc.date().isoformat()
 
 
 def settle_from_scores(ledger: Ledger, now: datetime, settings: Settings = SETTINGS) -> list[str]:
@@ -76,16 +92,23 @@ def settle_from_scores(ledger: Ledger, now: datetime, settings: Settings = SETTI
     return notes
 
 
-def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS, verify: bool = True) -> list[str]:
-    """Jeden pruchod automatu. Kazda cast ma vlastni transakci, aby panel nemusel dlouho cekat na databazi."""
+def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS, verify: bool = True,
+             morning: bool = False) -> list[str]:
+    """Jeden pruchod automatu. Kazda cast ma vlastni transakci, aby panel nemusel dlouho cekat na databazi.
+
+    `morning` = ranni analyza: data se obnovi vzdy a kurzy kazde souteze se zapasem do 48 h, kdyz jsou starsi
+    nez auto_morning_odds_hours."""
     from . import pipeline
     from .settlement import settle_everything
 
     now = now or utcnow()
-    notes: list[str] = []
+    notes: list[str] = ["ranní analýza zápasů na 48 h"] if morning else []
     with factory() as s:
         led = Ledger(s)
-        if _due(led, REFRESH_KEY, now, timedelta(hours=24)):
+        if morning:
+            led._set(MORNING_KEY, local_now(now).date().isoformat())
+            s.commit()
+        if morning or _due(led, REFRESH_KEY, now, timedelta(hours=24)):
             notes += [f"data {n}" for n in pipeline.refresh_data(led)]
             led._set(REFRESH_KEY, now.isoformat())
             s.commit()
@@ -94,7 +117,7 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
             led = Ledger(s)
             try:
                 rep = pipeline.scan_league(league, led, now=now, settings=settings,
-                                           cache_only=not wants_fresh_odds(led, league, now, settings))
+                                           cache_only=not wants_fresh_odds(led, league, now, settings, morning))
                 s.commit()
                 notes.append(rep.summary())
             except Exception as e:  # noqa: BLE001 - chyba jedne souteze nesmi zastavit ostatni
@@ -117,6 +140,16 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
         except Exception as e:  # noqa: BLE001
             s.rollback()
             notes.append(f"výsledky z kurzového API: chyba ({e})")
+    with factory() as s:
+        led = Ledger(s)
+        try:
+            from . import nhl_settle
+
+            notes += nhl_settle.settle_paper(led, now)
+            s.commit()
+        except Exception as e:  # noqa: BLE001
+            s.rollback()
+            notes.append(f"vyhodnocení NHL: chyba ({e})")
     if verify:
         notes += weekly_verify(factory, now)
     from .oddsapi import redact
@@ -180,7 +213,9 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
         _take_request(factory)
         _set(factory, RUNNING_KEY, utcnow().isoformat())
         try:
-            for n in run_once(factory, settings=settings):
+            with factory() as s:
+                morning = morning_due(Ledger(s), utcnow(), settings)
+            for n in run_once(factory, settings=settings, morning=morning):
                 print(n, flush=True)
         except Exception:  # noqa: BLE001 - automat bezi dal
             log.exception("automat: pruchod selhal")
@@ -188,6 +223,9 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
             _set(factory, RUNNING_KEY, "")
         waited = 0
         while waited < every and not _take_request(factory):  # tlacitko v panelu zkrati cekani
+            with factory() as s:
+                if morning_due(Ledger(s), utcnow(), settings):
+                    break  # ranni analyza nepocka na konec sestihodinoveho intervalu
             time.sleep(60)
             waited += 60
 

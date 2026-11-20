@@ -113,18 +113,74 @@ def tick(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> li
     return notes
 
 
-def start_thread(log=None, every_s: int = 60) -> threading.Thread:
-    """Samostatne vlakno: kontrola kazdou minutu i behem dlouheho pruchodu automatu (napr. tydenni overeni)."""
-    def loop():
+MORNING_MAX_REQUESTS = 500  # strop pozadavku ranniho skenu (denni kvota API-Football je 7 500; rezervy plati dal)
+MORNING_DEEP_MAX = 200  # hloubkove se rozebere kazdy zapas okna
+
+
+def morning_scan(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> list[str]:
+    """Kazde rano (od auto_morning_hour ceskeho casu, jednou denne): sken na 48 h s hloubkovou analyzou VSECH
+    zapasu sledovanych soutezi. Ulozi tipy i predikce (kalibrace) a vysledek ukaze v panelu jako posledni sken."""
+    import json
+    from dataclasses import replace
+    from zoneinfo import ZoneInfo
+
+    from ..config import SETTINGS
+
+    if not cfg.enabled:
+        return []
+    now = now or utcnow()
+    day = now.astimezone(ZoneInfo("Europe/Prague"))
+    if day.hour < SETTINGS.timing.auto_morning_hour:
+        return []
+    store = open_store(cfg)
+    try:
+        if store.get("auto_morning_scan") == day.date().isoformat():
+            return []
+        started = parse_dt(store.get("auto_morning_started") or None)
+        if started is not None and now - started < timedelta(hours=3):
+            return []  # prave bezi (nebo selhal pred chvili) – dalsi pokus nejdriv po 3 h, at se neplytva kvotou
+        store.set("auto_morning_started", iso(now))
+    finally:
+        store.close()
+    big = replace(cfg, hunter=replace(cfg.hunter, deep_max=MORNING_DEEP_MAX),
+                  budget=replace(cfg.budget, max_per_run=MORNING_MAX_REQUESTS))
+    if build is None:
+        from .cli import build as cli_build
+
+        def build():
+            return cli_build(None, big)
+    from . import hunter, report, view
+
+    st, prov = build()
+    try:
+        rep = hunter.run_scan(prov, "upcoming", now, big, hours=SETTINGS.timing.analysis_hours, deep_all=True)
+        st.set("web_last_report", report.format_scan(rep))
+        st.set("web_last_view", json.dumps(view.scan(rep), ensure_ascii=False, default=str))
+        st.set("auto_morning_scan", day.date().isoformat())  # hotovo az po dobehnuti (restart uprostred = novy pokus)
+        verdict = rep.overall.verdict if rep.overall else "bez analýzy"
+        return [f"Profil 4 – ranní sken 48 h: {rep.fixtures} zápasů, hloubkově {len(rep.analyses)}, verdikt {verdict}, "
+                f"kvóta dnes {rep.budget.get('used', '?')}/{rep.budget.get('limit', '?')}"] + rep.notes[:5]
+    finally:
+        st.close()
+
+
+def start_thread(log=None, every_s: int = 60) -> list[threading.Thread]:
+    """Dve samostatna vlakna, kazde kontroluje kazdou minutu i behem dlouheho pruchodu automatu:
+    kurzy pred vykopem + vyhodnoceni, a ranni sken. Ranni sken trva desitky minut (hloubkova analyza vsech
+    zapasu), proto nesmi blokovat stahovani kurzu tesne pred vykopem."""
+    def loop(fn, what):
         while True:
             try:
-                for n in tick():
+                for n in fn():
                     print(n, flush=True)
             except Exception:  # noqa: BLE001 - chyba Profilu 4 nesmi zastavit automat
                 if log:
-                    log.exception("automat: Profil 4 (kurzy před výkopem / vyhodnocení) selhal")
+                    log.exception("automat: Profil 4 (%s) selhal", what)
             time.sleep(every_s)
 
-    t = threading.Thread(target=loop, name="profil4-closing", daemon=True)
-    t.start()
-    return t
+    threads = [threading.Thread(target=loop, args=(tick, "kurzy před výkopem / vyhodnocení"), name="profil4-closing",
+                                daemon=True),
+               threading.Thread(target=loop, args=(morning_scan, "ranní sken"), name="profil4-morning", daemon=True)]
+    for t in threads:
+        t.start()
+    return threads

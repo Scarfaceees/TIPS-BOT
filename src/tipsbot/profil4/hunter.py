@@ -104,14 +104,16 @@ def quick_scan(provider: DataProvider, fixtures: list[Fixture], now: datetime, c
     return out
 
 
-def _pick_deep(quick: list[QuickResult], cfg: Profil4Config, manual_ids: set[int]) -> list[QuickResult]:
-    cands = [q for q in quick if q.candidate or q.fixture.id in manual_ids]
+def _pick_deep(quick: list[QuickResult], cfg: Profil4Config, manual_ids: set[int], deep_all: bool = False) -> list[QuickResult]:
+    """Zapasy k hloubkove analyze: kandidati z rychleho pruchodu (nebo vsechny zapasy okna pri deep_all)."""
+    cands = [q for q in quick if deep_all or q.candidate or q.fixture.id in manual_ids]
     cands.sort(key=lambda q: (q.fixture.id not in manual_ids, q.competition.priority if q.competition else 9, -q.signal))
     return cands[:max(cfg.hunter.deep_max, len(manual_ids & {q.fixture.id for q in cands}))]
 
 
 def run_scan(provider: DataProvider, mode: str, now: datetime, cfg: Profil4Config, hours: int | None = None,
-             news_fetcher=None, deep: bool = True, record=True, simulations: int | None = None) -> ScanReport:
+             news_fetcher=None, deep: bool = True, record=True, simulations: int | None = None,
+             deep_all: bool = False) -> ScanReport:
     """DAILY (dnesni zapasy) nebo UPCOMING (okno `hours`)."""
     provider.client.reset_run()
     notes = []
@@ -140,7 +142,7 @@ def run_scan(provider: DataProvider, mode: str, now: datetime, cfg: Profil4Confi
     analyses = []
     if deep:
         comps = {c.league_id: c for c in provider.competitions()}
-        for q in _pick_deep(quick, cfg, manual):
+        for q in _pick_deep(quick, cfg, manual, deep_all):
             if provider.client.budget.check("HIGH", q.fixture.id).allowed is False:
                 notes.append(f"{q.fixture.name}: hloubková analýza vynechána – {provider.client.budget.check('HIGH').reason}")
                 continue

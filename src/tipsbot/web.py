@@ -1285,10 +1285,11 @@ def create_app(database_url: str | None = None) -> Flask:
     def _p4_run(fn, view=None):
         """Spusti akci Profilu 4; `fn` vraci vysledek, `view` z nej udela karty pro panel (text zustava jako zaloha)."""
         from .profil4.cli import build
+        from .profil4.store import utcnow as p4_now  # Profil 4 pocita s casem vcetne pasma (UTC)
 
         store, prov = build(database_url)
         try:
-            now = utcnow()
+            now = p4_now()
             res = fn(store, prov, now)
             text = res if view is None else view[0](res, now)
             store.set("web_last_report", text)

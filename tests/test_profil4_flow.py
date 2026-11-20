@@ -326,6 +326,26 @@ def test_web_panel_profil4_cards_with_scan_and_analysis(tmp_path, monkeypatch):
     assert "Zatím žádný sken" not in html
 
 
+def test_web_panel_profil4_scan_button_runs(tmp_path, monkeypatch):
+    """Tlacitka skenu v panelu projdou se skutecnymi hodinami (cas s pasmem, ne 'naive' datetime)."""
+    from tipsbot.profil4 import config as c4
+    import tipsbot.profil4.cli as p4cli
+
+    cfg = c4.Profil4Config(data_dir=tmp_path)
+    monkeypatch.setattr(p4cli, "build", lambda db=None, cfg=cfg: _real_build(db, cfg, key="K"))
+    from tipsbot.web import create_app
+
+    c = create_app(f"sqlite:///{tmp_path}/w.db").test_client()
+    for mode in ("upcoming", "daily"):
+        html = c.post("/profil4/scan", data={"mode": mode}, follow_redirects=True).get_data(as_text=True)
+        assert "Chyba skenu" not in html and "Sken hotový" in html
+    assert "Rychlý průchod" in html  # zapasy z API se opravdu nacetly a prosly filtrem casu
+    for url, data in (("/profil4/odds", {"fixture_id": str(FID), "odds": "1X2 | 2.1 3.3 3.6"}),
+                      ("/profil4/analyze", {"fixture_id": str(FID)}), ("/profil4/settle", {}), ("/profil4/evaluate", {})):
+        html = c.post(url, data=data, follow_redirects=True).get_data(as_text=True)
+        assert "offset-naive" not in html and "Chyba" not in html, url
+
+
 def test_web_panel_profil4_unavailable(tmp_path, monkeypatch):
     import tipsbot.profil4.cli as p4cli
 
@@ -340,11 +360,11 @@ def test_web_panel_profil4_unavailable(tmp_path, monkeypatch):
     assert r.status_code == 200 and "Profil 4 není dostupný" in html and "Dnešní sken" in html
 
 
-def _real_build(db, cfg):
+def _real_build(db, cfg, key=""):
     from tipsbot.profil4.apiclient import ApiFootballClient
     from tipsbot.profil4.provider import DataProvider
     from tipsbot.profil4.store import Store
 
     store = Store(cfg.db_path)
-    client = ApiFootballClient(store, cfg, key="", transport=FakeTransport(routes()), sleep=lambda s: None)
+    client = ApiFootballClient(store, cfg, key=key, transport=FakeTransport(routes()), sleep=lambda s: None)
     return store, DataProvider(client)

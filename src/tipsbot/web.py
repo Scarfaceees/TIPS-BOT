@@ -176,6 +176,47 @@ table.cardt td[data-l]::before{content:attr(data-l) " ";color:var(--muted);font-
 table.cardt td:last-child:has(details){flex:1 0 100%}table.cardt .badge{border-radius:6px;font-size:11px}
 }
 
+/* trhy: tabulka na pocitaci, karty s filtrem na mobilu (do 768 px) */
+.mcards,.mfilt{display:none}
+/* tabulka trhu ma celou sirku zapasu (ceske kurzy jsou nepovinne, formular je pod ni) – bez vodorovneho posunu */
+.mgrid{grid-template-columns:minmax(0,1fr)!important}table.mk th{white-space:normal;vertical-align:bottom}
+table.mk td{white-space:normal!important}table.mk td .muted{font-size:12px}table.mk td,table.mk th{padding:7px 5px}
+table.p4mk td,table.p4mk th{white-space:normal}
+/* rozhoduje skutecna sirka seznamu trhu: kdyz se tabulka nevejde (napr. tablet s postrannim panelem), jsou karty */
+.mlist{container-type:inline-size}
+@container (max-width:520px){.mtable{display:none!important}.mcards{display:block!important}.mfilt{display:flex!important}}
+@media(max-width:900px){main .grid2:has(table){grid-template-columns:minmax(0,1fr)}}
+/* dalsi kombinace v uzkem pravem panelu: radky jako kompaktni bloky na vsech sirkach */
+table.combot,table.combot tbody{display:block}table.combot tr:first-child{display:none}
+table.combot tr{display:flex;flex-wrap:wrap;gap:2px 12px;padding:8px 2px;border-bottom:1px solid var(--line)}
+table.combot td{border:0;padding:0;text-align:left;position:static!important;box-shadow:none!important}table.combot td:first-child{flex:1 0 100%}
+table.combot td[data-l]::before{content:attr(data-l) " ";color:var(--muted)}
+.mcard{border:1px solid var(--line);border-radius:12px;background:var(--card);margin:8px 0;box-shadow:var(--shadow)}
+.mcard>summary{list-style:none;cursor:pointer;padding:12px 14px;display:block}.mcard>summary::-webkit-details-marker{display:none}
+.mcard.rec{border:2px solid var(--acc);background:linear-gradient(180deg,var(--accbg),var(--card) 70%)}
+.mcard .eyebrow{display:block;margin-bottom:4px;color:var(--acc)}
+.mc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}.mc-head b{font-size:15px;line-height:1.3;min-width:0;overflow-wrap:anywhere}.mc-head .badge{flex:0 0 auto}
+.mc-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin-top:10px}
+.mc-grid>div{min-width:0}.mc-grid span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.mc-grid b{display:block;font-size:17px}.mc-grid small{display:block;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.mc-more{display:inline-block;margin-top:10px;font-size:13px;font-weight:650;color:var(--acc)}.mc-more::after{content:" ▾"}
+.mcard[open] .mc-more::after{content:" ▴"}
+.mc-det{padding:0 14px 14px;border-top:1px solid var(--line)}.mc-sub{margin:12px 0 6px;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.mc-models{display:flex;flex-wrap:wrap;gap:6px}.mc-models span{background:#f1f6fd;border-radius:8px;padding:5px 9px;font-size:13px}
+.mc-books{list-style:none;margin:0;padding:0}.mc-books li{display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:14px}
+.mc-books li span{min-width:0;overflow-wrap:anywhere}.mc-books small{color:var(--muted)}
+td .mc-det{border:0;padding:6px 0 0;min-width:280px;white-space:normal}
+.warnt{color:var(--warn)}.p4h{margin:18px 0 6px}
+.mfilt{gap:6px;flex-wrap:wrap;margin:2px 0 8px}.chip{background:#edf3fb;color:#29415f;border:1px solid var(--line);border-radius:999px;padding:7px 12px;font-size:14px;box-shadow:none;min-height:36px}
+.chip small{opacity:.7;margin-left:2px}.chip.on{background:var(--acc);color:#fff;border-color:var(--acc)}.chip:disabled{opacity:.4;cursor:default;transform:none}
+.mc-more-list>summary{padding:10px 2px;font-weight:650}
+@media(max-width:768px){
+.mtable{display:none}.mcards{display:block}.mfilt{display:flex}
+main table.mkt,main table.mkt tbody{display:table;width:100%;table-layout:fixed}main table.mkt tr{display:table-row}
+main table.mkt td,main table.mkt th{white-space:normal;overflow-wrap:anywhere;position:static;box-shadow:none}
+.p4nowrap td,.p4nowrap th{white-space:normal}.p4nowrap td.num{white-space:normal}
+}
+
 /* TIPS BOT — HYBRID PREMIUM DESIGN SYSTEM */
 :root{color-scheme:light;--bg:#edf3fb;--card:#fff;--line:#dce6f3;--text:#14243d;--muted:#667892;--ok:#09865d;--okbg:#e4f7ef;--bad:#d44b59;--badbg:#fff0f1;--acc:#1769dc;--accbg:#e8f1ff;--warn:#a56a08;--warnbg:#fff5df;--navy:#071a32;--navy2:#0c2b50;--shadow:0 8px 24px rgba(19,52,91,.07)}
 html{background:var(--bg)}body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:linear-gradient(135deg,#f4f8fd 0%,#eaf1fa 100%);color:var(--text);font-size:14px;min-height:100vh}
@@ -346,6 +387,52 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <td class="num {{ 'pos' if r.cz_ev is not none and r.cz_ev > 0 else 'neg' if r.cz_ev is not none else '' }}">{{ '%+.1f %%'|format(r.cz_ev * 100) if r.cz_ev is not none else ('%+.1f %%'|format(r.ev_pct) if r.status != 'model' else '–') }}</td>
 <td>{% if r.cz_ok %}<span class="badge tipb">VSADIT</span>{% elif r.cz_suspect %}<span class="badge warn" title="čekaný zisk nad 15 % – zkontroluj, že kurz patří k tomuto trhu">ověř kurz</span>{% elif r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VÝHODNÉ</span>{% elif r.cz %}<span class="badge bad">nízký kurz</span>{% endif %}</td></tr>{% endmacro %}
 
+{% macro mbadge(r) %}{% if r.cz_ok %}<span class="badge tipb">VSADIT</span>{% elif r.cz_suspect %}<span class="badge warn" title="čekaný zisk nad 15 % – zkontroluj, že kurz patří k tomuto trhu">ověř kurz</span>{% elif r.status == 'tip' %}<span class="badge tipb">TIP</span>{% elif r.status == 'value' %}<span class="badge">VÝHODNÉ</span>{% elif r.cz %}<span class="badge bad">nízký kurz</span>{% endif %}{% endmacro %}
+
+{% macro mfilter(cats) %}<div class="mfilt" role="group" aria-label="Filtr trhů">{% for k, nm in market_cats %}{% set n = cats|length if k == 'all' else cats|select('equalto', k)|list|length %}<button type="button" class="chip{{ ' on' if k == 'all' }}" data-cat="{{ k }}" aria-pressed="{{ 'true' if k == 'all' else 'false' }}" {{ 'disabled' if not n }}>{{ nm }} <small>{{ n }}</small></button>{% endfor %}</div>{% endmacro %}
+
+{% macro mcard(r, v, rec=False) %}{% set priced = r.status != 'model' %}<details class="mcard{{ ' rec' if rec }}" data-cat="{{ r.market|mcat }}">
+<summary>{% if rec %}<span class="eyebrow">Doporučený trh</span>{% endif %}<div class="mc-head"><b>{{ r.label }}</b>{{ mbadge(r) }}</div>
+<div class="mc-grid"><div><span>Šance</span><b>{{ '%.0f'|format(r.p_final * 100) }} %</b></div>
+<div><span>Sázet od</span>{% if not priced %}<b>{{ '%.2f'|format(r.min_odds) }}</b>{% else %}<b class="muted">–</b><small>kurz je v nabídce</small>{% endif %}</div>
+<div><span>Kurz</span>{% if r.cz %}<b>{{ '%.2f'|format(r.cz[0]) }}</b><small>{{ r.cz[1] }}</small>{% elif priced %}<b>{{ '%.2f'|format(r.best_odds) }}</b><small>{{ r.best_book }}</small>{% else %}<b class="muted">–</b>{% endif %}</div>
+<div><span>Stav kurzu</span>{% if r.cz %}<b class="pos">česká kanc.</b>{% elif priced %}<b class="pos">v nabídce</b><small>zahraničí</small>{% else %}<b class="warnt">zatím není</b><small>jen cílový kurz</small>{% endif %}</div></div>
+<span class="mc-more">Detail</span></summary>
+<div class="mc-det"><div class="mc-sub">Modely</div><div class="mc-models">
+<span><b>Model bota</b> {{ '%.1f'|format(r.p_model * 100) }} %</span>{% if r.p_second is not none %}<span><b>2. model</b> {{ '%.1f'|format(r.p_second * 100) }} %</span>{% endif %}
+{% if priced %}<span><b>Trh bez marže</b> {{ '%.1f'|format(r.p_market * 100) }} %</span>{% endif %}<span><b>Výsledná</b> {{ '%.1f'|format(r.p_final * 100) }} %</span></div>
+<div class="mc-grid"><div><span>Férový kurz</span><b>{{ '%.2f'|format(r.fair_odds) }}</b></div>
+<div><span>Čekaný zisk</span>{% if r.cz_ev is not none %}<b class="{{ 'pos' if r.cz_ev > 0 else 'neg' }}">{{ '%+.1f %%'|format(r.cz_ev * 100) }}</b><small>s českým kurzem</small>{% elif priced %}<b class="{{ 'pos' if r.ev_pct > 0 else 'neg' }}">{{ '%+.1f %%'|format(r.ev_pct) }}</b>{% else %}<b class="muted">–</b>{% endif %}</div>
+<div><span>Min. kurz</span><b>{{ '%.2f'|format(r.min_odds) if not priced else '–' }}</b></div></div>
+{% if r.offers %}<div class="mc-sub">Kurzy kanceláří</div><ul class="mc-books">{% for b, o in r.offers %}<li><span>{{ b }}</span><b>{{ '%.2f'|format(o) }}</b></li>{% endfor %}</ul>{% elif priced %}<div class="muted">Nejlepší kurz: {{ '%.2f'|format(r.best_odds) }} ({{ r.best_book }})</div>{% endif %}
+{% set gap = r.p_second is not none and (r.p_second - r.p_model)|abs >= second_gap %}
+{% if gap or r.cz_suspect or not priced %}<div class="p4risk">Rizika: {% if gap %}modely se rozcházejí ({{ '%.0f'|format(r.p_model * 100) }} % vs {{ '%.0f'|format(r.p_second * 100) }} %); {% endif %}{% if r.cz_suspect %}čekaný zisk nad 15 % – ověř, že kurz patří k tomuto trhu; {% endif %}{% if not priced %}šance jen z modelu, trh ji nepotvrdil{% endif %}</div>{% endif %}
+{% if r.note %}<div class="muted">Proč: {{ r.note }}</div>{% endif %}</div></details>{% endmacro %}
+
+{% macro p4det(c) %}<div class="mc-sub">Modely A–D</div><div class="mc-models">{% for k, val in c.models.items() %}<span><b>{{ k }}</b> {{ val }}</span>{% endfor %}{% if c.market %}<span title="{{ c.market.src }}"><b>Trh</b> {{ c.market.p }}</span>{% endif %}</div>
+<div class="mc-grid"><div><span>Férový kurz</span><b>{{ c.fair_c }}</b><small>konzerv. {{ c.fair_d }}</small></div><div><span>EV</span><b class="{{ 'pos' if c.ev_pos else 'neg' }}">{{ c.ev_c }}</b><small>konzerv. {{ c.ev_d }}</small></div>
+<div><span>Min. kurz</span><b>{{ c.min_odds }}</b></div><div><span>Robustnost</span><b>{{ c.robustness }}/100</b></div></div>
+{% if c.offers %}<div class="mc-sub">Kurzy kanceláří</div><ul class="mc-books">{% for o in c.offers %}<li><span>{{ o.book }}<small> · {{ o.status|lower }} · {{ o.time }}</small></span><b>{{ o.odds }}</b></li>{% endfor %}</ul>{% endif %}
+{% if c.risks %}<div class="p4risk">Rizika: {{ c.risks|join('; ') }}</div>{% endif %}
+{% if c.reasons %}<div class="muted">Důvody rozhodnutí: {{ c.reasons|join('; ') }}</div>{% endif %}
+<div class="muted">{{ c.source }} · kurz z {{ c.quote_time }} (stáří {{ c.quote_age }})</div>{% endmacro %}
+
+{% macro p4badge(c) %}<span class="badge {{ 'tipb' if c.approved else 'warn' if c.decision == 'WATCH' else 'bad' }}">{{ c.decision }}</span>{% endmacro %}
+
+{% macro p4card(c, rec=False) %}<details class="mcard{{ ' rec' if rec }}" data-cat="{{ c.market_code|mcat }}">
+<summary>{% if rec %}<span class="eyebrow">Doporučený trh</span>{% endif %}<div class="mc-head"><b>{{ c.label }}</b>{{ p4badge(c) }}</div>
+<div class="mc-grid"><div><span>Šance (C)</span><b>{{ c.p_win }}</b></div><div><span>Min. kurz</span><b>{{ c.min_odds }}</b></div>
+<div><span>Kurz</span><b>{{ c.odds }}</b><small>{{ c.book }}</small></div><div><span>Stav kurzu</span><b class="{{ 'pos' if c.quote_status == 'AKTUÁLNÍ' else 'warnt' }}">{{ c.quote_status|lower }}</b><small>EV {{ c.ev_c }}</small></div></div>
+<span class="mc-more">Detail</span></summary><div class="mc-det">{{ p4det(c) }}</div></details>{% endmacro %}
+
+{% macro p4markets(ms, rec_key='') %}{% if ms %}{% set rec = (ms|selectattr('key', 'equalto', rec_key)|first) if rec_key else none %}
+<div class="mlist" data-mlist>{{ mfilter(ms|map(attribute='market_code')|map('mcat')|list) }}
+<div class="mtable tablewrap"><table class="mkt p4mk"><tr><th>Trh</th><th class="num">Šance (C)</th><th class="num">Min. kurz</th><th class="num">Kurz</th><th>Stav kurzu</th><th class="num">EV</th><th>Rozhodnutí</th><th></th></tr>
+{% for c in ms %}<tr data-cat="{{ c.market_code|mcat }}" class="{{ 'best' if c.key == rec_key }}"><td>{{ c.label }}</td><td class="num">{{ c.p_win }}</td><td class="num">{{ c.min_odds }}</td><td class="num"><b>{{ c.odds }}</b> <span class="muted">{{ c.book }}</span></td>
+<td>{{ c.quote_status|lower }}</td><td class="num {{ 'pos' if c.ev_pos else 'neg' }}">{{ c.ev_c }}</td><td>{{ p4badge(c) }}</td><td><details class="fold"><summary>Detail</summary><div class="mc-det">{{ p4det(c) }}</div></details></td></tr>{% endfor %}</table></div>
+<div class="mcards">{% if rec %}{{ p4card(rec, True) }}{% endif %}{% for c in ms if c.key != rec_key %}{{ p4card(c) }}{% endfor %}</div>
+<div class="mempty muted" hidden>V této kategorii nejsou žádné trhy.</div></div>{% endif %}{% endmacro %}
+
 {% macro page_head(eyebrow, title, desc='') %}<header class="page-head"><span class="eyebrow">{{ eyebrow }}</span><h2>{{ title }}</h2>{% if desc %}<p>{{ desc }}</p>{% endif %}</header>{% endmacro %}
 
 {% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
@@ -427,9 +514,9 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
   <div class="muted" style="margin-top:6px">Sázet jen, pokud kancelář dá celkový kurz alespoň <b>{{ '%.2f'|format(c.min_odds) }}</b>. Každá sázka je z jiného zápasu.</div></div>
 {% else %}<div class="card muted">Zatím není z čeho tiket složit – potřebuju aspoň dvě příležitosti s hodnotou z různých zápasů.</div>{% endfor %}
 {% if combos|length > 1 %}<details class="fold card"><summary>Další kombinace ({{ combos|length - 1 }})</summary>
-<div class="tablewrap"><table><tr><th>Sázky</th><th class="num">Kurz</th><th class="num">Šance</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th class="num">Min. kurz</th><th class="num">Vklad</th></tr>
+<div class="tablewrap"><table class="combot"><tr><th>Sázky</th><th class="num">Kurz</th><th class="num">Šance</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th class="num">Min. kurz</th><th class="num">Vklad</th></tr>
 {% for c in combos[1:] %}<tr><td>{% for lg in c.legs %}<div><b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">{{ lg.local }}</span></div>{% endfor %}</td>
-<td class="num"><b>{{ '%.2f'|format(c.odds) }}</b></td><td class="num">{{ '%.1f'|format(c.prob * 100) }} %</td><td class="num">{{ '%+.1f'|format(c.ev_pct) }} %</td><td class="num">{{ '%.2f'|format(c.min_odds) }}</td><td class="num">{{ '%.0f'|format(c.stake) }}</td></tr>{% endfor %}
+<td class="num" data-l="kurz"><b>{{ '%.2f'|format(c.odds) }}</b></td><td class="num" data-l="šance">{{ '%.1f'|format(c.prob * 100) }} %</td><td class="num" data-l="zisk">{{ '%+.1f'|format(c.ev_pct) }} %</td><td class="num" data-l="min. kurz">{{ '%.2f'|format(c.min_odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(c.stake) }}</td></tr>{% endfor %}
 </table></div></details>{% endif %}
 </aside><div class="colmain dashboard-main-column">
 {% if bets %}
@@ -514,11 +601,15 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
     {% for lg in pc.legs if lg.match != v.name %}<b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }}{% endfor %}
     <span class="muted">→ celkový kurz {{ '%.2f'|format(pc.odds) }}, šance {{ '%.1f'|format(pc.prob * 100) }} %, čekaný zisk {{ '%+.1f'|format(pc.ev_pct) }} %, vklad {{ '%.0f'|format(pc.stake) }} {{ cur }}</span></div>{% endif %}{% endif %}
 
-  <div class="mgrid{{ ' one' if v.league in leagues and leagues[v.league].sport.value == 'nhl' }}"><div><div class="tablewrap"><table class="mk"><tr><th>Trh</th><th class="num">Šance</th><th class="num" title="nezávislý druhý model (penaltyblog) jako kontrola">2. model</th><th class="num" title="kurz, který odpovídá skutečné šanci – bez marže, kterou si bere sázková kancelář">Bez marže</th><th class="num">Sázet od</th><th class="num">Zahraničí</th><th class="num">Česká kancelář</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th></th></tr>
+  <div class="mgrid{{ ' one' if v.league in leagues and leagues[v.league].sport.value == 'nhl' }}"><div class="mlist" data-mlist>{{ mfilter(v.rows|map(attribute='market')|map('mcat')|list) }}<div class="mtable tablewrap"><table class="mk"><tr><th>Trh</th><th class="num">Šance</th><th class="num" title="nezávislý druhý model (penaltyblog) jako kontrola">2. model</th><th class="num" title="kurz, který odpovídá skutečné šanci – bez marže, kterou si bere sázková kancelář">Bez marže</th><th class="num">Sázet od</th><th class="num">Zahraničí</th><th class="num">Česká kancelář</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th></th></tr>
   {% for r in v.main_rows %}{{ mrow(r, v) }}{% endfor %}</table></div>
-  {% if v.more_rows %}<details class="fold"><summary>Další trhy podle modelu ({{ v.more_rows|length }})</summary>
+  {% if v.more_rows %}<details class="fold mtable"><summary>Další trhy podle modelu ({{ v.more_rows|length }})</summary>
   <div class="tablewrap"><table class="mk"><tr><th>Trh</th><th class="num">Šance</th><th class="num" title="nezávislý druhý model (penaltyblog) jako kontrola">2. model</th><th class="num" title="kurz, který odpovídá skutečné šanci – bez marže, kterou si bere sázková kancelář">Bez marže</th><th class="num">Sázet od</th><th class="num">Zahraničí</th><th class="num">Česká kancelář</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th></th></tr>
   {% for r in v.more_rows %}{{ mrow(r, v) }}{% endfor %}</table></div></details>{% endif %}
+  {% set recr = v.rows[v.recommended] if v.recommended is not none else (v.rows[v.target] if v.target is not none else none) %}
+  <div class="mcards">{% if recr %}{{ mcard(recr, v, True) }}{% endif %}{% for r in v.main_rows if r is not sameas recr %}{{ mcard(r, v) }}{% endfor %}
+  {% if v.more_rows %}<details class="fold mc-more-list"><summary>Další trhy podle modelu ({{ v.more_rows|length }})</summary>{% for r in v.more_rows if r is not sameas recr %}{{ mcard(r, v) }}{% endfor %}</details>{% endif %}</div>
+  <div class="mempty muted" hidden>V této kategorii nejsou žádné trhy.</div>
 
   </div><div class="czbox"><b>Kurzy z české kanceláře</b>
   <form method="post" action="{{ url_for('czech_odds_match') }}" class="czf" data-prefill='{{ v.cz_books|tojson }}'>
@@ -851,6 +942,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div class="section-heading"><div><span class="eyebrow">{{ v.league }} · {{ v.kickoff }} · {{ v.status }}</span><h2>{{ v.name }}</h2></div><span class="muted">id {{ v.fixture_id }} · kvalita dat {{ v.quality }}</span></div>
 {{ p4verdict(v) }}
 {% for t in v.tips if t.title == 'SCHVÁLENO' %}{{ p4tip(t.tip, t.title) }}{% endfor %}
+{% if v.markets %}<h3 class="p4h">Všechny trhy ({{ v.markets|length }})</h3>{{ p4markets(v.markets, v.markets[0].key if v.markets[0].approved else (v.best_available.key if v.best_available else '')) }}{% endif %}
 <div class="grid2">
 <div class="card"><h3>Modely (1X2: domácí / remíza / hosté)</h3>{% if v.models %}<div class="tablewrap"><table class="mkt p4nowrap"><tr><th>Model</th><th class="num">Pravděpodobnost</th><th class="num">Férové kurzy</th></tr>
 {% for m in v.models %}<tr><td><b>{{ m.name }}</b><div class="muted">{{ m.note }}</div></td>{% if m.probs %}<td class="num">{{ m.probs|join(' / ') }}</td><td class="num">{{ m.fair|join(' / ') }}</td>{% else %}<td class="muted" colspan="2">nedostupný</td>{% endif %}</tr>{% endfor %}</table></div>{% else %}<div class="muted">Modely nejsou k dispozici.</div>{% endif %}</div>
@@ -873,7 +965,8 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% if n.notes %}<ul class="help">{% for x in n.notes %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}</div>
 {% for m in n.matches %}<details class="card fold" {{ 'open' if m.approved }}><summary><b>{{ m.kickoff }}</b> {{ m.name }} – <span class="badge {{ 'tipb' if m.verdict == 'APPROVED BET' else 'warn' if m.verdict == 'WATCH' else 'bad' }}">{{ m.verdict }}</span></summary>
 <div class="muted">{{ m.explanation }}</div><div class="muted">Brankáři: {{ m.goalies }} · kvalita dat {{ m.quality }} %</div>
-{% for c in m.approved %}{{ p4tip(c, 'APPROVED BET') }}{% else %}{% if m.best %}{{ p4tip(m.best, 'BEST AVAILABLE – není schválená sázka') }}{% endif %}{% endfor %}</details>
+{% for c in m.approved %}{{ p4tip(c, 'APPROVED BET') }}{% else %}{% if m.best %}{{ p4tip(m.best, 'BEST AVAILABLE – není schválená sázka') }}{% endif %}{% endfor %}
+{% if m.markets %}<details class="fold"><summary>Všechny trhy ({{ m.markets|length }})</summary>{{ p4markets(m.markets, m.best.key if m.best else '') }}</details>{% endif %}</details>
 {% endfor %}{% if p4.nhl_report %}<details class="fold card"><summary>Textový výstup NHL</summary><pre class="p4pre">{{ p4.nhl_report }}</pre></details>{% endif %}
 {% else %}<div class="card muted">NHL zatím nebylo rozebráno – udělá to automat při dalším průchodu.</div>{% endif %}
 
@@ -989,6 +1082,14 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
    sel.hidden=sel.disabled=!o;if(txt){txt.hidden=txt.disabled=!!o;txt.required=!o}
    (o||[]).forEach(function(x){var e=document.createElement('option');e.value=x[0];e.textContent=x[1];sel.appendChild(e)});}
   src.addEventListener('change',upd);upd();});
+ // trhy: filtr kategorii (karty na mobilu i radky tabulky); prazdna kategorie = zprava, nic se nevymysli
+ document.querySelectorAll('[data-mlist]').forEach(function(box){
+  var bar=box.querySelector('.mfilt');if(!bar)return;
+  bar.addEventListener('click',function(e){var b=e.target.closest('button[data-cat]');if(!b||b.disabled)return;var k=b.dataset.cat,shown=0;
+   bar.querySelectorAll('button').forEach(function(x){var on=x===b;x.classList.toggle('on',on);x.setAttribute('aria-pressed',on?'true':'false')});
+   box.querySelectorAll('.mcard[data-cat],tr[data-cat]').forEach(function(c){var ok=k=='all'||c.dataset.cat==k;c.hidden=!ok;if(ok&&c.matches('.mcard'))shown++});
+   box.querySelectorAll('.mc-more-list').forEach(function(d){var any=d.querySelector('.mcard:not([hidden])');d.hidden=!any;if(k!='all'&&any)d.open=true});
+   var em=box.querySelector('.mempty');if(em)em.hidden=shown>0;});});
  // brankari NHL: nabidka podle vybraneho tymu
  document.querySelectorAll('select[data-roster]').forEach(function(sel){
   var r=JSON.parse(sel.dataset.roster),team=sel.form.elements.team;
@@ -1155,6 +1256,28 @@ def _track_markets(picks) -> list[dict]:
     return sorted(rows, key=lambda r: -r["n"])
 
 
+MARKET_CATS = (("all", "Vše"), ("goly", "Góly"), ("1x2", "1X2"), ("tymy", "Týmy"), ("karty", "Karty"),
+               ("rohy", "Rohy"), ("handicap", "Handicap"))
+
+
+def market_cat(market: str | None) -> str:
+    """Kategorie trhu pro mobilni filtr (jen zarazeni existujicich trhu, nic se nevytvari)."""
+    m = (market or "").upper()
+    if m.startswith("ROHY_"):
+        return "rohy"
+    if m.startswith("KARTY_"):
+        return "karty"
+    if m.startswith(("AH_", "PUCKLINE")):
+        return "handicap"
+    if m.startswith(("TTH_", "TTA_", "H_", "A_")):
+        return "tymy"
+    if m in ("1X2", "DC", "DNB", "MONEYLINE", "REG", "OT"):
+        return "1x2"
+    if m.startswith(("OU", "BTTS", "G")):
+        return "goly"
+    return "jine"
+
+
 def _bet(market: str | None, selection: str | None, match: str | None = "") -> str:
     """Citelny nazev sazky ('Under 2.5 gólů' misto 'OU_2.5 under'); neznamy trh zustane, jak je."""
     if not market:
@@ -1189,6 +1312,8 @@ def create_app(database_url: str | None = None) -> Flask:
     app = Flask(__name__)
     factory = make_session_factory(database_url)
     app.add_template_filter(_bet, "bet")
+    app.add_template_filter(market_cat, "mcat")
+    app.jinja_env.globals["market_cats"] = MARKET_CATS
     app.secret_key = os.urandom(24)  # jen pro zpravu po presmerovani; po restartu se nic dulezitého neztratí
     valid_tabs = {k for k, *_ in TABS}
 

@@ -11,6 +11,7 @@ _DROP = {"fc", "cf", "ac", "as", "sc", "afc", "ssc", "us", "rc", "cd", "ud", "sv
 
 # normalizovany nazev z kurzoveho API -> nazev ve football-data.co.uk
 _ALIASES = {
+    "stade brestois 29": "Brest",  # API-Football; kurzove API i football-data pisou Brest
     "manchester united": "Man United",
     "manchester city": "Man City",
     "wolverhampton wanderers": "Wolves",

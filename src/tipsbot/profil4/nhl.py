@@ -493,7 +493,8 @@ def view(scan: NHLScan) -> dict:
         rows.append({"fixture_id": an.fixture.id, "kickoff": local(an.fixture.kickoff), "name": an.fixture.name,
                      "verdict": s.verdict, "explanation": s.explanation, "goalies": an.goalies,
                      "quality": round(100 * an.coverage.quality()), "best": V.candidate(best, scan.when) if best else None,
-                     "approved": [V.candidate(c, scan.when) for c in s.approved[:5]]})
+                     "approved": [V.candidate(c, scan.when) for c in s.approved[:5]],
+                     "markets": V.markets(an.candidates, an.quotes, scan.when)})
     return {"when": local(scan.when), "odds_time": local(scan.odds_time) if scan.odds_time else "",
             "notes": scan.notes, "matches": rows, "approved": sum(len(r["approved"]) for r in rows)}
 

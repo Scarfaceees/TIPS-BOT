@@ -9,7 +9,7 @@ from datetime import datetime
 
 from . import mathcore
 from .analysis import MatchAnalysis
-from .decision import APPROVED, CAT_A, CAT_B, CAT_C, Candidate
+from .decision import APPROVED, CAT_A, CAT_B, CAT_C, ORDER, Candidate
 from .hunter import ScanReport
 from .report import STATUS_CZ, age, local, odds_s, pct
 from .stress import Robustness
@@ -38,6 +38,25 @@ def candidate(c: Candidate, now: datetime) -> dict:
         "market": ({"p": pct(c.p_market), "ev": pct(c.ev_market), "src": c.market_src}
                    if c.p_market is not None else None),
     }
+
+
+def markets(cands: list[Candidate], quotes: list, now: datetime, limit_books: int = 8) -> list[dict]:
+    """Vsechny trhy zapasu pro panel (tabulka na pocitaci, karty na mobilu): kandidat + kurzy vsech kancelari
+    na presne tentyz vyber (posledni kurz kazde kancelare, nejvyssi nahore). Jen zobrazeni – nic se nepocita znovu."""
+    by_key: dict[str, dict] = {}
+    for q in quotes:
+        cur = by_key.setdefault(q.key, {}).get(q.bookmaker)
+        if cur is None or q.stamp >= cur.stamp:
+            by_key[q.key][q.bookmaker] = q
+    out = []
+    for c in sorted(cands, key=lambda c: (ORDER.get(c.decision, 9), -c.ev_c)):
+        d = candidate(c, now)
+        books = sorted(by_key.get(c.key, {}).values(), key=lambda q: -q.odds)[:limit_books]
+        d["offers"] = [{"book": q.bookmaker, "odds": odds_s(q.odds), "status": q.status(now, _cfg().odds),
+                        "time": local(q.stamp)} for q in books]
+        d["market_code"] = c.market
+        out.append(d)
+    return out
 
 
 def _categories(sel, now: datetime) -> list[dict]:
@@ -112,6 +131,7 @@ def analysis(an: MatchAnalysis, now: datetime | None = None) -> dict:
                     for f in an.context.by(kind)],
         "narrative": an.context.narrative, "models": models, "mc": mc,
         "stress": candidate(top[0], now) if top else None, "tips": tips, "categories": _categories(an.selection, now),
+        "markets": markets(an.candidates, an.quotes, now),
         "verdict": an.selection.verdict, "explanation": an.selection.explanation,
         "best_available": candidate(an.selection.best_available, now) if an.selection.best_available else None,
         "notes": list(dict.fromkeys(an.notes)),

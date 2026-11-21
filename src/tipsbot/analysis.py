@@ -27,6 +27,7 @@ class Row:
     note: str = ""
     min_odds: float = 0.0  # u trhu bez kurzu: od jakeho kurzu se vyplati sazet
     p_second: float | None = None  # druhy model (penaltyblog) jako kontrola; None = neni k dispozici
+    offers: list = field(default_factory=list)  # [[kancelar, kurz], ...] nejvyssi kurzy (jen pro zobrazeni)
 
 
 @dataclass
@@ -113,7 +114,8 @@ def build_view(
         view.rows.append(
             Row(c.market, c.selection, label(c.market, c.selection, home, away), c.p_model, c.p_market, a.prob,
                 1.0 / c.p_market, best.odds, best.bookmaker, a.ev * 100.0, status, note,
-                p_second=(second or {}).get(f"{c.market}:{c.selection}"))
+                p_second=(second or {}).get(f"{c.market}:{c.selection}"),
+                offers=[[o.bookmaker, o.odds] for o in sorted(c.offers, key=lambda o: -o.odds)[:8]])
         )
     if not view.rows:
         return None

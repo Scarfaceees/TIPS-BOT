@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -134,11 +134,28 @@ def save(ledger, picks: list[Pick]) -> None:
     ledger._set(KEY, json.dumps([asdict(p) for p in picks], ensure_ascii=False))
 
 
-def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime) -> Pick | None:
-    """Profil se simulaci trhu (marketsim)."""
+ANALYSES_KEY = "paper_sim_analyses"  # rozbory Profilu 3 u kazdeho zapasu, i kdyz sazku nenasel
+
+
+def load_analyses(ledger) -> dict[str, dict]:
+    raw = ledger._get(ANALYSES_KEY, "")
+    return json.loads(raw) if raw else {}
+
+
+def _save_analysis(ledger, league: str, ev, info: dict, now: datetime) -> None:
+    data = {k: v for k, v in load_analyses(ledger).items()
+            if datetime.fromisoformat(v["kickoff"]) > now - timedelta(days=2)}  # odehrane se po 2 dnech mazou
+    data[ev.match_id] = {**info, "league": league, "name": ev.name, "kickoff": ev.kickoff.isoformat(), "t": now.isoformat()}
+    ledger._set(ANALYSES_KEY, json.dumps(data, ensure_ascii=False))
+
+
+def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime, ledger=None) -> Pick | None:
+    """Profil se simulaci trhu (marketsim). Rozbor se ulozi i bez sazky (panel: proc sazku nenasel)."""
     cfg = marketsim.SimConfig(min_odds=pr.min_odds or marketsim.DEFAULT.min_odds,
                               max_odds=pr.max_odds or marketsim.DEFAULT.max_odds)
-    sp = marketsim.best_pick(ev.match_id, model, entries, cfg)
+    sp, info = marketsim.analyse(ev.match_id, model, entries, cfg)
+    if ledger is not None:
+        _save_analysis(ledger, league, ev, info, now)
     if sp is None:
         return None
     return Pick(
@@ -168,13 +185,17 @@ def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: da
     )
 
 
-def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings) -> Pick | None:
-    """Vyber s nejvyssim cekanym ziskem podle pravidel profilu."""
+def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings,
+          ledger=None, extra: list | None = None) -> Pick | None:
+    """Vyber s nejvyssim cekanym ziskem podle pravidel profilu. `extra` = dalsi trhy (median API-Football) jen pro
+    simulaci trhu – ta potrebuje co nejvic linii, ostatni profily zustavaji u svych kurzu."""
     entries = [e for e in entries if e.market.startswith(PROPS) == pr.props]
+    if pr.method == "sim":
+        have = {e.market for e in entries}
+        entries = entries + [e for e in extra or [] if e.market not in have and not e.market.startswith(PROPS)]
+        return _sim(pr, league, ev, model, entries, now, ledger) if entries else None
     if not entries:
         return None
-    if pr.method == "sim":
-        return _sim(pr, league, ev, model, entries, now)
     if pr.method == "p2":
         return _p2(pr, league, ev, model, entries, now)
     if not model:
@@ -202,9 +223,11 @@ def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetim
     return best[1] if best else None
 
 
-def track(ledger, league: str, offers: list, now: datetime, settings: Settings = SETTINGS) -> int:
+def track(ledger, league: str, offers: list, now: datetime, settings: Settings = SETTINGS,
+          extra: dict[str, list] | None = None) -> int:
     """`offers`: [(udalost, model {trh:vyber: p}, [ceske zaznamy])]. Kazdy aktivni profil vybere u zapasu
-    nejvyssi cekany zisk podle svych pravidel; pred vykopem se vyber jen aktualizuje, po vykopu se nemeni."""
+    nejvyssi cekany zisk podle svych pravidel; pred vykopem se vyber jen aktualizuje, po vykopu se nemeni.
+    `extra`: {match_id: dalsi trhy} pro simulaci trhu (Profil 3)."""
     picks = load(ledger)
     by_match = {(p.profile, p.match_id): p for p in picks if p.source == "model"}
     n = 0
@@ -216,7 +239,7 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
                 continue
             if league == "NHL" and (pr.method != "edge" or pr.props):
                 continue  # scenare golu, simulace trhu a rohy/karty jsou jen fotbalove
-            new = _best(pr, league, ev, model, entries, now, settings)
+            new = _best(pr, league, ev, model, entries, now, settings, ledger, (extra or {}).get(ev.match_id))
             old = by_match.get((pr.key, ev.match_id))
             if old is not None and datetime.fromisoformat(old.kickoff) <= now:
                 continue

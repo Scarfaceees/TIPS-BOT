@@ -739,6 +739,17 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button class="sm">Zapsat</button></form>
 <form method="post" action="{{ url_for('paper_delete', pick_id=p.id) }}" style="margin:0"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}"><button class="ghost sm">Smazat</button></form></details></td></tr>
 {% else %}<tr><td colspan="6" class="muted">Nic nesledováno. Vlož české kurzy (Nastavení) a spusť sken.</td></tr>{% endfor %}</table></div>
+{% if prof.method == 'sim' %}<h2>Rozbory zápasů ({{ sim_rows|length }})</h2>
+<div class="card"><div class="muted">Profil 3 rozebere při každém skenu každý zápas – i když vhodnou sázku nenajde. Góly se fitují z kurzů kanceláří (kurzové API + medián kanceláří z API-Football), pak simulace a 4 scénáře. Rozbor odehraného zápasu zmizí po 2 dnech.</div>
+{% for a in sim_rows %}<details class="fold"><summary><b>{{ a.name }}</b> <span class="muted">{{ a.kickoff[:16]|replace('T', ' ') }} UTC · {{ leagues[a.league].name if a.league in leagues else a.league }}</span><br>
+{% if a.verdict.startswith('sázka') %}<span class="badge tipb">{{ a.verdict }}</span>{% else %}<span class="badge">{{ a.verdict }}</span>{% endif %}</summary>
+<div class="muted">{% if a.lam is defined %}Trh čeká {{ '%.2f'|format(a.lam) }} : {{ '%.2f'|format(a.mu) }} gólu (z {{ a.fit_markets }} trhů, odchylka fitu {{ '%.1f'|format(a.fit_err * 100) }} %).
+Nejčastější výsledky simulace: {% for sc, p in a.top %}{{ sc }} {{ '%.0f'|format(p * 100) }} %{{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+Trhy: {{ a.markets|join(', ') }}. V pásmu kurzů posouzeno {{ a.checked }} sázek.
+{% if a.near %}<br>Nejblíž byla {{ a.near.market|bet(a.near.selection, a.name) }} @ {{ '%.2f'|format(a.near.odds) }} – neprošla: {{ a.near.why|join('; ') }}.{% endif %}
+<br><span class="muted">rozbor {{ a.t[:16]|replace('T', ' ') }} UTC</span></div></details>
+{% else %}<div class="muted">Zatím žádný rozbor – objeví se po nejbližším skenu.</div>{% endfor %}</div>
+{% endif %}
 <details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }})</summary>
 <div class="tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
 {% for p in paper_done %}<tr class="r-{{ p.result }}"><td>{{ p.name }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
@@ -1445,6 +1456,8 @@ def create_app(database_url: str | None = None) -> Flask:
             quota=_quota_view(led) if tab == "prehled" else None,
             goalies=_goalie_view(led) if tab == "nastaveni" else None,
             mq=json.loads(led._get("model_quality", "") or "null") if tab == "overeni" else None,
+            sim_rows=sorted(paper.load_analyses(led).values(), key=lambda a: a["kickoff"])
+            if tab == "sledovani" and prof.method == "sim" else [],
             mq_min=30,
         )
 

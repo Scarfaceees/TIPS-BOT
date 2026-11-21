@@ -170,16 +170,23 @@ class SimPick:
         return (self.ev + 1.0) / self.odds
 
 
-def best_pick(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> SimPick | None:
+def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> tuple[SimPick | None, dict]:
+    """Rozbor zapasu: (vybrana sazka nebo None, rozbor). Rozbor se uklada i bez sazky – co trh ceka, nejcastejsi
+    vysledky a proc zadna sazka neprosla pravidly (nejblizsi kandidat a duvod)."""
     prior = None
     if model and model.get("lambda_home") and model.get("lambda_away"):
         prior = (float(model["lambda_home"]), float(model["lambda_away"]))
+    info: dict = {"markets": sorted({e.market for e in entries}), "checked": 0}
     fit = fit_lambdas(entries, prior, cfg)
     if fit is None:
-        return None
+        info["verdict"] = "kurzy nestačí na odhad gólů (chybí 1X2 nebo góly)"
+        return None, info
     lam, mu, err, n_mk = fit
+    info.update(lam=round(lam, 2), mu=round(mu, 2), fit_err=round(err, 4), fit_markets=n_mk,
+                top=[(sc_, round(p, 3)) for sc_, p in simulate(lam, mu, cfg.sims, zlib.crc32(match_id.encode()))])
     sc = {k: score_matrix(a, b, RHO, MAX_GOALS) for k, (a, b) in scenarios(lam, mu, model, cfg).items()}
     best: tuple[tuple[float, float], SimPick] | None = None
+    near: tuple[float, dict] | None = None  # nejblizsi zamitnuty kandidat
     for e in entries:
         sels = selections(e.market)
         if sels is None or len(sels) != len(e.odds):
@@ -190,24 +197,35 @@ def best_pick(match_id: str, model: dict | None, entries: list, cfg: SimConfig =
             res = {k: evaluate(e.market, sel, odds, m) for k, m in sc.items()}
             if any(r is None for r in res.values()):
                 continue
+            info["checked"] += 1
             base = res["trh"]
             worst = min(r["ev"] for r in res.values())
             w = {k: v for k, v in cfg.weights if k in res}
             score = sum(res[k]["ev"] * v for k, v in w.items()) / sum(w.values())
-            if base["loss"] > cfg.max_loss or worst < cfg.worst_ev or score < cfg.min_ev:
+            why = [t for ok, t in ((base["loss"] <= cfg.max_loss, f"prohra {base['loss'] * 100:.0f} % (max {cfg.max_loss * 100:.0f} %)"),
+                                   (worst >= cfg.worst_ev, f"v nejhorším scénáři {worst * 100:+.1f} % (min {cfg.worst_ev * 100:.0f} %)"),
+                                   (score >= cfg.min_ev, f"vážený čekaný zisk {score * 100:+.1f} % (min {cfg.min_ev * 100:.0f} %)"))
+                   if not ok]
+            if why:
+                gap = max(0.0, base["loss"] - cfg.max_loss) + max(0.0, cfg.worst_ev - worst) + max(0.0, cfg.min_ev - score)
+                if near is None or gap < near[0]:
+                    near = (gap, {"market": e.market, "selection": sel, "odds": odds, "why": why})
                 continue
             key = (score, -base["loss"])
             if best is None or key > best[0]:
                 best = (key, SimPick(e.market, sel, odds, e.book, base["ev"], score, worst, base["win"], base["push"],
                                      base["loss"], "", []))
+    if near is not None:
+        info["near"] = near[1]
     if best is None:
-        return None
+        info["verdict"] = ("žádná vhodná sázka – " + (f"žádný kurz v pásmu {cfg.min_odds:.2f}–{cfg.max_odds:.2f}" if not info["checked"]
+                                                     else f"žádný z {info['checked']} kurzů v pásmu {cfg.min_odds:.2f}–{cfg.max_odds:.2f} nesplnil pravidla"))
+        return None, info
     pick = best[1]
-    top = simulate(lam, mu, cfg.sims, zlib.crc32(match_id.encode()))
     evs = {k: evaluate(pick.market, pick.selection, pick.odds, m)["ev"] for k, m in sc.items()}
     pick.detail = (
         f"Trh čeká {lam:.2f} : {mu:.2f} gólu ({n_mk} trhů). Simulace {cfg.sims}×: "
-        + ", ".join(f"{s} {p * 100:.0f} %" for s, p in top)
+        + ", ".join(f"{s_} {p * 100:.0f} %" for s_, p in info["top"])
         + f". Výhra {pick.win * 100:.0f} %"
         + (f", vrácení {pick.push * 100:.0f} %" if pick.push > 0.005 else "")
         + f", prohra {pick.loss * 100:.0f} %. Čekaný zisk: "
@@ -218,4 +236,9 @@ def best_pick(match_id: str, model: dict | None, entries: list, cfg: SimConfig =
         pick.flags.append("bez ověřené výhody – sázka zhruba za férovou cenu")
     if err > cfg.max_fit_error:
         pick.flags.append("kurzy kanceláří si odporují, ověř zadání")
-    return pick
+    info["verdict"] = f"sázka {pick.market} {pick.selection} @ {pick.odds:.2f}" + (f" ({', '.join(pick.flags)})" if pick.flags else "")
+    return pick, info
+
+
+def best_pick(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> SimPick | None:
+    return analyse(match_id, model, entries, cfg)[0]

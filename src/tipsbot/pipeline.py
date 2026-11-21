@@ -354,7 +354,8 @@ def scan_league(
             # bez ceskych kurzu vse z medianu; s nimi jen rohy a karty, ktere rucne zadane nejsou
             entries.extend(e for e in market_entries(ev, now)
                            if not have or (e.market.startswith(paper.PROPS) and e.market not in have))
-        paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings)
+        paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings,
+                    extra=_sim_extra(events, now) if is_football else None)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
 
     if events:
@@ -517,6 +518,23 @@ def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:
 
 MARKET_BOOK = "zahraničí (medián)"
 _EXCHANGES = ("betfair_ex_eu", "betfair_ex_uk", "matchbook")
+
+
+def _sim_extra(events, now: datetime) -> dict[str, list]:
+    """Dalsi trhy pro simulaci trhu (Profil 3): median kancelari z API-Football, ktere stahuje Profil 4
+    (dvojita sance, dalsi linie golu, goly tymu). Bez Profilu 4 se pouziji jen kurzy z kurzoveho API."""
+    try:
+        from .profil4.store import open_store
+        from .profile2 import api_football_entries
+
+        store = open_store()
+        try:
+            return {ev.match_id: api_football_entries(store, ev.home, ev.away, now) for ev in events if ev.kickoff > now}
+        finally:
+            store.close()
+    except Exception as e:  # noqa: BLE001 - doplnek, sken nesmi spadnout
+        log.warning("trhy z API-Football pro simulaci trhu nejsou k dispozici: %s", e)
+        return {}
 
 
 def market_entries(ev: oddsapi.Event, now: datetime) -> list[czechodds.Entry]:

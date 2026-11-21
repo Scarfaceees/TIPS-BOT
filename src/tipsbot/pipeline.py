@@ -341,8 +341,9 @@ def scan_league(
         sections_by_match[ev.match_id] = provider.sections(ev, model) if hasattr(provider, "sections") else []
 
     modelcheck.log_predictions(ledger, league, {m: c for m, c in cands_by_match.items() if models_by_match[m]}, now)
-    if is_football:
+    if is_football or league == "NHL":
         # Vsechny profily vybiraji z ceskych kurzu; zapas bez nich dostane median zahranicnich kancelari.
+        # NHL: jen profily nad modelem bota (zaklad); scenare golu, simulace a rohy/karty jsou fotbalove.
         by_ev = {ev.match_id: (ev, model_by_match.get(ev.match_id), []) for ev in events}
         for e in czech:
             hit = czechodds.find_event(e, events)
@@ -413,6 +414,12 @@ def scan_league(
             views.append(v)
     views.sort(key=lambda v: v.kickoff)
     ledger.set_analysis(league, analysis.dumps(views))
+
+    # vsechny oficialni tipy teto souteze (i zrusene a vyprsele) do Sledovani, at se vyhodnoti skutecna uspesnost
+    from sqlalchemy import select as sa_select
+
+    league_tips = list(ledger.s.scalars(sa_select(Tip).where(Tip.league == league, Tip.kickoff > now - timedelta(days=3))))
+    paper.mirror_tips(ledger, league_tips, now)
 
     if provider.unmatched:
         report.notes.append("tymy bez modelu (jen trh): " + ", ".join(sorted(provider.unmatched)))

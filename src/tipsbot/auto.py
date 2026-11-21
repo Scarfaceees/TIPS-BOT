@@ -23,6 +23,7 @@ VERIFY_KEY = "auto:last_verify"
 RUNNING_KEY = "auto:running"  # cas zacatku behu (panel ukazuje, ze automat prave pracuje)
 REQUEST_KEY = "auto:request"  # tlacitko v panelu: spustit hned
 SCORES_KEY = "auto:scores:"
+QUALITY_KEY = "auto:last_quality"  # denni srovnani modelu s trhem z ostreho provozu
 MORNING_KEY = "auto:last_morning"  # datum (cesky cas) posledni ranni analyzy
 
 
@@ -164,6 +165,7 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
             notes.append(f"vyhodnocení NHL: chyba ({e})")
     if verify:
         notes += weekly_verify(factory, now)
+        notes += model_quality(factory, now)
     from .oddsapi import redact
 
     notes = [redact(n) for n in notes]
@@ -172,6 +174,40 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
         led._set(STATUS_KEY, json.dumps({"t": now.isoformat(), "notes": notes[-60:]}, ensure_ascii=False))
         s.commit()
     return notes
+
+
+def model_quality(factory, now: datetime) -> list[str]:
+    """Jednou denne: vysledky ke vsem ulozenym predikcim modelu a trhu, srovnani a prukaznost (Overeni modelu).
+    Vahy modelu se nemeni – jen podklad pro rozhodnuti."""
+    import pandas as pd
+
+    from . import modelcheck
+
+    with factory() as s:
+        led = Ledger(s)
+        if not _due(led, QUALITY_KEY, now, timedelta(hours=24)):
+            return []
+        led._set(QUALITY_KEY, now.isoformat())
+        s.commit()
+        try:
+            from .teamreport import load_all_results
+
+            results = load_all_results()
+            try:
+                from .nations import load_international
+
+                intl = load_international(neutral=True)
+                results = pd.concat([results, intl.reindex(columns=results.columns)], ignore_index=True)
+            except Exception:  # noqa: BLE001 - reprezentace jsou doplnek
+                pass
+            out = modelcheck.update_all(led, now, results)
+            s.commit()
+        except Exception as e:  # noqa: BLE001
+            s.rollback()
+            log.exception("automat: srovnani modelu s trhem selhalo")
+            return [f"kvalita modelu: chyba ({e})"]
+    parts = [f"{lg} {q['n']} záp." for lg, q in out["leagues"].items() if q["n"]]
+    return [f"kvalita modelu v ostrém provozu: {', '.join(parts) or 'zatím žádné vyhodnocené zápasy'}"]
 
 
 def weekly_verify(factory, now: datetime) -> list[str]:

@@ -748,6 +748,13 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 
 {% elif tab == 'overeni' %}
 {{ page_head('Kontrola kvality', 'Ověření modelu') }}
+{% if mq and mq.leagues %}<div class="card"><h3>Model vs. trh v ostrém provozu</h3>
+<div class="muted">U každého zápasu se před výkopem uloží šance modelu a trhu na hlavní trh (fotbal 1X2, NHL vítěz vč. prodloužení); po zápase se porovná, kdo byl blíž výsledku (log-loss, nižší = lepší). Rozdíl proti samotnému trhu má 95% interval z bootstrapu po zápasech – záporný rozdíl = model pomáhá. Průkaznost až od {{ mq_min }} zápasů. Váhy modelu se samy nemění, je to podklad pro rozhodnutí. Přepočet jednou denně (naposledy {{ mq.t[:16]|replace('T', ' ') }} UTC).</div>
+{% for lg, q in mq.leagues.items() %}<details class="fold" {{ 'open' if q.n >= mq_min }}><summary><b>{{ leagues[lg].name if lg in leagues else lg }}</b> – vyhodnoceno {{ q.n }} z {{ q.stored }} zápasů · {{ q.verdict }}</summary>
+{% if q.rows %}<div class="tablewrap"><table class="mkt"><tr><th>Váha modelu</th><th class="num">Log-loss</th><th class="num">Proti trhu</th><th class="num">95% interval</th></tr>
+{% for r in q.rows %}<tr class="{{ 'best' if r.current }}"><td>{{ 'jen trh' if r.w == 0 else 'jen model' if r.w == 1 else '%.0f %%'|format(r.w * 100) }}{% if r.current %} <span class="badge">nastaveno</span>{% endif %}{% if r.w == q.best %} <span class="badge tipb">nejnižší</span>{% endif %}</td>
+<td class="num">{{ '%.4f'|format(r.ll) }}</td><td class="num">{{ '%+.4f'|format(r.diff) if r.w else '–' }}</td><td class="num">{{ ('%+.4f až %+.4f'|format(r.lo, r.hi)) if r.lo == r.lo else '–' }}</td></tr>{% endfor %}</table></div>{% endif %}</details>{% endfor %}</div>
+{% endif %}
 <div class="card sec-acc"><div class="muted">Dva pohledy: <b>skutečné výběry ve Sledování</b> (reálné kurzy, zatím malý vzorek) a <b>zpětný test</b> za poslední tři sezóny
 (model se vždy učí jen z dřívějších zápasů – tisíce zápasů, ale u většiny trhů bez historických kurzů). Trh je pro sázení důvěryhodný, až když obojí ukazuje stejným směrem.</div>
 <div class="arow" style="margin-top:8px">{% if bt_running %}<span class="badge warn">zpětný test běží (od {{ bt_running }}), trvá asi 30 minut</span>
@@ -1437,6 +1444,8 @@ def create_app(database_url: str | None = None) -> Flask:
             p4=_p4_view(led) if tab == "profil4" else {},
             quota=_quota_view(led) if tab == "prehled" else None,
             goalies=_goalie_view(led) if tab == "nastaveni" else None,
+            mq=json.loads(led._get("model_quality", "") or "null") if tab == "overeni" else None,
+            mq_min=30,
         )
 
     def _goalie_view(led) -> dict:

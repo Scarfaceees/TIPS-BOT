@@ -25,7 +25,9 @@ from .settlement import settle_bet
 KEY = "paper_picks"
 KEEP = 2000
 MIN_EV = 0.05  # od teto hrany (podle modelu) se vyber sleduje
-SELECTIONS = {"1X2": ("1", "X", "2"), "BTTS": ("yes", "no"), "DC": ("1X", "12", "X2"), "DNB": ("home", "away")}
+SELECTIONS = {"1X2": ("1", "X", "2"), "BTTS": ("yes", "no"), "DC": ("1X", "12", "X2"), "DNB": ("home", "away"),
+              "MONEYLINE": ("home", "away"), "PUCKLINE_1.5": ("home-1.5", "away+1.5"),
+              "PUCKLINE_1.5R": ("home+1.5", "away-1.5")}
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,8 @@ class Profile:
     max_odds: float | None = None
     markets: tuple[str, ...] | None = None  # zacatky nazvu trhu (napr. "OU_", "1X2"); None = vsechny
     active: bool = True
-    method: str = "edge"  # edge = nejvyssi cekany zisk podle modelu bota; sim = model trhu se simulaci (marketsim)
+    method: str = "edge"  # edge = nejvyssi cekany zisk podle modelu bota; sim = model trhu se simulaci (marketsim);
+    # tips = kopie oficialnich tipu bota (mirror_tips), profil sam nic nevybira
     props: bool = False  # True = jen rohy a karty; ostatni profily je nevidi (vlastni sledovani, jine trhy)
 
 
@@ -56,6 +59,10 @@ PROFILES = (
             "góly fitované z kurzů kanceláří, simulace 1000 zápasů a 4 scénáře; nižší kurz 1.15–1.75, "
             "prohra nejvýš ve 25 % zápasů, sázka musí obstát i při méně příznivém průběhu",
             min_odds=1.15, max_odds=1.75, method="sim"),
+    Profile("tipy", "Tipy bota",
+            "každý oficiální tip bota (TIP / VSADIT), vsazený i nevsazený, se zapíše s kurzem a šancí v okamžiku tipu "
+            "a vyhodnotí se – i když ho pak bot zruší (pokles kurzu) nebo vyprší; tak je vidět skutečná úspěšnost tipů",
+            method="tips"),
     Profile("rohy", "Rohy a karty",
             "jen rohy a karty: model týmů (a u karet rozhodčího) proti kurzům kanceláří z API-Football "
             "(Pinnacle, Bet365, Betano…) nebo ručně zadaným českým; u zápasu výběr s nejvyšším čekaným ziskem od 5 %; "
@@ -205,8 +212,10 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
         if ev.kickoff <= now:
             continue
         for pr in PROFILES:
-            if not pr.active:
+            if not pr.active or pr.method == "tips":
                 continue
+            if league == "NHL" and (pr.method != "edge" or pr.props):
+                continue  # scenare golu, simulace trhu a rohy/karty jsou jen fotbalove
             new = _best(pr, league, ev, model, entries, now, settings)
             old = by_match.get((pr.key, ev.match_id))
             if old is not None and datetime.fromisoformat(old.kickoff) <= now:
@@ -221,6 +230,42 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
             n += 1
     if n or offers:
         save(ledger, picks)
+    return n
+
+
+TIPS_PROFILE = "tipy"
+
+
+def mirror_tips(ledger, tips, now: datetime) -> int:
+    """Oficialni tipy bota do Sledovani (profil "tipy"): kazdy tip jednou, s kurzem, kancelari a sanci v okamziku
+    tipu. Pred zacatkem zapasu se zaznam aktualizuje (obnoveny tip), zruseni / vyprseni se jen poznamena –
+    vyhodnoti se vzdy, aby statistika nebyla vylepsena vynechanim tipu, ktere bot pozdeji stahl."""
+    picks = load(ledger)
+    have = {p.match_id: p for p in picks if p.profile == TIPS_PROFILE}
+    n = 0
+    for t in tips:
+        pid = f"tip{t.id}"
+        old = next((p for p in picks if p.id == pid), None)
+        ko = t.kickoff if t.kickoff.tzinfo is None else t.kickoff.replace(tzinfo=None)
+        flags = [f"tip {t.status}" + (f": {t.cancel_reason}" if t.cancel_reason else "")] if t.status not in ("open", "placed") else []
+        if t.needs_review:
+            flags.append("tip označen ke kontrole kurzu")
+        if old is not None:
+            if old.result is None and ko > now:
+                old.odds, old.book, old.p_model, old.flags = t.raw_odds, t.bookmaker, round(t.model_probability, 4), flags
+            elif old.result is None and flags and flags != old.flags:
+                old.flags = flags
+            continue
+        if t.match_id in have and have[t.match_id].market == t.market and have[t.match_id].selection == t.selection:
+            continue  # stejny vyber u zapasu uz sledovan (novy tip po zruseni)
+        picks.append(Pick(
+            id=pid, league=t.league, match_id=t.match_id, name=t.match_name, day=ko.date().isoformat(),
+            kickoff=ko.isoformat(), market=t.market, selection=t.selection, odds=t.raw_odds, book=t.bookmaker,
+            p_model=round(t.model_probability, 4), source="tip", created=(t.timestamp or now).isoformat(), flags=flags,
+            profile=TIPS_PROFILE, detail=f"EV {t.ev_percentage:+.1f} % (práh {t.ev_threshold:.1f} %), férový kurz "
+                                         f"{t.devigged_sharp_odds:.2f}, sázet od {t.min_odds:.2f}"))
+        n += 1
+    save(ledger, picks)
     return n
 
 

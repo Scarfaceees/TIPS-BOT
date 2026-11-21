@@ -132,8 +132,10 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
 
             notes += p4nhl.run_and_store(led)
         except Exception as e:  # noqa: BLE001 - Profil 4 nesmi zastavit automat
-            log.exception("automat: Profil 4 NHL selhal")
-            notes.append(f"Profil 4 – NHL: chyba ({e})")
+            from .oddsapi import redact
+
+            log.error("automat: Profil 4 NHL selhal: %s", redact(f"{type(e).__name__}: {e}"))
+            notes.append(redact(f"Profil 4 – NHL: chyba ({e})"))
     with factory() as s:
         led = Ledger(s)
         try:

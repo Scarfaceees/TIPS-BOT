@@ -65,7 +65,12 @@ def observe(st, prov, r: dict, now: datetime, cfg: Profil4Config = P4, foreign_o
     if r["league"] == "NHL":  # hokej: kurzy z kurzoveho API, ne z API-Football
         from . import nhl
 
-        return nhl.observe(st, r, now, cfg, **(foreign_opts or {}))
+        try:
+            return nhl.observe(st, r, now, cfg, **(foreign_opts or {}))
+        except Exception as e:  # noqa: BLE001 - chyba requests obsahuje adresu s klicem kurzoveho API
+            from ..oddsapi import redact
+
+            return redact(f"Profil 4 – NHL kurzy před zápasem {r['match']}: chyba ({e})")
     ko = parse_dt(r["kickoff"])
     home, _, away = (r["match"] or "").partition(" - ")
     fx = Fixture(r["fixture_id"], r["league_id"] or 0, r["league"] or "", 0, ko, "NS", 0, home, 0, away)
@@ -88,7 +93,9 @@ def observe(st, prov, r: dict, now: datetime, cfg: Profil4Config = P4, foreign_o
     try:
         extra = verify_foreign(st, r, now, ko, latest, cfg, **(foreign_opts or {}))
     except Exception as e:  # noqa: BLE001 - overeni je doplnek, nesmi zastavit stahovani kurzu
-        extra = f"ověření zahraniční kanceláří selhalo ({e})"
+        from ..oddsapi import redact
+
+        extra = redact(f"ověření zahraniční kanceláří selhalo ({e})")  # chyba requests obsahuje adresu s klicem
     return msg + (f"; {extra}" if extra else "")
 
 
@@ -220,14 +227,16 @@ def start_thread(log=None, every_s: int = 60) -> list[threading.Thread]:
     """Dve samostatna vlakna, kazde kontroluje kazdou minutu i behem dlouheho pruchodu automatu:
     kurzy pred vykopem + vyhodnoceni, a ranni sken. Ranni sken trva desitky minut (hloubkova analyza vsech
     zapasu), proto nesmi blokovat stahovani kurzu tesne pred vykopem."""
+    from ..oddsapi import redact
+
     def loop(fn, what):
         while True:
             try:
                 for n in fn():
-                    print(n, flush=True)
-            except Exception:  # noqa: BLE001 - chyba Profilu 4 nesmi zastavit automat
-                if log:
-                    log.exception("automat: Profil 4 (%s) selhal", what)
+                    print(redact(n), flush=True)
+            except Exception as e:  # noqa: BLE001 - chyba Profilu 4 nesmi zastavit automat
+                if log:  # bez tracebacku: text vyjimky requests muze obsahovat klic v adrese
+                    log.error("automat: Profil 4 (%s) selhal: %s", what, redact(f"{type(e).__name__}: {e}"))
             time.sleep(every_s)
 
     threads = [threading.Thread(target=loop, args=(tick, "kurzy před výkopem / vyhodnocení"), name="profil4-closing",

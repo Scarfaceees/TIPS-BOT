@@ -74,8 +74,6 @@ def format_analysis(an: MatchAnalysis, now: datetime | None = None) -> str:
         L.append(f"  Kurzy z API: {len({q.bookmaker for q in api})} kanceláří, nejnovější {local(max(q.stamp for q in api))}")
     if man:
         L.append(f"  Ručně zadané/importované kurzy: {len(man)}, kanceláře {', '.join(sorted({q.bookmaker for q in man}))}")
-    if not any(q.bookmaker == "tipsport" and q.source != "api" for q in an.quotes):
-        L.append("  Tipsport: kurzy nejsou zadané (zadej ručně: tipsbot profil4 odds --fixture ID).")
     L += ["  Chybí: " + (", ".join(cov.missing()) or "nic"), ""]
 
     L.append("ANALÝZA TÝMŮ")

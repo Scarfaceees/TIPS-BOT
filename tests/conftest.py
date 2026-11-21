@@ -1,3 +1,10 @@
+import os
+import tempfile
+
+# Testy nikdy nesahaji do skutecne slozky data (klice, databaze, stazena data): vychozi datovy adresar
+# bota i Profilu 4 se cte z promenne pri importu, proto se nastavuje pred importem tipsbot.
+os.environ["TIPSBOT_DATA_DIR"] = tempfile.mkdtemp(prefix="tipsbot-test-data-")
+
 from datetime import date, timedelta
 
 import numpy as np

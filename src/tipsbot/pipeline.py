@@ -101,7 +101,7 @@ def _fit_cup_model(today: date, settings: Settings):
 class ModelProvider:
     """Modelove pravdepodobnosti pro udalost. Bez dat vraci None (pouzije se jen trh)."""
 
-    def __init__(self, league: str, today: date, settings: Settings = SETTINGS):
+    def __init__(self, league: str, today: date, settings: Settings = SETTINGS, goalie_overrides: dict[str, str] | None = None):
         self.league = league
         self.settings = settings
         self.note: str | None = None
@@ -119,7 +119,7 @@ class ModelProvider:
         try:
             if LEAGUES[league].sport is Sport.NHL:
                 try:
-                    goalies = nhl_data.team_goalies()
+                    goalies = nhl_data.team_goalies(overrides=goalie_overrides)
                 except ValueError as e:
                     log.warning("brankari nejsou k dispozici: %s", e)
                     goalies = {}
@@ -287,6 +287,7 @@ def scan_league(
         else:
             fetched = oddsapi.fetch_events(league, settings, api_key=ledger.api_key() or None)
             events, report.credits_remaining = fetched.events, fetched.credits_remaining
+            ledger.set_odds_api_quota(fetched.credits_remaining, fetched.credits_used, now)
             if fetched.payload is not None:
                 ledger.set_odds_cache(league, now, fetched.payload, fetched.credits_remaining)
         upcoming = [e.kickoff for e in events if e.kickoff > now]
@@ -298,7 +299,7 @@ def scan_league(
     czech = czechodds.load(ledger, now)
     if czech:
         report.notes.extend(czechodds.apply(events, czech))
-    provider = provider or ModelProvider(league, now.date(), settings)
+    provider = provider or ModelProvider(league, now.date(), settings, goalie_overrides=ledger.goalie_overrides())
     if provider.note:
         report.notes.append(provider.note)
 

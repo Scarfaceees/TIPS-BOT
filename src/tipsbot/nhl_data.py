@@ -63,11 +63,10 @@ def download_goalies(data_dir: Path | None = None, today: date | None = None, ti
     return path
 
 
-def team_goalies(path: Path | str | None = None) -> dict[str, Goalie]:
-    """Kvalita brankare tymu: GSAx a strely vazene podilem odchytanych zapasu (starter neni predem znam)."""
+def _goalies_df(path: Path | str | None = None) -> pd.DataFrame | None:
     path = Path(path) if path else goalies_csv_path()
     if not path.exists():
-        return {}
+        return None
     df = pd.read_csv(path)
     need = {"team", "games_played", "xGoals", "goals", "ongoal"}
     if not need <= set(df.columns):
@@ -76,8 +75,31 @@ def team_goalies(path: Path | str | None = None) -> dict[str, Goalie]:
         df = df[df["situation"] == "all"]
     df = df[df["games_played"] > 0].copy()
     df["team"] = df["team"].replace(_FIX)
+    return df
+
+
+def goalie_roster(path: Path | str | None = None) -> dict[str, list[tuple[str, int]]]:
+    """Brankari tymu v aktualni sezone: {tym: [(jmeno, odchytane zapasy), ...]} od nejvytizenejsiho."""
+    df = _goalies_df(path)
+    if df is None or "name" not in df.columns:
+        return {}
+    return {team: [(str(r["name"]), int(r["games_played"])) for _, r in g.sort_values("games_played", ascending=False).iterrows()]
+            for team, g in df.groupby("team")}
+
+
+def team_goalies(path: Path | str | None = None, overrides: dict[str, str] | None = None) -> dict[str, Goalie]:
+    """Kvalita brankare tymu: GSAx a strely vazene podilem odchytanych zapasu (starter neni predem znam).
+
+    `overrides` = {tym: jmeno brankare} z panelu (rucne zadany brankar, napr. po zraneni jednicky): pro tym se
+    pouzije jen tento brankar. Jmeno, ktere v datech neni, se ignoruje (zustane vazeny prumer)."""
+    df = _goalies_df(path)
+    if df is None:
+        return {}
     out: dict[str, Goalie] = {}
     for team, g in df.groupby("team"):
+        pick = g[g["name"] == overrides[team]] if overrides and team in overrides and "name" in g.columns else g.iloc[0:0]
+        if len(pick):
+            g = pick
         share = g["games_played"] / g["games_played"].sum()
         out[team] = Goalie(
             gsax=float(((g["xGoals"] - g["goals"]) * share).sum()),

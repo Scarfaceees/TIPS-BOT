@@ -26,7 +26,7 @@ from .config import OddsConfig
 from .store import Store, iso, parse_dt, utcnow
 
 CURRENT, STALE, HISTORICAL, INDICATIVE = "AKTUÁLNÍ", "ZASTARALÝ", "HISTORICKÝ", "ORIENTAČNÍ"
-SOURCES = ("api", "manual", "import")
+SOURCES = ("api", "manual", "import", "oddsapi")  # oddsapi = overeni zaviraciho kurzu (foreign.py)
 
 
 @dataclass(frozen=True)
@@ -60,11 +60,12 @@ class OddsQuote:
             return HISTORICAL
         if "orienta" in self.note.lower():
             return INDICATIVE
-        limit = cfg.max_age_api_min if self.source == "api" else cfg.max_age_manual_min
+        limit = cfg.max_age_api_min if self.source in ("api", "oddsapi") else cfg.max_age_manual_min
         return CURRENT if self.age_minutes(now) <= limit else STALE
 
     def source_label(self) -> str:
-        return {"api": "API-Football", "manual": "ručně zadaný", "import": "import ze souboru"}.get(self.source, self.source)
+        return {"api": "API-Football", "manual": "ručně zadaný", "import": "import ze souboru",
+                "oddsapi": "kurzové API (The Odds API)"}.get(self.source, self.source)
 
     def to_row(self) -> dict:
         d = asdict(self)

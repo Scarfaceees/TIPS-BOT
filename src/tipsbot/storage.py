@@ -170,6 +170,52 @@ class Ledger:
 
         self._set(f"odds_cache:{league}", json.dumps({"t": when.isoformat(), "payload": payload, "credits": credits}))
 
+    def goalie_overrides(self) -> dict[str, str]:
+        """Rucne zadani brankari NHL {zkratka tymu: jmeno} (panel); plati, dokud se nezrusi."""
+        import json
+
+        raw = self._get("nhl_goalie_overrides", "")
+        return json.loads(raw) if raw else {}
+
+    def set_goalie_override(self, team: str, name: str | None) -> None:
+        import json
+
+        cur = self.goalie_overrides()
+        if name:
+            cur[team] = name
+        else:
+            cur.pop(team, None)
+        self._set("nhl_goalie_overrides", json.dumps(cur, ensure_ascii=False))
+
+    def set_odds_api_quota(self, remaining: int | None, used: int | None, when: datetime) -> None:
+        """Stav kreditu kurzoveho API z hlavicek posledni odpovedi (x-requests-remaining / -used, mesicni pocitadla).
+        Po dnech se drzi posledni hodnota 'used', aby slo ukazat spotrebu za dnesek."""
+        import json
+
+        if remaining is None and used is None:
+            return
+        q = self.odds_api_quota()
+        days = q.get("days", {})
+        if used is not None:
+            days[when.date().isoformat()] = used
+        days = dict(sorted(days.items())[-40:])
+        self._set("odds_api_quota", json.dumps({"t": when.isoformat(), "remaining": remaining if remaining is not None else q.get("remaining"),
+                                                "used": used if used is not None else q.get("used"), "days": days}))
+
+    def odds_api_quota(self) -> dict:
+        """{'t', 'remaining', 'used', 'days', 'today'}: today = kredity spotrebovane dnes (UTC), kdyz to jde spocitat."""
+        import json
+
+        raw = self._get("odds_api_quota", "")
+        q = json.loads(raw) if raw else {}
+        days = q.get("days", {})
+        if q.get("t") and days:
+            today = q["t"][:10]
+            before = [v for d, v in sorted(days.items()) if d < today]
+            if today in days and before and days[today] >= before[-1]:  # mesicni reset = nelze porovnat
+                q["today"] = days[today] - before[-1]
+        return q
+
     def api_football_key(self) -> str:
         return self._get("api_football_key", "")
 

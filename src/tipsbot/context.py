@@ -15,7 +15,8 @@ from .names import match_team, normalize
 
 log = logging.getLogger(__name__)
 
-ESPN_NHL_INJURIES = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
+# site.api.espn.com zacal pozadavky bota odmitat (403); site.web.api.espn.com vraci stejna data
+ESPN_NHL_INJURIES = "https://site.web.api.espn.com/apis/site/v2/sports/hockey/nhl/injuries"
 API_FOOTBALL = "https://v3.football.api-sports.io"
 API_FOOTBALL_LEAGUES = {"ENG1": 39, "ESP1": 140, "GER1": 78, "ITA1": 135, "FRA1": 61, "POR1": 94, "CZE1": 345,
                         "UCL": 2, "UEL": 3, "UECL": 848}

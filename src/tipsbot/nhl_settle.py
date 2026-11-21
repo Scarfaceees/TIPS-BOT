@@ -41,7 +41,7 @@ def parse_scores(payload: dict) -> list[dict]:
             if int(goal.get("period", 0)) <= 3:
                 reg = (int(goal["homeScore"]), int(goal["awayScore"]))
         start = g.get("startTimeUTC")
-        out.append({"home": h.get("abbrev"), "away": a.get("abbrev"),
+        out.append({"id": g.get("id"), "home": h.get("abbrev"), "away": a.get("abbrev"),
                     "start": _utc(start.replace("Z", "+00:00")) if start else None,
                     "final": (int(h["score"]), int(a["score"])), "reg": reg,
                     "end": (g.get("gameOutcome") or {}).get("lastPeriodType", "REG")})
@@ -124,6 +124,65 @@ def settle_paper(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
         notes.append(f"Sledovaný výběr NHL {p.name} {p.score}: {p.market} {p.selection} @ {p.odds:.2f} -> {res}")
     if any(p.result is not None for p in todo):
         paper.save(ledger, picks)
+    return notes
+
+
+def is_nhl_match(name: str) -> bool:
+    home, _, away = (name or "").partition(" - ")
+    return bool(nhl_abbr(home.strip()) and nhl_abbr(away.strip()))
+
+
+def ticket_market(market: str, selection: str) -> tuple[str, str]:
+    """Tiket NHL -> trh pro `grade`. Trojcestny vysledek (1X2) je u hokeje vzdy po 60 minutach (REG)."""
+    m, sel = (market or "").strip().upper(), (selection or "").strip()
+    if m == "1X2":
+        return "REG", sel.upper()
+    if m == "MONEYLINE" or m.startswith(("PUCKLINE_", "OU_", "OU60_", "TTH_", "TTA_")):
+        return m, sel.lower() if not m.startswith("PUCKLINE") else sel
+    return m, sel
+
+
+def _game_for_day(games: list[dict], name: str, day: date) -> dict | None:
+    """Zapas tiketu podle zkratek tymu; den tiketu je cesky den zapasu (vecerni zapas NHL je v Cesku az po pulnoci),
+    proto se bere zapas se startem nejblize poledni dne tiketu (do 36 h)."""
+    home_n, _, away_n = name.partition(" - ")
+    h, a = nhl_abbr(home_n.strip()), nhl_abbr(away_n.strip())
+    mid = datetime(day.year, day.month, day.day, 12)
+    hits = [g for g in games if g["home"] == h and g["away"] == a and g["start"] is not None
+            and abs(g["start"] - mid) <= timedelta(hours=36)]
+    return min(hits, key=lambda g: abs(g["start"] - mid)) if hits else None
+
+
+def settle_tickets(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
+    """Vyhodnoti otevrene tikety zapasu NHL (rucne zapsane i z tipu) z oficialniho NHL API."""
+    from sqlalchemy import select
+
+    from .storage import TICKET_OPEN, Ticket
+
+    today = now.date()
+    todo = [t for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))
+            if t.match_day and t.match_day <= today and (t.league == "NHL" or is_nhl_match(t.match_name))]
+    if not todo:
+        return []
+    days = sorted({t.match_day - timedelta(days=d) for t in todo for d in (0, 1)})
+    games, notes = [], []
+    for d in days:
+        try:
+            games += parse_scores(fetch(d))
+        except Exception as e:  # noqa: BLE001 - chyba zdroje nesmi zastavit automat
+            notes.append(f"výsledky NHL {d:%d.%m.}: chyba ({e})")
+    for t in todo:
+        g = _game_for_day(games, t.match_name, t.match_day)
+        if g is None:
+            continue
+        market, sel = ticket_market(t.market, t.selection)
+        res = grade(market, sel, g)
+        score = f"{g['final'][0]}:{g['final'][1]}" + ("" if g["end"] == "REG" else f" ({g['end']}, po 60 min {g['reg'][0]}:{g['reg'][1]})")
+        if res is None:
+            notes.append(f"Tiket {t.id} ({t.match_name} {score}, {t.market}:{t.selection}): trh neumím vyhodnotit, udělej to ručně")
+            continue
+        ledger.settle_ticket(t.id, res, fair_closing_odds=t.closing_odds)
+        notes.append(f"Tiket {t.id}: {t.match_name} {score} -> {res}")
     return notes
 
 

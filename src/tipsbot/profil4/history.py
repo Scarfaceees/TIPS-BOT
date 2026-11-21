@@ -130,6 +130,8 @@ CLV_POS, CLV_NEG, CLV_ZERO = "kladné", "záporné", "nulové"
 # druh srovnavaciho kurzu (closing_kind)
 CK_CLOSING, CK_LAST, CK_STALE, CK_MISSING, CK_LINE = (
     "závěrečný kurz", "poslední pozorovaný kurz", "zastaralý kurz", "chybí závěrečný kurz", "změna trhu nebo linie")
+CK_FOREIGN = "závěrečný kurz zahraniční kanc."  # API-Football neobnovilo, zaviraci kurz z kurzoveho API (foreign.py)
+CLV_KINDS = (CK_CLOSING, CK_FOREIGN)  # jen proti temto se pocita CLV
 CLV_MISSING, CLV_LINE = CK_MISSING, CK_LINE  # zpetna kompatibilita nazvu
 
 
@@ -140,6 +142,28 @@ def observations(store: Store, fid: int, kickoff: datetime) -> list[dict]:
 
 def _closing(store: Store, fid: int, book: str, market: str, sel: str, kickoff: datetime,
              rec_time: datetime | None = None, cfg: Profil4Config | None = None) -> dict:
+    """Zaviraci kurz stejne kancelare (_closing_same); kdyz neni opravdu zaviraci, overi se pres zahranicni
+    kancelar z kurzoveho API (Pinnacle prednostne), ktera kurz aktualizovala nejvys `closing_max_source_age_min`
+    pred vykopem. Puvodni duvod zustane v closing_reason."""
+    from . import foreign
+    from .config import P4
+
+    cfg = cfg or P4
+    out = _closing_same(store, fid, book, market, sel, kickoff, rec_time, cfg)
+    if out["kind"] == CK_CLOSING:
+        return out
+    ref = foreign.reference(O.history(store, fid), market, sel, kickoff, rec_time)
+    if ref is None or (kickoff - ref[2]).total_seconds() / 60 > cfg.odds.closing_max_source_age_min:
+        return out
+    odds, fair, when, ref_book = ref
+    out.update(kind=CK_FOREIGN, odds=odds, fair=fair, time=when,
+               reason=f"{ref_book} (kurzové API) aktualizace {(kickoff - when).total_seconds() / 60:.0f} min před výkopem; "
+                      f"{book}: {out['kind']}" + (f" – {out['reason']}" if out["reason"] else ""))
+    return out
+
+
+def _closing_same(store: Store, fid: int, book: str, market: str, sel: str, kickoff: datetime,
+                  rec_time: datetime | None = None, cfg: Profil4Config | None = None) -> dict:
     """Srovnavaci kurz STEJNE kancelare na STEJNY trh, vyber a linii (market obsahuje linii, napr. AH_-1.5).
 
     Kandidat = posledni kurz pred vykopem, ktery je NOVEJSI nez doporucovaci kurz (podle casu aktualizace
@@ -216,12 +240,30 @@ def outcome_value(result: str) -> float | None:
     return {mathcore.WON: 1.0, mathcore.HALF_WON: 1.0, mathcore.LOST: 0.0, mathcore.HALF_LOST: 0.0}.get(result)
 
 
+def settle_tip(store: Store, t, out: str, score: str, kickoff: datetime, now: datetime) -> str:
+    """Zapise vysledek tipu vcetne zaviraciho kurzu a CLV (fotbal i NHL)."""
+    profit = mathcore.unit_profit(out, t["odds"])
+    cl = _closing(store, t["fixture_id"], t["bookmaker"], t["market"], t["selection"], kickoff, parse_dt(t["odds_time"]))
+    clv_any = _clv(t["odds"], cl)
+    clv = clv_any if cl["kind"] in CLV_KINDS else None  # chybejici / jiny nez zaviraci kurz neni CLV 0
+    status = (CLV_POS if clv > 1e-9 else CLV_NEG if clv < -1e-9 else CLV_ZERO) if clv is not None else cl["kind"]
+    store.execute("UPDATE tips SET result=?, score=?, profit=?, closing_odds=?, closing_fair_odds=?, clv=?, "
+                  "clv_status=?, closing_time=?, closing_kind=?, closing_reason=?, clv_last=?, settled_at=? "
+                  "WHERE id=?",
+                  (out, score, profit, cl["odds"], cl["fair"], clv, status, iso(cl["time"]), cl["kind"],
+                   cl["reason"], clv_any if cl["kind"] in (CK_LAST, CK_STALE) else None, iso(now), t["id"]))
+    return f"{t['match']} {score}: {t['label']} @ {t['odds']:.2f} – {mathcore.SETTLE_CZ[out]} ({profit:+.2f} j.)"
+
+
+NHL = "NHL"  # soutez NHL v tabulkach Profilu 4 (vyhodnocuje profil4.nhl z NHL API, ne API-Football)
+
+
 def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
-    """Vyhodnoti tipy a predikce zapasu, ktere uz skoncily (1 pozadavek na 20 zapasu)."""
-    rows = store.query("SELECT DISTINCT fixture_id FROM tips WHERE result IS NULL AND kickoff < ? "
-                       "UNION SELECT DISTINCT fixture_id FROM forecasts WHERE result IS NULL AND kickoff < ? "
-                       "UNION SELECT DISTINCT fixture_id FROM predictions WHERE result IS NULL AND kickoff < ?",
-                       (iso(now - timedelta(hours=2, minutes=30)),) * 3)
+    """Vyhodnoti tipy a predikce fotbalovych zapasu, ktere uz skoncily (1 pozadavek na 20 zapasu)."""
+    rows = store.query("SELECT DISTINCT fixture_id FROM tips WHERE result IS NULL AND kickoff < ? AND COALESCE(league,'') != ? "
+                       "UNION SELECT DISTINCT fixture_id FROM forecasts WHERE result IS NULL AND kickoff < ? AND COALESCE(league,'') != ? "
+                       "UNION SELECT DISTINCT fixture_id FROM predictions WHERE result IS NULL AND kickoff < ? AND COALESCE(league,'') != ?",
+                       (iso(now - timedelta(hours=2, minutes=30)), NHL) * 3)
     ids = [r["fixture_id"] for r in rows]
     if not ids:
         return []
@@ -247,17 +289,7 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
             except ValueError as e:
                 msgs.append(f"{fx.name} {t['label']}: nelze vyhodnotit ({e})")
                 continue
-            profit = mathcore.unit_profit(out, t["odds"])
-            cl = _closing(store, fx.id, t["bookmaker"], t["market"], t["selection"], fx.kickoff, parse_dt(t["odds_time"]))
-            clv_any = _clv(t["odds"], cl)
-            clv = clv_any if cl["kind"] == CK_CLOSING else None  # chybejici / jiny nez zaviraci kurz neni CLV 0
-            status = (CLV_POS if clv > 1e-9 else CLV_NEG if clv < -1e-9 else CLV_ZERO) if clv is not None else cl["kind"]
-            store.execute("UPDATE tips SET result=?, score=?, profit=?, closing_odds=?, closing_fair_odds=?, clv=?, "
-                          "clv_status=?, closing_time=?, closing_kind=?, closing_reason=?, clv_last=?, settled_at=? "
-                          "WHERE id=?",
-                          (out, score, profit, cl["odds"], cl["fair"], clv, status, iso(cl["time"]), cl["kind"],
-                           cl["reason"], clv_any if cl["kind"] in (CK_LAST, CK_STALE) else None, iso(now), t["id"]))
-            msgs.append(f"{fx.name} {score}: {t['label']} @ {t['odds']:.2f} – {mathcore.SETTLE_CZ[out]} ({profit:+.2f} j.)")
+            msgs.append(settle_tip(store, t, out, score, fx.kickoff, now))
         for p in store.query("SELECT id, market, selection FROM predictions WHERE fixture_id=? AND result IS NULL", (fx.id,)):
             try:
                 out = mathcore.settle(p["market"], p["selection"], fx.ft_home, fx.ft_away)

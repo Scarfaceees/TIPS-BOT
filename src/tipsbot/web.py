@@ -320,6 +320,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .page-head{margin:0 0 18px}.page-head h2{margin:3px 0 4px;font-size:22px}.page-head p{margin:0;color:#6c7f98;font-size:13px;max-width:900px;line-height:1.55}
 .p4stats{grid-template-columns:repeat(4,minmax(0,1fr))}
+.quota{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:6px 18px}.quota>b{grid-column:1/-1}.qrow{min-width:0}.qrow span{display:block;font-size:12px;color:var(--muted)}.qrow b{font-size:18px;margin-right:8px}.qrow small{color:var(--muted)}
 .meter{display:block;height:6px;border-radius:9px;background:#e6eef8;margin-top:7px;overflow:hidden}.meter>i{display:block;height:100%;background:linear-gradient(90deg,#1975e8,#0eaa78)}
 .p4actions{display:flex;flex-wrap:wrap;gap:8px}.p4actions form{margin:0}
 .p4verdict{border-radius:14px;padding:16px 18px;margin-bottom:13px;border:1px solid #f3c9cf;background:#fff4f5}.p4verdict b{display:block;font-size:22px;color:#b83242}.p4verdict p{margin:4px 0 0;color:#5f6f86;font-size:13px}
@@ -384,6 +385,10 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <details class="fold"><summary>Co dělá{% if auto_st %} a co udělal ({{ auto_st.notes|length }}){% endif %}</summary>
 <div class="muted">Každých 6 hodin sám načte kurzy na 48 h dopředu, všechny profily vyberou sázky do Sledování, odehrané zápasy vyhodnotí; jednou týdně ověří model. Běží v Dockeru jako služba tipsbot-auto.</div>
 {% if auto_st %}<div class="muted notes">{% for n in auto_st.notes %}<div>{{ n }}</div>{% endfor %}</div>{% endif %}</details></div>
+{% if quota %}<div class="card quota"><b>📶 Spotřeba API</b>
+{% if quota.af %}<div class="qrow"><span>API-Football dnes ({{ quota.af.day }}, UTC)</span><b>{{ quota.af.account_used }} / {{ quota.af.limit }}</b><small>zbývá {{ quota.af.remaining }} · z toho Profil 4 {{ quota.af.used }}</small><i class="meter" aria-hidden="true"><i style="width:{{ (100 * quota.af.account_used / quota.af.limit)|round|int if quota.af.limit else 0 }}%"></i></i></div>{% endif %}
+{% if quota.odds.remaining is not none %}<div class="qrow"><span>Kurzové API (The Odds API, měsíčně)</span><b>zbývá {{ quota.odds.remaining }}</b><small>{% if quota.odds.used is not none %}použito {{ quota.odds.used }} z {{ quota.odds.used + quota.odds.remaining }}{% endif %}{% if quota.odds.today is not none %} · dnes {{ quota.odds.today }}{% endif %} · stav z {{ quota.odds.t[:16]|replace('T', ' ') }} UTC</small>{% if quota.odds.used is not none and quota.odds.used + quota.odds.remaining %}<i class="meter" aria-hidden="true"><i style="width:{{ (100 * quota.odds.used / (quota.odds.used + quota.odds.remaining))|round|int }}%"></i></i>{% endif %}</div>{% endif %}
+</div>{% endif %}
 <div class="dashboard-kpis"><div class="stats">
   <div class="stat"><span>Bankroll</span><b>{{ '%.0f'|format(s.bankroll) }} {{ cur }}</b><small>dnes vsazeno {{ '%.0f'|format(exposure) }} z {{ '%.0f'|format(exposure_cap) }}</small></div>
   <div class="stat"><span>Zisk / ztráta</span><b class="{{ 'pos' if s.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(s.profit_loss) }} {{ cur }}</b><small>výnos {{ '%+.2f'|format(s.yield_pct) }} % z vsazeného</small></div>
@@ -569,7 +574,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <form method="post" action="{{ url_for('ticket_add') }}"><input type="hidden" name="tab" value="tikety"><div class="grid2" style="margin-top:12px">
   <label>Zápas (Domácí - Hosté)<input name="match_name" list="matchlist" placeholder="vyber nebo napiš" autocomplete="off" required></label>
   <label>Den zápasu<input name="match_day" type="date" value="{{ today }}" required></label>
-  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
+  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><optgroup label="NHL"><option value="REG">NHL – výsledek po 60 min (1 / X / 2)</option><option value="MONEYLINE">NHL – vítěz vč. prodloužení a nájezdů</option><option value="NHL_OU">NHL – počet gólů vč. prodloužení</option><option value="NHL_OU60">NHL – počet gólů za 60 min</option><option value="PUCKLINE">NHL – handicap ±1,5 vč. prodloužení</option></optgroup><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
   <label>Hranice gólů (jen u počtu gólů)<select name="line">{% for x in ('0.5', '1.5', '2.5', '3.5', '4.5', '5.5', '6.5', '2.0', '3.0', '4.0') %}<option {{ 'selected' if x == '2.5' }}>{{ x }}</option>{% endfor %}</select></label>
   <label>Výběr<select name="selection" data-for="market" required></select><input name="selection" class="seltext" placeholder="popis sázky" disabled hidden></label>
   <label>Kancelář<select name="bookmaker">{% for b in books %}<option {{ 'selected' if b == 'tipsport' }}>{{ b }}</option>{% endfor %}</select></label>
@@ -686,7 +691,7 @@ To říká, že model zápasy „čte“, ne že porazí kancelář – proto se
 
 {% elif tab == 'profil2' %}
 {{ page_head('Profil 2', 'Ruční rozbor zápasu', 'Scénáře model / kompromis / trh, nejistota, simulace a sure bety z kurzů, které si opíšeš.') }}
-<div class="card note">K čemu to je: <b>rozbor libovolného zápasu z kurzů, které si opíšeš z Tipsportu</b> – i zápasu, který bot v nabídce nemá
+<div class="card note">K čemu to je: <b>rozbor libovolného zápasu ze zahraničních kurzů, které bot stáhne sám</b> (nebo z kurzů, které si zapíšeš) – i zápasu, který bot v nabídce nemá
 (jiná liga, pohár, speciální sázky jako „výhra hostů a méně než 3,5 gólu“). Automatické tipy Profilu 2 najdeš v záložce Sledování, tady je jen ruční nástroj.</div>
 <div class="card">
 <div class="muted">Postup z rozboru Wales – Portugalsko: tři scénáře gólů (A model, B kompromis model/trh, C trh), nejistota odhadu,
@@ -703,7 +708,7 @@ Doporučí jen sázky s kladnou hodnotou ve scénáři A i B. <b>Profil 2 není 
   {% for k, nm in (('ctx_h', 'domácích'), ('ctx_a', 'hostů')) %}{% set cur_v = '%.2f'|format((p2f[k] or '1')|replace(',', '.')|float) %}
   <label>Kontext – góly {{ nm }}<select name="{{ k }}">{% for x in range(80, 121, 5) %}{% set v = '%.2f'|format(x / 100) %}<option value="{{ v }}" {{ 'selected' if v == cur_v }}>×{{ v }}{{ ' (beze změny)' if x == 100 else ' (oslabení, absence)' if x < 100 else ' (posílení)' }}</option>{% endfor %}</select></label>{% endfor %}
 </div>
-<label style="margin-top:10px">Kurzy (řádek: kancelář | trh | kurzy; kancelář můžeš vynechat)
+<label style="margin-top:10px">Vlastní kurzy – nepovinné (řádek: kancelář | trh | kurzy; kancelář můžeš vynechat)
 <textarea name="odds" rows="9" placeholder="OU_3.5 | 2.34 1.62        (víc, méně)
 OU_4.0 | 3.30 1.33        (celá linie: při 4 gólech vrácení)
 1X2 | 6.90 4.80 1.45
@@ -715,6 +720,7 @@ AH_1.0:away | 1.65        (hosté -1,0)
 G1-3 | 1.73               (1 až 3 góly)
 fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <label style="flex-direction:row;align-items:center;gap:8px;margin-top:8px"><input type="checkbox" name="use_czech" value="1" style="width:auto" {{ 'checked' if p2f.use_czech != '0' }}> přidat i kurzy uložené u zápasu / v Nastavení</label>
+<label style="flex-direction:row;align-items:center;gap:8px;margin-top:4px"><input type="checkbox" name="use_foreign" value="1" style="width:auto" {{ 'checked' if p2f.use_foreign != '0' }}> doplnit zahraniční kurzy zápasu (medián evropských kanceláří – nic se neopisuje)</label>
 <div class="row"><button>Spočítat Profil 2</button></div></form>
 <details class="fold" style="margin-top:8px"><summary>Zápis trhů</summary><ul class="help">
 <li><b>1X2</b> (1 X 2), <b>DC</b> (1X 12 X2), <b>DNB</b> (domácí hosté), <b>BTTS</b> (ano ne)</li>
@@ -855,12 +861,21 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div class="muted">Víc simulací zmenší jen simulační chybu, ne chybu vstupního modelu.</div>{% else %}<div class="muted">Neproběhla (chybí model).</div>{% endif %}</div></div>
 <div class="grid2">
 <div class="card"><h3>Kvalita dat · {{ v.quality }}</h3><ul class="p4list">{% for l in v.coverage %}<li>{{ l }}</li>{% endfor %}</ul>
-<div class="muted">Chybí: {{ v.missing|join(', ') or 'nic' }}</div>{% if not v.tipsport %}<div class="p4risk">Tipsport: kurzy nejsou zadané – doplň je formulářem výše.</div>{% endif %}</div>
+<div class="muted">Chybí: {{ v.missing|join(', ') or 'nic' }}</div></div>
 <div class="card"><h3>Kontext zápasu</h3>{% if v.context %}<ul class="p4list">{% for l in v.context %}<li>{{ l }}</li>{% endfor %}</ul>{% else %}<div class="muted">Bez kontextových informací.</div>{% endif %}
 {% if v.narrative %}<div class="muted">Shrnutí: {{ v.narrative }}</div>{% endif %}<div class="muted">Kontext je jen informace – matematické výsledky nemění.</div></div></div>
 {% if v.notes %}<div class="card note"><b>Poznámky</b><ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 {% elif not p4.error %}<div class="card empty-list-card"><span class="empty-icon">🧠</span><div><b>Zatím žádný sken</b><div class="muted">Spusť „Dnešní sken“ nebo „Nadcházející 48 h“. Výsledky se tu zobrazí jako karty s verdiktem a nejlepšími možnostmi.</div></div></div>{% endif %}
 {% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
+<h2 id="p4nhl">NHL</h2>
+{% set n = p4.nhl %}{% if n %}<div class="card"><div class="muted">Automat rozebere každých 6 hodin (a ráno) všechny zápasy NHL na 48 h ze zahraničních kurzů, které právě stáhl – kredity navíc nespotřebuje. Modely: A model bota (xG, brankáři, únava), B trh (Pinnacle / medián bez marže), C smíšený, D konzervativní. Stejná kontrolní vrstva a pravidla jako u fotbalu; vyhodnocení z NHL API.</div>
+<div class="muted" style="margin-top:6px">Rozbor {{ n.when }}{% if n.odds_time %} · kurzy staženy {{ n.odds_time }}{% endif %} · zápasů {{ n.matches|length }} · schválených sázek {{ n.approved }}</div>
+{% if n.notes %}<ul class="help">{% for x in n.notes %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}</div>
+{% for m in n.matches %}<details class="card fold" {{ 'open' if m.approved }}><summary><b>{{ m.kickoff }}</b> {{ m.name }} – <span class="badge {{ 'tipb' if m.verdict == 'APPROVED BET' else 'warn' if m.verdict == 'WATCH' else 'bad' }}">{{ m.verdict }}</span></summary>
+<div class="muted">{{ m.explanation }}</div><div class="muted">Brankáři: {{ m.goalies }} · kvalita dat {{ m.quality }} %</div>
+{% for c in m.approved %}{{ p4tip(c, 'APPROVED BET') }}{% else %}{% if m.best %}{{ p4tip(m.best, 'BEST AVAILABLE – není schválená sázka') }}{% endif %}{% endfor %}</details>
+{% endfor %}{% if p4.nhl_report %}<details class="fold card"><summary>Textový výstup NHL</summary><pre class="p4pre">{{ p4.nhl_report }}</pre></details>{% endif %}
+{% else %}<div class="card muted">NHL zatím nebylo rozebráno – udělá to automat při dalším průchodu.</div>{% endif %}
 
 {% elif tab == 'kalkulacka' %}
 {{ page_head('Nástroje', 'Value kalkulačka', 'Spočítá čekaný zisk, férový kurz a doporučený vklad podle Kellyho pro jakoukoli sázku. Nic se neukládá.') }}
@@ -919,8 +934,18 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <section><h2>Data pro model</h2>
 <div class="card">Stáhne nejnovější výsledky lig, pohárů, reprezentací a NHL (zdarma, trvá zhruba minutu). Dělej to jednou denně před načtením kurzů.
 <form class="row" method="post" action="{{ url_for('refresh_data') }}"><button>Aktualizovat data</button></form></div></section>
-<section><h2>České kurzy</h2>
-<div class="card">Kurzy se nejpohodlněji zadávají přímo u zápasu: <b>Přehled → rozbal zápas → Zadat kurzy z české kanceláře</b>. Platí 48 hodin.
+<section><h2>NHL – brankáři</h2>
+<div class="card">Model počítá s brankáři podle podílu odchytaných zápasů v sezóně (potvrzeného brankáře NHL API předem nedává).
+Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – model ho použije u všech dalších zápasů týmu, dokud nastavení nezrušíš.
+{% if goalies.overrides %}<div class="tablewrap" style="margin-top:8px"><table><tr><th>Tým</th><th>Brankář</th><th></th></tr>
+{% for t, nm in goalies.overrides|dictsort %}<tr><td>{{ t }}</td><td><b>{{ nm }}</b></td><td><form method="post" action="{{ url_for('nhl_goalie') }}" style="margin:0"><input type="hidden" name="tab" value="nastaveni"><input type="hidden" name="team" value="{{ t }}"><button class="ghost sm">Zrušit</button></form></td></tr>{% endfor %}</table></div>{% endif %}
+{% if goalies.roster %}<form method="post" action="{{ url_for('nhl_goalie') }}" class="goalief"><input type="hidden" name="tab" value="nastaveni">
+<div class="grid2" style="margin-top:8px"><label>Tým<select name="team" required>{% for t in goalies.roster|sort %}<option>{{ t }}</option>{% endfor %}</select></label>
+<label>Brankář<select name="name" data-roster='{{ goalies.roster|tojson }}' required></select></label></div>
+<div class="row"><button>Uložit brankáře</button></div></form>
+{% else %}<div class="muted" style="margin-top:8px">Data brankářů zatím nejsou stažená (Aktualizovat data).</div>{% endif %}</div></section>
+<section><h2>České kurzy (nepovinné)</h2>
+<div class="card">Bot vystačí se zahraničními kurzy (medián evropských kanceláří). České kurzy zadávej, jen když chceš počítat přesně s kurzem své kanceláře. Kurzy se nejpohodlněji zadávají přímo u zápasu: <b>Přehled → rozbal zápas → Zadat kurzy z české kanceláře</b>. Platí 48 hodin.
 {% if czech_entries %}<details class="fold" style="margin-top:8px"><summary>Uložené kurzy ({{ czech_entries|length }})</summary><div class="tablewrap"><table><tr><th>Kancelář</th><th>Zápas</th><th>Trh</th><th>Kurzy</th></tr>
 {% for e in czech_entries %}<tr><td>{{ e.book }}</td><td>{{ e.home }} - {{ e.away }}</td><td>{{ market_names.get(e.market, e.market) }}</td><td>{{ e.odds|join(' · ') }}</td></tr>{% endfor %}</table></div>
 <form method="post" action="{{ url_for('clear_czech_odds') }}"><button class="bad sm">Smazat všechny</button></form></details>{% endif %}
@@ -948,7 +973,8 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 (function(){
  // vyber podle trhu: nabidne jen platne moznosti (u "jiny trh" se pise text)
  function sels(m){
-  if(m=='1X2')return [['1','1 – domácí'],['X','X – remíza'],['2','2 – hosté']];
+  if(m=='1X2'||m=='REG')return [['1','1 – domácí'],['X','X – remíza'],['2','2 – hosté']];
+  if(m=='PUCKLINE')return [['home-1.5','domácí −1,5'],['away+1.5','hosté +1,5'],['home+1.5','domácí +1,5'],['away-1.5','hosté −1,5']];
   if(m=='DC')return [['1X','1X'],['12','12'],['X2','X2']];
   if(m=='DNB'||m=='MONEYLINE')return [['home','domácí'],['away','hosté']];
   if(m=='BTTS')return [['yes','ano'],['no','ne']];
@@ -959,10 +985,15 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
   var form=sel.form,src=form.elements[sel.dataset.for],txt=sel.parentNode.querySelector('.seltext');
   var line=form.elements.line;
   function upd(){var o=sels(src.value);sel.innerHTML='';
-   if(line)line.closest('label').style.display=src.value=='OU'?'':'none';
+   if(line)line.closest('label').style.display=/^(NHL_)?OU(60)?$/.test(src.value)?'':'none';
    sel.hidden=sel.disabled=!o;if(txt){txt.hidden=txt.disabled=!!o;txt.required=!o}
    (o||[]).forEach(function(x){var e=document.createElement('option');e.value=x[0];e.textContent=x[1];sel.appendChild(e)});}
   src.addEventListener('change',upd);upd();});
+ // brankari NHL: nabidka podle vybraneho tymu
+ document.querySelectorAll('select[data-roster]').forEach(function(sel){
+  var r=JSON.parse(sel.dataset.roster),team=sel.form.elements.team;
+  function upd(){sel.innerHTML='';(r[team.value]||[]).forEach(function(x){var e=document.createElement('option');e.value=x[0];e.textContent=x[0]+' ('+x[1]+' záp.)';sel.appendChild(e)});}
+  team.addEventListener('change',upd);upd();});
  // automat: po kliknuti na "Spustit ted" sleduje stav a po dobehnuti obnovi stranku
  var a=document.getElementById('autost');
  if(a&&a.dataset.poll){var t0=a.dataset.t;setInterval(function(){
@@ -1046,6 +1077,19 @@ def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
     market = market.strip().upper()
     if market == "JINY":
         return "JINY", selection.strip()
+    if market in ("REG", "MONEYLINE", "NHL_OU", "NHL_OU60", "PUCKLINE"):  # NHL: vyhodnoceni z NHL API
+        from .nhl_settle import grade as nhl_grade
+
+        if market in ("NHL_OU", "NHL_OU60"):
+            if not line.strip():
+                raise ValueError("U počtu gólů vyplň hranici (např. 5.5).")
+            market = f"{'OU60' if market == 'NHL_OU60' else 'OU'}_{float(line.replace(',', '.')):g}"
+        elif market == "PUCKLINE":
+            market = "PUCKLINE_1.5" if selection in ("home-1.5", "away+1.5") else "PUCKLINE_1.5R"
+        selection = selection.strip()
+        if nhl_grade(market, selection, {"reg": (0, 0), "final": (1, 0)}) is None:
+            raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím.")
+        return market, selection
     if market == "OU":
         if not line.strip():
             raise ValueError("U počtu gólů vyplň hranici (např. 2.5).")
@@ -1263,10 +1307,43 @@ def create_app(database_url: str | None = None) -> Flask:
             c=type("C", (), calc) if calc else None,
             p2=p2,
             p2text=[profile2.format_text(a, SETTINGS.currency) for a in p2],
-            p2f=type("F", (), {k: "" for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds", "use_czech")} | (p2form or {})),
+            p2f=type("F", (), {k: "" for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds", "use_czech", "use_foreign")} | (p2form or {})),
             p2st=type("P", (), paper.stats([p for p in all_picks if p.profile == "profil2"])),
             p4=_p4_view(led) if tab == "profil4" else {},
+            quota=_quota_view(led) if tab == "prehled" else None,
+            goalies=_goalie_view(led) if tab == "nastaveni" else None,
         )
+
+    def _goalie_view(led) -> dict:
+        from . import nhl_data
+
+        try:
+            roster = nhl_data.goalie_roster()
+        except Exception:  # noqa: BLE001 - poskozeny soubor nesmi shodit panel
+            roster = {}
+        return {"roster": roster, "overrides": led.goalie_overrides()}
+
+    def _quota_view(led) -> dict:
+        """Spotreba API: API-Football (denni kvota, hlavicky z odpovedi plati pro cely ucet) a kurzove API (mesicni kredity)."""
+        out = {"odds": {"t": "", "remaining": None, "used": None, "today": None} | led.odds_api_quota(), "af": None}
+        if out["odds"]["remaining"] is None:  # stav pred prvnim stazenim po aktualizaci: posledni kredity z cache kurzu
+            caches = [c for c in (led.odds_cache(lg) for lg in SETTINGS.odds_api.sport_keys) if c and c[2] is not None]
+            if caches:
+                t, _, left = max(caches, key=lambda c: c[0])
+                out["odds"].update(t=t.isoformat(), remaining=left)
+        try:
+            from .profil4.cli import build
+
+            store, prov = build(database_url)
+            try:
+                b = prov.client.budget.status()
+                b["account_used"] = max(b["used"], b["limit"] - b["remaining"]) if b.get("limit") else b["used"]
+                out["af"] = b
+            finally:
+                store.close()
+        except Exception:  # noqa: BLE001 - metrika nesmi shodit panel
+            pass
+        return out
 
     def _p4_view(led) -> dict:
         try:
@@ -1280,12 +1357,15 @@ def create_app(database_url: str | None = None) -> Flask:
                       f"{b['used']}/{b['limit']}, zbývá {b['remaining']}")
                 from .profil4.config import P4
 
+                from .profil4 import nhl as p4nhl
+
                 return {"status": st, "key": bool(key), "budget": b, "run_limit": P4.budget.max_per_run, "report": store.get("web_last_report", ""),
-                        "view": json.loads(store.get("web_last_view", "") or "null")}
+                        "view": json.loads(store.get("web_last_view", "") or "null"),
+                        "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
                 store.close()
         except Exception as e:  # noqa: BLE001 - panel nesmi spadnout kvuli Profilu 4
-            return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None}
+            return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None, "nhl": None, "nhl_report": ""}
 
     def _p4_run(fn, view=None):
         """Spusti akci Profilu 4; `fn` vraci vysledek, `view` z nej udela karty pro panel (text zustava jako zaloha)."""
@@ -1410,6 +1490,19 @@ def create_app(database_url: str | None = None) -> Flask:
 
         return action(fn, "Bankroll uložen.")
 
+    @app.post("/nhl/goalie")
+    def nhl_goalie():
+        def fn(led: Ledger, _):
+            from . import nhl_data
+
+            team, name = request.form["team"].strip().upper(), request.form.get("name", "").strip()
+            if name and name not in {n for n, _ in nhl_data.goalie_roster().get(team, [])}:
+                raise ValueError(f"Brankář {name} v datech týmu {team} není.")
+            led.set_goalie_override(team, name or None)
+            return f"{team}: brankář {name} uložen, platí od dalšího skenu." if name else f"{team}: zpět na brankáře podle odchytaných zápasů."
+
+        return action(fn, "", tab="nastaveni")
+
     @app.post("/key")
     def set_key():
         def fn(led: Ledger, _):
@@ -1519,9 +1612,11 @@ def create_app(database_url: str | None = None) -> Flask:
     @app.post("/settle")
     def settle_all():
         def fn(led: Ledger, _):
+            from .nhl_settle import settle_paper, settle_tickets
             from .settlement import settle_everything
 
-            return " · ".join(settle_everything(led))
+            nhl = settle_tickets(led, utcnow()) + settle_paper(led, utcnow())
+            return " · ".join(nhl + settle_everything(led))
 
         return action(fn, "", tab="sledovani")
 
@@ -1604,6 +1699,7 @@ def create_app(database_url: str | None = None) -> Flask:
         f = request.form
         form = {k: f.get(k, "") for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds")}
         form["use_czech"] = f.get("use_czech", "0")
+        form["use_foreign"] = f.get("use_foreign", "0")
         with factory() as session:
             led = Ledger(session)
             try:
@@ -1613,6 +1709,24 @@ def create_app(database_url: str | None = None) -> Flask:
                 entries, errors = profile2.parse_odds(f.get("odds", ""), f.get("book") or "tipsport")
                 if f.get("use_czech") == "1":
                     entries += profile2.from_czech(czechodds.load(led, utcnow()), match)
+                foreign_src = ""
+                if f.get("use_foreign") == "1":
+                    have = {e.market for e in entries}  # rucne zadany trh ma prednost
+                    try:
+                        from .profil4.cli import build
+
+                        p4store, _ = build(database_url)
+                    except Exception:  # noqa: BLE001 - bez Profilu 4 aspon kurzove API
+                        p4store = None
+                    try:
+                        got, foreign_src = profile2.foreign_entries(led, match, utcnow(), p4store)
+                    finally:
+                        if p4store is not None:
+                            p4store.close()
+                    entries += [e for e in got if e.market not in have]
+                if not entries and not errors:
+                    raise ValueError("Pro zápas nejsou žádné kurzy: zahraniční kurzy zápasu bot zatím nestáhl (načti kurzy "
+                                     "v Přehledu nebo spusť sken Profilu 4), nebo kurzy zapiš ručně.")
                 if errors and not entries:
                     raise ValueError("; ".join(errors))
                 manual = None
@@ -1626,7 +1740,8 @@ def create_app(database_url: str | None = None) -> Flask:
                 profile2.save(led, a)
                 led._set(P2_FORM_KEY, json.dumps(form))
                 session.commit()
-                msg = f"Rozbor {match} spočten ({len(a.offers)} nabídek)." + (f" Přeskočeno: {'; '.join(errors)}" if errors else "")
+                msg = (f"Rozbor {match} spočten ({len(a.offers)} nabídek)." + (f" Zahraniční kurzy: {foreign_src}." if foreign_src else "")
+                       + (f" Přeskočeno: {'; '.join(errors)}" if errors else ""))
                 return done(msg, "profil2")
             except (ValueError, KeyError) as e:
                 session.rollback()

@@ -26,7 +26,7 @@ import json
 import re
 import zlib
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from scipy import optimize, stats
@@ -519,6 +519,71 @@ def from_czech(entries: list, match_name: str) -> list[OddsEntry]:
         if selections(mk) and len(selections(mk)) == len(e.odds):
             out.append(OddsEntry(e.book, mk, tuple(e.odds)))
     return out
+
+
+FOREIGN_BOOK = "zahraničí"
+
+
+def _same_match(name: str, home: str, away: str) -> bool:
+    from .czechodds import _en
+    from .names import match_team
+
+    h, _, a = (p.strip() for p in name.partition(" - "))
+    return bool(match_team(_en(h), [_en(home)]) and match_team(_en(a), [_en(away)]))
+
+
+def foreign_entries(ledger, match_name: str, now: datetime, p4_store=None) -> tuple[list[OddsEntry], str]:
+    """Zahranicni kurzy zapasu bez rucniho opisovani: median evropskych kancelari z posledniho stazeni kurzoveho API
+    (ulozene v cache, kredity se nespotrebuji) a median kancelari z API-Football (Profil 4: handicapy, dalsi linie,
+    goly tymu). Ceske kancelare se od nich lisi obvykle jen v setinach. Vraci (zaznamy, popis zdroje)."""
+    import statistics
+
+    from . import oddsapi
+    from .config import SETTINGS
+    from .pipeline import market_entries
+
+    home, _, away = (p.strip() for p in match_name.partition(" - "))
+    out: dict[str, OddsEntry] = {}
+    src = []
+    for league in SETTINGS.odds_api.sport_keys:
+        cached = ledger.odds_cache(league)
+        if not cached:
+            continue
+        for ev in oddsapi.parse_events(cached[1], league):
+            if ev.kickoff > now - timedelta(hours=3) and _same_match(ev.name, home, away):
+                for e in market_entries(ev, now):
+                    mk = _norm_market(e.market)
+                    if selections(mk) and len(selections(mk)) == len(e.odds):
+                        out[mk] = OddsEntry(f"{FOREIGN_BOOK} (kurzové API)", mk, tuple(e.odds))
+                src.append(f"kurzové API {cached[0]:%d.%m. %H:%M} UTC")
+                break
+    if p4_store is not None:
+        from .profil4.store import iso
+
+        rows = p4_store.query("SELECT DISTINCT fixture_id, match FROM odds_quotes WHERE kickoff > ? AND source='api'",
+                              (iso((now - timedelta(hours=3)).replace(tzinfo=now.tzinfo or timezone.utc)),))
+        fid = next((r["fixture_id"] for r in rows if r["match"] and _same_match(r["match"], home, away)), None)
+        if fid is not None:
+            from .profil4 import odds as O
+
+            by: dict[tuple[str, str], dict[str, float]] = {}
+            for q in O.latest(p4_store, fid):
+                if q.source == "api":
+                    by.setdefault((q.market, q.bookmaker), {})[q.selection] = q.odds
+            per_market: dict[str, list[tuple[float, ...]]] = {}
+            for (mk, _), prices in by.items():
+                sels = selections(mk)
+                if sels and all(s in prices for s in sels):
+                    per_market.setdefault(mk, []).append(tuple(prices[s] for s in sels))
+            n0 = len(out)
+            for mk, rows_ in per_market.items():
+                if mk in out or len(rows_) < 2:  # median aspon ze dvou kancelari; kurzove API ma prednost
+                    continue
+                out[mk] = OddsEntry(f"{FOREIGN_BOOK} (API-Football, {len(rows_)} kanc.)", mk,
+                                    tuple(round(statistics.median(r[i] for r in rows_), 2) for i in range(len(rows_[0]))))
+            if len(out) > n0:
+                src.append("API-Football")
+    return list(out.values()), " + ".join(src)
 
 
 def surebets(entries: list[OddsEntry]) -> list[dict]:

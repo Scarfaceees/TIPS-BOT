@@ -87,7 +87,7 @@ def gather(provider: DataProvider, fx: Fixture, now: datetime, cfg: Profil4Confi
         O.save(provider.client.store, O.with_kickoff(odds_res.data or [], fx.kickoff, fx.name))
         cov.set("odds", odds_res.status, odds_res.fetched_at)
     quotes = O.with_kickoff(O.latest(provider.client.store, fx.id), fx.kickoff, fx.name)
-    manual = [q for q in quotes if q.source != "api"]
+    manual = [q for q in quotes if q.source in ("manual", "import")]
     if manual and cov.status("odds") != AVAILABLE:
         cov.set("odds", PARTIAL, now, "jen ručně zadané / importované kurzy")
     if odds_res is not None and odds_res.errors:
@@ -167,7 +167,7 @@ def build_candidates(fx: Fixture, ms: M.ModelSet, quotes: list[O.OddsQuote], now
              "D": ms.d_probability(q.market, q.selection)}
         d = ms.evaluate_d(q.market, q.selection, q.odds)
         st = stress_test(ms, q.market, q.selection, q.odds, cfg, lstate == "confirmed", mats)
-        limit = cfg.odds.max_age_api_min if q.source == "api" else cfg.odds.max_age_manual_min
+        limit = cfg.odds.max_age_api_min if q.source in ("api", "oddsapi") else cfg.odds.max_age_manual_min
         fresh = freshness_factor(q.age_minutes(now), limit) if q.status(now, cfg.odds) != O.HISTORICAL else 0.0
         rb = robustness(ms, q.market, q.selection, st, dq, fresh, lstate, cfg)
         cand = Candidate(

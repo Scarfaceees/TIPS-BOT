@@ -85,6 +85,7 @@ def settle_from_scores(ledger: Ledger, now: datetime, settings: Settings = SETTI
         except Exception as e:  # noqa: BLE001
             notes.append(oddsapi.redact(f"výsledky {lg} z kurzového API: chyba ({e})"))
             continue
+        ledger.set_odds_api_quota(left, None, now)
         if cached and left is not None:
             ledger.set_odds_cache(lg, cached[0], cached[1], left)  # aktualni stav kreditu
         got = settle_open_tickets(ledger, df) + paper.settle(ledger, df)
@@ -124,6 +125,15 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
                 s.rollback()
                 log.exception("automat: sken %s selhal", league)
                 notes.append(f"{league}: chyba skenu ({e})")
+    with factory() as s:  # Profil 4 – NHL: rozbor z prave stazenych kurzu (zadne dalsi kredity)
+        led = Ledger(s)
+        try:
+            from .profil4 import nhl as p4nhl
+
+            notes += p4nhl.run_and_store(led)
+        except Exception as e:  # noqa: BLE001 - Profil 4 nesmi zastavit automat
+            log.exception("automat: Profil 4 NHL selhal")
+            notes.append(f"Profil 4 – NHL: chyba ({e})")
     with factory() as s:
         led = Ledger(s)
         try:
@@ -145,7 +155,7 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
         try:
             from . import nhl_settle
 
-            notes += nhl_settle.settle_paper(led, now)
+            notes += nhl_settle.settle_tickets(led, now) + nhl_settle.settle_paper(led, now)
             s.commit()
         except Exception as e:  # noqa: BLE001
             s.rollback()

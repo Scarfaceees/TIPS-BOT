@@ -123,7 +123,7 @@ def analysis(an: MatchAnalysis, now: datetime | None = None) -> dict:
     tips += [{"title": "SCHVÁLENO", "tip": candidate(c, now)} for c in an.selection.approved[:3] if c.key not in grouped]
     top = sorted(an.candidates, key=lambda c: (c.decision != APPROVED, -c.ev_c))[:1]
     return {
-        "kind": "analysis", "fixture_id": fx.id, "name": fx.name, "league": f"{fx.league} {fx.season}/{fx.season + 1} {fx.round}".strip(),
+        "kind": "analysis", "when": local(now), "fixture_id": fx.id, "name": fx.name, "league": f"{fx.league} {fx.season}/{fx.season + 1} {fx.round}".strip(),
         "kickoff": local(fx.kickoff), "status": STATUS_CZ.get(fx.status, fx.status), "quality": pct(cov.quality(), 0),
         "coverage": cov.lines(), "missing": cov.missing(),
         "tipsport": any(q.bookmaker == "tipsport" and q.source != "api" for q in an.quotes),

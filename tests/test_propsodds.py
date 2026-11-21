@@ -67,9 +67,12 @@ def test_props_profile_picks_corners_and_other_profiles_ignore_them(led, monkeyp
     propsodds.attach([ev], "GER1", led, NOW, refresh=False)
     entries = pipeline.market_entries(ev, NOW)
     assert [(e.market, e.odds) for e in entries] == [("ROHY_9.5", (1.45, 2.4))]  # median kancelari
-    model = {"ROHY_9.5:over": 0.55, "ROHY_9.5:under": 0.45}
     monkeypatch.setattr(paper, "PROFILES", tuple(p for p in paper.PROFILES if p.key in ("zaklad", "rohy")))
-    paper.track(led, "GER1", [(ev, model, entries)], NOW)
+    # sance = 25 % model + 75 % Pinnacle bez marze (under ~39 %): samotny model 45 % uz na sazku nestaci
+    paper.track(led, "GER1", [(ev, {"ROHY_9.5:over": 0.55, "ROHY_9.5:under": 0.45}, entries)], NOW)
+    assert paper.load(led) == []
+    paper.track(led, "GER1", [(ev, {"ROHY_9.5:over": 0.30, "ROHY_9.5:under": 0.70}, entries)], NOW)
     (p,) = paper.load(led)
-    assert (p.profile, p.market, p.selection, p.odds) == ("rohy", "ROHY_9.5", "under", 2.4)  # 0.45*2.4 = +8 %
+    assert (p.profile, p.market, p.selection, p.odds) == ("rohy", "ROHY_9.5", "under", 2.4)
+    assert 0.45 < p.p_model < 0.47 and "Pinnacle" in p.detail  # 0.25*0.70 + 0.75*0.394
 

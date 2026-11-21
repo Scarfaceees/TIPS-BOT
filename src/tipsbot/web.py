@@ -941,7 +941,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div class="muted">Řádek = <code>trh | kurzy</code> nebo <code>kancelář | trh | kurzy</code>. Ručně opsaný kurz platí 2 hodiny.</div>
 <button style="margin-top:6px">Uložit kurzy</button></form></div></div>
 
-{% set v = p4.view %}
+{% set v = p4.detail or p4.view %}
 {% if v and v.kind == 'scan' %}
 <div class="section-heading"><div><span class="eyebrow">{{ v.mode }} · {{ v.when }}</span><h2>Výsledek skenu</h2></div><span class="muted">{{ v.fixtures }} zápasů · {{ v.deep }} rozebráno do hloubky · API tento sken {{ v.budget.run_used }}/{{ v.budget.run_limit }}</span></div>
 {{ p4verdict(v) }}
@@ -951,12 +951,16 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <td><span class="badge {{ 'tipb' if m.verdict == 'APPROVED BET' else 'warn' if m.verdict == 'WATCH' else 'bad' }}">{{ m.verdict }}</span></td>
 <td>{% if m.best %}{{ m.best.label }} @ <b>{{ m.best.odds }}</b> <span class="muted">EV {{ m.best.ev_c }} · robustnost {{ m.best.robustness }}</span>{% else %}<span class="muted">–</span>{% endif %}</td>
 <td class="num" data-l="data">{{ m.quality }}</td>
-<td><form method="post" action="{{ url_for('profil4_analyze') }}" style="margin:0"><input type="hidden" name="fixture_id" value="{{ m.fixture_id }}"><button class="ghost sm">Detail</button></form></td></tr>
+<td>{% if m.fixture_id|string in p4.cached %}<form method="get" action="{{ url_for('index') }}" style="margin:0"><input type="hidden" name="tab" value="profil4"><input type="hidden" name="p4fid" value="{{ m.fixture_id }}"><button class="ghost sm">Detail</button></form>
+{% else %}<form method="post" action="{{ url_for('profil4_analyze') }}" style="margin:0"><input type="hidden" name="fixture_id" value="{{ m.fixture_id }}"><button class="ghost sm">Detail</button></form>{% endif %}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">Do hloubkové analýzy nepostoupil žádný zápas.</td></tr>{% endfor %}</table></div>
 <details class="fold card"><summary>Rychlý průchod – všechny zápasy ({{ v.quick|length }})</summary><div class="tablewrap"><table class="cardt"><tr><th>Výkop</th><th>Zápas</th><th>Stav</th><th>Důvod</th></tr>
 {% for q in v.quick %}<tr><td class="muted">{{ q.kickoff }}</td><td><b>{{ q.name }}</b><div class="muted">{{ q.league }} · id {{ q.fixture_id }}</div></td><td>{% if q.candidate %}<span class="badge">hloubková</span>{% else %}<span class="badge bad">vyřazen</span>{% endif %}</td><td class="muted">{{ q.reason }}</td></tr>{% endfor %}</table></div></details>
 {% if v.notes %}<div class="card note"><b>Poznámky</b><ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 {% elif v and v.kind == 'analysis' %}
+<div class="row p4back" style="gap:8px;align-items:center"><a class="secondary-link" href="{{ url_for('index', tab='profil4') }}">← Zpět na přehled{{ ' skenu' if p4.view }}</a>
+<form method="post" action="{{ url_for('profil4_analyze') }}" style="margin:0"><input type="hidden" name="fixture_id" value="{{ v.fixture_id }}"><button class="ghost sm">Analyzovat znovu</button></form>
+{% if v.when %}<span class="muted">rozbor {{ v.when }}</span>{% endif %}</div>
 <div class="section-heading"><div><span class="eyebrow">{{ v.league }} · {{ v.kickoff }} · {{ v.status }}</span><h2>{{ v.name }}</h2></div><span class="muted">id {{ v.fixture_id }} · kvalita dat {{ v.quality }}</span></div>
 {{ p4verdict(v) }}
 {% for t in v.tips if t.title == 'SCHVÁLENO' %}{{ p4tip(t.tip, t.title) }}{% endfor %}
@@ -976,6 +980,20 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% if v.narrative %}<div class="muted">Shrnutí: {{ v.narrative }}</div>{% endif %}<div class="muted">Kontext je jen informace – matematické výsledky nemění.</div></div></div>
 {% if v.notes %}<div class="card note"><b>Poznámky</b><ul>{% for n in v.notes %}<li>{{ n }}</li>{% endfor %}</ul></div>{% endif %}
 {% elif not p4.error %}<div class="card empty-list-card"><span class="empty-icon">🧠</span><div><b>Zatím žádný sken</b><div class="muted">Spusť „Dnešní sken“ nebo „Nadcházející 48 h“. Výsledky se tu zobrazí jako karty s verdiktem a nejlepšími možnostmi.</div></div></div>{% endif %}
+{% set tp = p4.tips %}{% if tp %}<h2 id="p4tips">Tipy Profilu 4</h2>
+<div class="card"><div class="muted">Každý tip Profilu 4 se po zápase vyhodnotí sám (automat zhruba 2,5 h po výkopu, nebo tlačítko „Vyhodnotit skončené“). Počítá se 1 jednotka na tip, opakovaně uložený tip jednoho zápasu jen jednou. CLV = kurz proti závěrečnému férovému kurzu.</div>
+<div class="stats p4stats">{% for name, s in (('Schválené sázky', tp.approved), ('Jen WATCH (nesázet)', tp.watch)) %}
+<div class="stat"><span>{{ name }}</span><b>{{ s.n }}</b><small>vyhodnoceno{% if loop.first %} · čeká {{ tp.open }}{% endif %}</small></div>
+<div class="stat"><span>Zisk · úspěšnost</span><b class="{{ 'pos' if s.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(s.profit) }} j.</b><small>{{ ('%.0f %%'|format(s.win_rate * 100)) if s.n else '–' }} výher · yield {{ ('%+.1f %%'|format(s.yield * 100)) if s.n else '–' }}</small></div>
+<div class="stat"><span>CLV</span><b>{{ ('%+.1f %%'|format(s.avg_clv * 100)) if s.clv_n else '–' }}</b><small>{{ s.clv_n }} se závěrečným kurzem · {{ s.yield_status }}</small></div>{% endfor %}</div></div>
+<div class="card tablewrap"><table class="cardt"><tr><th>Výkop</th><th>Zápas</th><th>Tip</th><th>Rozhodnutí</th><th>Výsledek</th><th class="num">Zisk (j.)</th><th class="num">CLV</th></tr>
+{% for r in tp.rows %}<tr class="{{ ('r-' ~ r.result) if r.result }}"><td class="muted">{{ (r.kickoff or '')[:16]|replace('T', ' ') }}</td><td><b>{{ r.match }}</b><div class="muted">{{ r.league }}</div></td>
+<td>{{ r.label }} @ <b>{{ '%.2f'|format(r.odds) }}</b> <span class="muted">{{ r.bookmaker }}</span></td>
+<td><span class="badge {{ 'tipb' if r.decision == 'APPROVED BET' else 'warn' }}">{{ 'SCHVÁLENO' if r.decision == 'APPROVED BET' else 'WATCH' }}</span></td>
+<td data-l="výsledek">{% if r.result %}<span class="res {{ 'won' if r.result in ('won', 'half_won') else 'lost' if r.result in ('lost', 'half_lost') else '' }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(r.result, r.result) }}</span> {{ r.score or '' }}{% else %}<span class="muted">čeká</span>{% endif %}</td>
+<td class="num {{ 'pos' if (r.profit or 0) >= 0 else 'neg' }}">{{ '%+.2f'|format(r.profit) if r.profit is not none else '–' }}</td>
+<td class="num">{{ '%+.1f %%'|format(r.clv * 100) if r.clv is not none else '–' }}</td></tr>
+{% else %}<tr><td colspan="7" class="muted">Zatím žádný schválený ani WATCH tip.</td></tr>{% endfor %}</table></div>{% endif %}
 {% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
 <h2 id="p4nhl">NHL</h2>
 {% set n = p4.nhl %}{% if n %}<div class="card"><div class="muted">Automat rozebere každých 6 hodin (a ráno) všechny zápasy NHL na 48 h ze zahraničních kurzů, které právě stáhl – kredity navíc nespotřebuje. Modely: A model bota (xG, brankáři, únava), B trh (Pinnacle / medián bez marže), C smíšený, D konzervativní. Stejná kontrolní vrstva a pravidla jako u fotbalu; vyhodnocení z NHL API.</div>
@@ -1506,16 +1524,50 @@ def create_app(database_url: str | None = None) -> Flask:
 
                 from .profil4 import nhl as p4nhl
 
+                details = _p4_details(store)
+                last = json.loads(store.get("web_last_view", "") or "null")
+                fid = request.args.get("p4fid", "")
                 return {"status": st, "key": bool(key), "budget": b, "run_limit": P4.budget.max_per_run, "report": store.get("web_last_report", ""),
-                        "view": json.loads(store.get("web_last_view", "") or "null"),
+                        "view": last if last and last.get("kind") == "scan" else None,
+                        "detail": details.get(fid), "cached": set(details), "tips": _p4_tips(store),
                         "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
                 store.close()
         except Exception as e:  # noqa: BLE001 - panel nesmi spadnout kvuli Profilu 4
-            return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None, "nhl": None, "nhl_report": ""}
+            return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None, "detail": None,
+                    "cached": set(), "tips": None, "nhl": None, "nhl_report": ""}
 
-    def _p4_run(fn, view=None):
-        """Spusti akci Profilu 4; `fn` vraci vysledek, `view` z nej udela karty pro panel (text zustava jako zaloha)."""
+    P4_DETAILS = "web_p4_details"  # rozbory jednotlivych zapasu {fixture_id: karty}; prehled skenu zustava zvlast
+
+    def _p4_details(store) -> dict:
+        details = json.loads(store.get(P4_DETAILS, "") or "{}")
+        last = json.loads(store.get("web_last_view", "") or "null")
+        if last and last.get("kind") == "analysis":  # starsi stav: rozbor prepsal prehled
+            details.setdefault(str(last.get("fixture_id")), last)
+        return details
+
+    def _p4_save_detail(store, data: dict) -> None:
+        details = _p4_details(store)
+        details.pop(str(data.get("fixture_id")), None)
+        details[str(data.get("fixture_id"))] = data
+        store.set(P4_DETAILS, json.dumps(dict(list(details.items())[-30:]), ensure_ascii=False, default=str))
+
+    def _p4_tips(store) -> dict:
+        """Tipy Profilu 4 s vysledky (vyhodnocuje automat i tlacitko Vyhodnotit skoncene)."""
+        from .profil4 import history
+
+        rows = [dict(r) for r in store.query("SELECT * FROM tips ORDER BY kickoff DESC, id DESC")]
+        bets, _ = history.unique_bets(rows)
+        approved = [r for r in bets if r["decision"] == history.APPROVED]
+        watch = [r for r in bets if r["decision"] != history.APPROVED and "WATCH" in (r["decision"] or "")]
+        bets.sort(key=lambda r: (r["kickoff"] or "", r["id"]), reverse=True)
+        return {"approved": history.bet_stats(approved), "watch": history.bet_stats(watch),
+                "open": sum(r["result"] is None for r in approved),
+                "rows": [r for r in bets if r["decision"] == history.APPROVED or "WATCH" in (r["decision"] or "")][:60]}
+
+    def _p4_run(fn, view=None, save=None):
+        """Spusti akci Profilu 4; `fn` vraci vysledek, `view` z nej udela karty pro panel (text zustava jako zaloha).
+        `save(store, karty)` ulozi karty jinam nez jako prehled skenu (rozbor jednoho zapasu)."""
         from .profil4.cli import build
         from .profil4.store import utcnow as p4_now  # Profil 4 pocita s casem vcetne pasma (UTC)
 
@@ -1526,7 +1578,11 @@ def create_app(database_url: str | None = None) -> Flask:
             text = res if view is None else view[0](res, now)
             store.set("web_last_report", text)
             if view is not None:
-                store.set("web_last_view", json.dumps(view[1](res, now), ensure_ascii=False, default=str))
+                data = view[1](res, now)
+                if save is not None:
+                    save(store, data)
+                else:
+                    store.set("web_last_view", json.dumps(data, ensure_ascii=False, default=str))
             return text
         finally:
             store.close()
@@ -1553,11 +1609,12 @@ def create_app(database_url: str | None = None) -> Flask:
         try:
             fid = int(request.form["fixture_id"])
             _p4_run(lambda st, pv, now: hunter.analyze_fixture(pv, fid, now, P4),
-                    (report.format_analysis, view.analysis))
+                    (report.format_analysis, view.analysis), save=_p4_save_detail)
             flash(f"Analýza zápasu {fid} hotová.")
         except Exception as e:  # noqa: BLE001
             flash(f"Chyba analýzy: {e}")
-        return redirect(url_for("index", tab="profil4"))
+            return redirect(url_for("index", tab="profil4"))
+        return redirect(url_for("index", tab="profil4", p4fid=fid))
 
     @app.post("/profil4/odds")
     def profil4_odds():
@@ -1584,10 +1641,12 @@ def create_app(database_url: str | None = None) -> Flask:
         from .profil4 import history
 
         try:
-            flash(_p4_run(lambda st, pv, now: "\n".join(history.settle(st, pv, now)) or "Nic k vyhodnocení."))
+            msgs = _p4_run(lambda st, pv, now: "\n".join(history.settle(st, pv, now)))
+            flash(f"Vyhodnoceno: {len(msgs.splitlines())} – výsledky jsou v přehledu Tipy Profilu 4 níže."
+                  if msgs else "Nic nového k vyhodnocení – všechny skončené zápasy už výsledek mají (Tipy Profilu 4 níže).")
         except Exception as e:  # noqa: BLE001
             flash(f"Chyba: {e}")
-        return redirect(url_for("index", tab="profil4"))
+        return redirect(url_for("index", tab="profil4", _anchor="p4tips"))
 
     @app.post("/profil4/evaluate")
     def profil4_eval():

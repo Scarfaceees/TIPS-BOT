@@ -46,6 +46,10 @@ class Profile:
 
 
 PROPS = ("ROHY_", "KARTY_")
+# Rohy a karty: sance = smes modelu a trhu (Pinnacle, jinak median kancelari bez marze). Model rohu a karet je ve
+# zpetnem testu (2 656 zapasu 2025/26) jen o 1-4 % lepsi nez ligovy prumer, trh zna rozhodci, derby a sestavy –
+# samotny model vybiral hlavne zapasy, kde se mylil nejvic (11/2026: 2 z 11, slibovany zisk +24 %).
+PROPS_MODEL_WEIGHT = 0.25
 
 
 PROFILES = (
@@ -64,8 +68,9 @@ PROFILES = (
             "a vyhodnotí se – i když ho pak bot zruší (pokles kurzu) nebo vyprší; tak je vidět skutečná úspěšnost tipů",
             method="tips"),
     Profile("rohy", "Rohy a karty",
-            "jen rohy a karty: model týmů (a u karet rozhodčího) proti kurzům kanceláří z API-Football "
-            "(Pinnacle, Bet365, Betano…) nebo ručně zadaným českým; u zápasu výběr s nejvyšším čekaným ziskem od 5 %; "
+            "jen rohy a karty: šance = 25 % model týmů (a u karet rozhodčího) + 75 % trh (Pinnacle bez marže, jinak "
+            "medián kanceláří z API-Football); od 21. 11. 2026, dřív jen model. Proti kurzům kanceláří (Pinnacle, "
+            "Bet365, Betano…); u zápasu výběr s nejvyšším čekaným ziskem od 5 %; "
             "jen 6 lig (Anglie, Španělsko, Německo, Itálie, Francie, Portugalsko)", props=True),
 )
 DEFAULT = PROFILES[0].key
@@ -185,6 +190,28 @@ def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: da
     )
 
 
+def props_market_p(ev, market: str, sel: str) -> tuple[float, str] | None:
+    """Ferova sance trhu na rohy/karty: Pinnacle bez marze, jinak median ostatnich kancelari (aspon 2)."""
+    from statistics import median
+
+    from .devig import DevigError, devig_power
+
+    mk = getattr(ev, "markets", {}).get(market)
+    if mk is None or sel not in mk.selections:
+        return None
+    i = mk.selections.index(sel)
+    fair = []
+    for book, prices in mk.books.items():
+        try:
+            f = devig_power([prices[s] for s in mk.selections])[i]
+        except (DevigError, KeyError):
+            continue
+        if book == "pinnacle":
+            return f, "Pinnacle"
+        fair.append(f)
+    return (median(fair), f"medián {len(fair)} kanc.") if len(fair) >= 2 else None
+
+
 def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetime, settings: Settings,
           ledger=None, extra: list | None = None) -> Pick | None:
     """Vyber s nejvyssim cekanym ziskem podle pravidel profilu. `extra` = dalsi trhy (median API-Football) jen pro
@@ -211,6 +238,15 @@ def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetim
             p = model.get(f"{e.market}:{sel}")
             if p is None or not (lo <= odds <= hi):
                 continue
+            detail = ""
+            if pr.props:  # rohy a karty: vazeno k trhu; bez kurzu trhu se nesazi
+                mkt = props_market_p(ev, e.market, sel)
+                if mkt is None:
+                    continue
+                pm = p
+                p = PROPS_MODEL_WEIGHT * pm + (1 - PROPS_MODEL_WEIGHT) * mkt[0]
+                detail = (f"Šance {p * 100:.0f} % = {PROPS_MODEL_WEIGHT:.0%} model ({pm * 100:.0f} %) + "
+                          f"{1 - PROPS_MODEL_WEIGHT:.0%} trh {mkt[1]} ({mkt[0] * 100:.0f} %).")
             edge = p * odds - 1.0
             if edge >= pr.min_ev and (best is None or edge > best[0]):
                 flags = ["čekaný zisk nad 15 % je podezřelý, ověř ručně"] if edge > 0.15 else []
@@ -218,7 +254,7 @@ def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetim
                     id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
                     day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=e.market,
                     selection=sel, odds=odds, book=e.book, p_model=round(p, 4), source="model",
-                    created=now.isoformat(), flags=flags, profile=pr.key,
+                    created=now.isoformat(), flags=flags, profile=pr.key, detail=detail,
                 ))
     return best[1] if best else None
 

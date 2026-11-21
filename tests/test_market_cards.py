@@ -31,9 +31,9 @@ def test_profil4_page_renders_table_and_cards_with_real_categories(tmp_path):
     prov, _, _, _ = make()
     v = view.analysis(hunter.analyze_fixture(prov, FID, NOW, P4, simulations=1_000, record=False), NOW)
     st = open_store()
-    st.set("web_last_view", json.dumps(v, ensure_ascii=False, default=str))
+    st.set("web_p4_details", json.dumps({str(FID): v}, ensure_ascii=False, default=str))
     st.close()
-    html = create_app(f"sqlite:///{tmp_path / 'p.db'}").test_client().get("/?tab=profil4").get_data(as_text=True)
+    html = create_app(f"sqlite:///{tmp_path / 'p.db'}").test_client().get(f"/?tab=profil4&p4fid={FID}").get_data(as_text=True)
     assert "Všechny trhy" in html and html.count('<details class="mcard') == len(v["markets"])
     assert html.count("<tr data-cat=") == len(v["markets"])  # desktopova tabulka zustava
     cats = {market_cat(m["market_code"]) for m in v["markets"]}

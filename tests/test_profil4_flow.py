@@ -321,13 +321,18 @@ def test_web_panel_profil4_cards_with_scan_and_analysis(tmp_path, monkeypatch):
     for v, must in ((view.scan(rep), ("Výsledek skenu", "Rychlý průchod", "Verdikt")),
                     (view.analysis(an, NOW), ("Modely (1X2", "Monte Carlo", "Kvalita dat", "A – vlastní", "Verdikt"))):
         store, _ = _real_build(None, cfg)
-        store.set("web_last_view", json.dumps(v, ensure_ascii=False, default=str))
+        if v["kind"] == "scan":
+            store.set("web_last_view", json.dumps(v, ensure_ascii=False, default=str))
+        else:  # rozbor zapasu se uklada zvlast a prehled skenu neprepise
+            store.set("web_p4_details", json.dumps({str(FID): v}, ensure_ascii=False, default=str))
         store.close()
-        html = c.get("/?tab=profil4").get_data(as_text=True)
+        html = c.get("/?tab=profil4" + ("" if v["kind"] == "scan" else f"&p4fid={FID}")).get_data(as_text=True)
         for text in must:
             assert text in html
         assert v["verdict"] in html
-    assert "Zatím žádný sken" not in html
+    assert "Zatím žádný sken" not in html and "Zpět na přehled skenu" in html
+    html = c.get("/?tab=profil4").get_data(as_text=True)  # zpet: prehled skenu zustal
+    assert "Výsledek skenu" in html and "Modely (1X2" not in html and "Tipy Profilu 4" in html
 
 
 def test_web_panel_profil4_scan_button_runs(tmp_path, monkeypatch):

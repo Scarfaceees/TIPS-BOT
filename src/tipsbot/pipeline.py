@@ -422,6 +422,12 @@ def scan_league(
 
     league_tips = list(ledger.s.scalars(sa_select(Tip).where(Tip.league == league)))
     paper.mirror_tips(ledger, league_tips, now)
+    try:  # kazdy kombi tiket, ktery Prehled navrhuje, do Sledovani (profil Kombi)
+        from . import kombi
+
+        kombi.record_current(ledger, now)
+    except Exception as e:  # noqa: BLE001 - sledovani kombi nesmi shodit sken
+        log.warning("sledovani kombi tiketu selhalo: %s", e)
 
     if provider.unmatched:
         report.notes.append("tymy bez modelu (jen trh): " + ", ".join(sorted(provider.unmatched)))

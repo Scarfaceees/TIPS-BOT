@@ -67,6 +67,10 @@ PROFILES = (
             "každý oficiální tip bota (TIP / VSADIT), vsazený i nevsazený, se zapíše s kurzem a šancí v okamžiku tipu "
             "a vyhodnotí se – i když ho pak bot zruší (pokles kurzu) nebo vyprší; tak je vidět skutečná úspěšnost tipů",
             method="tips"),
+    Profile("kombi", "Kombi tikety",
+            "každý kombinovaný tiket, který bot navrhne v Přehledu (doporučený i další kombinace), 2–3 sázky z různých "
+            "zápasů, celkový kurz = součin kurzů; vyhodnotí se po všech zápasech – i když ho bot před výkopem přestal "
+            "navrhovat", method="kombi"),
     Profile("rohy", "Rohy a karty",
             "jen rohy a karty: šance = 25 % model týmů (a u karet rozhodčího) + 75 % trh (Pinnacle bez marže, jinak "
             "medián kanceláří z API-Football); od 21. 11. 2026, dřív jen model. Proti kurzům kanceláří (Pinnacle, "
@@ -107,6 +111,7 @@ class Pick:
     flags: list[str] = field(default_factory=list)
     profile: str = DEFAULT
     detail: str = ""  # rozbor vyberu (Profil 3: ocekavane goly, simulace, scenare)
+    legs: list = field(default_factory=list)  # kombi tiket: nohy s vlastnim vysledkem (kombi.py)
 
     @property
     def ev(self) -> float | None:
@@ -271,7 +276,7 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
         if ev.kickoff <= now:
             continue
         for pr in PROFILES:
-            if not pr.active or pr.method == "tips":
+            if not pr.active or pr.method in ("tips", "kombi"):
                 continue
             if league == "NHL" and (pr.method != "edge" or pr.props):
                 continue  # scenare golu, simulace trhu a rohy/karty jsou jen fotbalove
@@ -367,7 +372,7 @@ def settle(ledger, results: pd.DataFrame) -> list[str]:
     picks = load(ledger)
     notes = []
     for p in picks:
-        if p.result is not None:
+        if p.result is not None or p.legs:  # kombi tikety vyhodnocuje kombi.settle po nohach
             continue
         got = settle_bet(results, p.name, datetime.fromisoformat(p.day).date(), p.market, p.selection)
         if got is None:

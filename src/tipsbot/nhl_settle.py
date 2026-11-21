@@ -96,15 +96,18 @@ def find_game(games: list[dict], name: str, kickoff: datetime) -> dict | None:
 
 def settle_paper(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
     """Vyhodnoti sledovane vybery NHL, jejichz zapas zacal pred vic nez 3,5 h (1 dotaz na herni den)."""
-    from . import paper
+    from . import kombi, paper
 
     picks = paper.load(ledger)
     todo = [p for p in picks if p.league == "NHL" and p.result is None
             and now - timedelta(days=10) < _utc(p.kickoff) < now - timedelta(hours=3, minutes=30)]
-    if not todo:
+    legs = [x for x in kombi.open_legs(ledger) if x["league"] == "NHL"
+            and now - timedelta(days=10) < _utc(x["kickoff"]) < now - timedelta(hours=3, minutes=30)]
+    if not todo and not legs:
         return []
     # herni den NHL je americke datum: zapas v 01:00 UTC patri k predchozimu dni
-    days = sorted({(_utc(p.kickoff) - timedelta(hours=d)).date() for p in todo for d in (0, 12)})
+    days = sorted({(_utc(k) - timedelta(hours=d)).date() for k in [p.kickoff for p in todo] + [x["kickoff"] for x in legs]
+                   for d in (0, 12)})
     games, notes = [], []
     for d in days:
         try:
@@ -124,7 +127,7 @@ def settle_paper(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
         notes.append(f"Sledovaný výběr NHL {p.name} {p.score}: {p.market} {p.selection} @ {p.odds:.2f} -> {res}")
     if any(p.result is not None for p in todo):
         paper.save(ledger, picks)
-    return notes
+    return notes + (kombi.settle_nhl(ledger, games) if legs else [])
 
 
 def is_nhl_match(name: str) -> bool:

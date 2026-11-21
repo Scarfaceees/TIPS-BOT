@@ -198,8 +198,12 @@ def _pending(ledger, now) -> list[tuple[str, date, str]]:
     from .storage import TICKET_OPEN, Ticket
 
     lo = now - timedelta(days=FRESH_DAYS)
+    from . import kombi
+
     out = [(p.name, date.fromisoformat(p.day), p.market) for p in paper.load(ledger)
-           if p.result is None and p.league != "NHL" and lo <= datetime.fromisoformat(p.kickoff) <= now - FRESH_AFTER]
+           if p.result is None and p.league != "NHL" and not p.legs and lo <= datetime.fromisoformat(p.kickoff) <= now - FRESH_AFTER]
+    out += [(x["name"], date.fromisoformat(x["day"]), x["market"]) for x in kombi.open_legs(ledger)
+            if x["league"] != "NHL" and lo <= datetime.fromisoformat(x["kickoff"]) <= now - FRESH_AFTER]
     out += [(t.match_name, t.match_day, t.market) for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))
             if t.league != "NHL" and t.match_day and lo.date() <= t.match_day <= now.date()]
     return out
@@ -284,7 +288,7 @@ def settle_everything(ledger) -> list[str]:
     """Stahne aktualni vysledky (ligy, poharty, reprezentace) a vyhodnoti tikety i sledovane vybery."""
     import sys
 
-    from . import paper
+    from . import kombi, paper
     from .cups import DOMESTIC, fetch_cups
     from .ingestion import fetch_football
     from .storage import utcnow
@@ -293,7 +297,7 @@ def settle_everything(ledger) -> list[str]:
     # nejdriv cerstve vysledky z API-Football (zapasy odehrane dnes), samostatne – jine nazvy tymu se nemichaji
     fresh, notes = fresh_results(ledger, utcnow())
     if len(fresh):
-        notes += settle_open_tickets(ledger, fresh) + paper.settle(ledger, fresh)
+        notes += settle_open_tickets(ledger, fresh) + paper.settle(ledger, fresh) + kombi.settle(ledger, fresh)
     for lg in DOMESTIC:  # aktualni sezona (football-data.co.uk se dopln jednou denne)
         fetch_football(lg, seasons=1)
     fetch_cups(ledger.api_football_key(), ledger.football_data_key(), seasons=1)
@@ -308,7 +312,7 @@ def settle_everything(ledger) -> list[str]:
         results = pd.concat([results, intl.reindex(columns=results.columns)], ignore_index=True)
     except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
         print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
-    done = notes + settle_open_tickets(ledger, results) + paper.settle(ledger, results)
+    done = notes + settle_open_tickets(ledger, results) + paper.settle(ledger, results) + kombi.settle(ledger, results)
     return done if any("->" in n for n in done) else done + [nothing_to_settle(ledger, intl_last)]
 
 

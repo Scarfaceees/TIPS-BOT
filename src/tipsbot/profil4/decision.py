@@ -163,14 +163,19 @@ class Selection:
 def select(cands: list[Candidate], cfg: DecisionConfig) -> Selection:
     approved = sorted([c for c in cands if c.decision == APPROVED], key=rank_key)
     watch = sorted([c for c in cands if c.decision == WATCH], key=rank_key)
-    # maximum value jen z kandidatu, jejichz vypocet a sparovani kurzu prosly (jinak by vyhral chybny kurz)
-    pos = [c for c in cands if c.ev_c > 0 and c.ev_c <= cfg.suspicious_ev and c.validation is not None
-           and not c.validation[0]]
+    # maximum value jen ze schvalenych nebo sledovanych sazek v pasmu kurzu, jejichz vypocet a sparovani kurzu
+    # prosly – NO BET (napr. kurz 13 mimo pasmo) se jako doporuceni nikdy neukaze
+    pos = [c for c in approved + watch if 0 < c.ev_c <= cfg.suspicious_ev and cfg.min_odds <= c.odds <= cfg.max_odds
+           and c.validation is not None and not c.validation[0]]
+
+    def p_eff(c: Candidate) -> float:
+        return c.p_win_c + 0.5 * c.p_push_c
 
     def sensible_score(c: Candidate) -> float:
-        return c.p_win_c * (c.robustness / 100.0) * c.data_quality
+        return p_eff(c) * (c.robustness / 100.0) * c.data_quality
 
-    pool_a = [c for c in (approved or watch) if c.odds >= cfg.sensible_min_odds]
+    pool_a = [c for c in (approved or watch) if cfg.sensible_min_odds <= c.odds <= cfg.sensible_max_odds
+              and p_eff(c) >= cfg.sensible_min_p]
     cat_a = max(pool_a, key=sensible_score) if pool_a else None
     pool_b = [c for c in approved if c.odds >= cfg.value_min_odds]
     cat_b = max(pool_b, key=lambda c: c.ev_c) if pool_b else None

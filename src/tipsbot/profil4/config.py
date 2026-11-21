@@ -141,6 +141,10 @@ class DecisionConfig:
     max_odds: float = 5.00
     value_min_odds: float = 1.50  # kategorie B – Value tip
     sensible_min_odds: float = 1.25  # kategorie A – nejrozumnejsi tip
+    # kategorie A musi byt opravdu rozumna sazka: aspon 45% sance na vyhru (vraceni vkladu napul) a kurz do 2,30;
+    # jinak A neni (driv se A stal i handicap @ 4.96 s 17 % jen proto, ze nic jineho schvalene nebylo)
+    sensible_min_p: float = 0.45
+    sensible_max_odds: float = 2.30
     suspicious_ev: float = 0.25  # vys = nejspis chyba kurzu/trhu => jen WATCH s upozornenim
     watch_ev: float = 0.0  # WATCH, kdyz EV(C) > watch_ev ale neco chybi
     # kontrolni vrstva (integrity.py)

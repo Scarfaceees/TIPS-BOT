@@ -84,3 +84,22 @@ def test_best_available_never_approved():
     assert sel.verdict == D.WATCH and sel.best_available is w and w.decision != D.APPROVED
     assert sel.categories[D.CAT_B] is None and "NENÍ schválená" in sel.explanation
     assert D.select([], CFG).verdict == D.NO_BET
+
+
+def test_category_a_needs_real_chance_and_c_never_shows_no_bet():
+    # schvaleny handicap @ 4.96 s 17 % vyhry (+24 % vraceni) nesmi byt "nejrozumnejsi tip"
+    long = D.decide(cand(odds=4.96, ev_c=0.058, ev_d=0.035, rob=67, pa=0.21, pb=0.21, key=("AH_0.0", "home")), CFG)
+    long.p_win_c, long.p_push_c = 0.166, 0.237
+    # kurz 13 mimo pasmo s vysokym EV = NO BET; nesmi se ukazat jako C – maximum value
+    outsider = D.decide(cand(odds=13.22, ev_c=0.13, ev_d=0.14, rob=79, pa=0.08, pb=0.086, key=("1X2", "2")), CFG)
+    assert long.decision == D.APPROVED and outsider.decision == D.NO_BET
+    sel = D.select([long, outsider], CFG)
+    assert sel.categories[D.CAT_A] is None and sel.categories[D.CAT_C] is long and sel.categories[D.CAT_B] is long
+    fav = D.decide(cand(odds=1.80, ev_c=0.04, ev_d=0.01, rob=80), CFG)  # p_win 53 %
+    assert D.select([long, outsider, fav], CFG).categories[D.CAT_A] is fav
+
+
+def test_zero_handicap_label_has_no_minus_zero():
+    from tipsbot.profile2 import label
+
+    assert label("AH_0.0", "away") == "hosté handicap ±0,0" and label("AH_-1.5", "away") == "hosté handicap +1,5"

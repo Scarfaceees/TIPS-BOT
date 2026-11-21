@@ -353,6 +353,13 @@ def test_web_panel_profil4_scan_button_runs(tmp_path, monkeypatch):
                       ("/profil4/analyze", {"fixture_id": str(FID)}), ("/profil4/settle", {}), ("/profil4/evaluate", {})):
         html = c.post(url, data=data, follow_redirects=True).get_data(as_text=True)
         assert "offset-naive" not in html and "Chyba" not in html, url
+    assert "Jak přesně modely odhadují" in html or "Tipy celkem" in html  # uspesnost je videt v panelu, ne jen v textu
+    from tipsbot.profil4 import nhl as p4nhl
+
+    called = []
+    monkeypatch.setattr(p4nhl, "settle", lambda st, now, fetch=None: called.append(now) or ["NHL vyhodnoceno"])
+    html = c.post("/profil4/settle", follow_redirects=True).get_data(as_text=True)
+    assert called and "Vyhodnoceno: 1" in html  # tlacitko vyhodnoti i NHL
 
 
 def test_web_panel_profil4_unavailable(tmp_path, monkeypatch):

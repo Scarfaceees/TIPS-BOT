@@ -996,6 +996,20 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <td class="num {{ 'pos' if (r.profit or 0) >= 0 else 'neg' }}">{{ '%+.2f'|format(r.profit) if r.profit is not none else '–' }}</td>
 <td class="num">{{ '%+.1f %%'|format(r.clv * 100) if r.clv is not none else '–' }}</td></tr>
 {% else %}<tr><td colspan="7" class="muted">Zatím žádný schválený ani WATCH tip.</td></tr>{% endfor %}</table></div>{% endif %}
+{% set ev = p4.eval %}<h2 id="p4eval">Úspěšnost modelů</h2>
+{% if ev %}<div class="card"><div class="muted">Přepočet po každém vyhodnocení (automat každou hodinu, nebo tlačítko „Úspěšnost modelů“), naposledy {{ ev.t[:16]|replace('T', ' ') }} UTC. Průkaznost podle 95% intervalu z bootstrapu po zápasech; pod 30 zápasy jen orientačně.</div>
+{% set c = ev.calibration %}{% if c and c.models %}<h3>Jak přesně modely odhadují šance</h3>
+<div class="muted">Všechny předpovědi před výkopem ({{ c.matches }} zápasů, {{ c.predictions }} předpovědí). Nižší Brier a log loss = přesnější. „Trh“ = kurzy bez marže; model, který trh neporazí, nepřidává hodnotu.</div>
+<div class="tablewrap"><table class="mkt"><tr><th>Model</th><th class="num">Zápasů</th><th class="num">Brier</th><th class="num">Log loss</th><th class="num">Odhad / skutečnost</th><th>Proti trhu</th></tr>
+{% for name, m in c.models.items() %}<tr><td><b>{{ name }}</b></td><td class="num">{{ m.matches }}</td><td class="num">{{ '%.4f'|format(m.brier) }}</td><td class="num">{{ '%.4f'|format(m.log_loss) }}</td>
+<td class="num">{{ '%.1f'|format(m.mean_p * 100) }} / {{ '%.1f'|format(m.rate * 100) }} %</td><td class="muted">{% if m.vs_market %}{{ '%+.4f'|format(m.vs_market.diff) }} – {{ m.vs_market.status }}{% else %}–{% endif %}</td></tr>{% endfor %}</table></div>
+<div class="muted">A = vlastní model, B = trh, C = kombinace (rozhoduje o sázkách), D = konzervativní.</div>{% endif %}
+{% set a = ev.all %}<h3>Tipy celkem (1 j. na tip)</h3>
+<div class="muted">{{ a.matches }} zápasů, {{ a.n }} tipů · zisk {{ '%+.2f'|format(a.profit) }} j. · úspěšnost {{ ('%.0f %%'|format(a.win_rate * 100)) if a.n else '–' }} · yield {{ ('%+.1f %%'|format(a.yield * 100)) if a.n else '–' }} · CLV {{ ('%+.1f %%'|format(a.avg_clv * 100)) if a.clv_n else '–' }} ({{ a.clv_n }}) · {{ a.yield_status }}</div>
+{% for g in ('rozhodnutí', 'kategorie', 'trh', 'kurzové pásmo', 'soutěž') if ev.groups[g] %}<details class="fold"><summary>Podle: {{ g }}</summary><div class="tablewrap"><table class="mkt"><tr><th>{{ g }}</th><th class="num">Tipů</th><th class="num">Zisk (j.)</th><th class="num">Yield</th><th class="num">CLV</th></tr>
+{% for k, s in ev.groups[g].items() if s.n %}<tr><td>{{ k }}</td><td class="num">{{ s.n }}</td><td class="num {{ 'pos' if s.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(s.profit) }}</td><td class="num">{{ '%+.1f %%'|format(s.yield * 100) }}</td><td class="num">{{ ('%+.1f %%'|format(s.avg_clv * 100)) if s.clv_n else '–' }}</td></tr>
+{% else %}<tr><td colspan="5" class="muted">zatím nic vyhodnoceno</td></tr>{% endfor %}</table></div></details>{% endfor %}</div>
+{% else %}<div class="card muted">Zatím nespočítáno – klikni na „Úspěšnost modelů“ nahoře, nebo počkej na automat (po vyhodnocení zápasů).</div>{% endif %}
 {% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
 <h2 id="p4nhl">NHL</h2>
 {% set n = p4.nhl %}{% if n %}<div class="card"><div class="muted">Automat rozebere každých 6 hodin (a ráno) všechny zápasy NHL na 48 h ze zahraničních kurzů, které právě stáhl – kredity navíc nespotřebuje. Modely: A model bota (xG, brankáři, únava), B trh (Pinnacle / medián bez marže), C smíšený, D konzervativní. Stejná kontrolní vrstva a pravidla jako u fotbalu; vyhodnocení z NHL API.</div>
@@ -1540,6 +1554,7 @@ def create_app(database_url: str | None = None) -> Flask:
                 return {"status": st, "key": bool(key), "budget": b, "run_limit": P4.budget.max_per_run, "report": store.get("web_last_report", ""),
                         "view": last if last and last.get("kind") == "scan" else None,
                         "detail": details.get(fid), "cached": set(details), "tips": _p4_tips(store),
+                        "eval": json.loads(store.get("web_p4_eval", "") or "null"),
                         "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
                 store.close()
@@ -1651,7 +1666,14 @@ def create_app(database_url: str | None = None) -> Flask:
         from .profil4 import history
 
         try:
-            msgs = _p4_run(lambda st, pv, now: "\n".join(history.settle(st, pv, now)))
+            from .profil4 import closing, nhl as p4nhl
+
+            def fn(st, pv, now):
+                out = history.settle(st, pv, now) + p4nhl.settle(st, now)
+                closing.store_evaluation(st, now)
+                return "\n".join(out)
+
+            msgs = _p4_run(fn)
             flash(f"Vyhodnoceno: {len(msgs.splitlines())} – výsledky jsou v přehledu Tipy Profilu 4 níže."
                   if msgs else "Nic nového k vyhodnocení – všechny skončené zápasy už výsledek mají (Tipy Profilu 4 níže).")
         except Exception as e:  # noqa: BLE001
@@ -1662,12 +1684,14 @@ def create_app(database_url: str | None = None) -> Flask:
     def profil4_eval():
         from .profil4 import history, report
 
+        from .profil4 import closing
+
         try:
-            _p4_run(lambda st, pv, now: report.format_evaluation(history.evaluate(st)))
-            flash("Vyhodnocení hotové.")
+            _p4_run(lambda st, pv, now: report.format_evaluation(closing.store_evaluation(st, now)))
+            flash("Úspěšnost modelů přepočítána – je níže v sekci Úspěšnost modelů.")
         except Exception as e:  # noqa: BLE001
             flash(f"Chyba: {e}")
-        return redirect(url_for("index", tab="profil4"))
+        return redirect(url_for("index", tab="profil4", _anchor="p4eval"))
 
     def done(msg: str, tab: str):
         """Po uspesnem odeslani formulare presmeruje na bezne zobrazeni (obnoveni stranky nic znovu neodesle)."""

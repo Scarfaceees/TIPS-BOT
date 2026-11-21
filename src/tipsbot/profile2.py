@@ -187,7 +187,7 @@ def label(market: str, selection: str) -> str:
     m = _LINE.match(market)
     kind, line = m.group(1), float(m.group(2))
     if kind == "AH":
-        val = line if selection == "home" else -line
+        val = (line if selection == "home" else -line) + 0.0  # -0.0 -> 0.0 (jinak "±-0,0")
         return f"{'domácí' if selection == 'home' else 'hosté'} handicap {'+' if val > 0 else '' if val else '±'}{_num(val)}"
     who = {"OU": "", "TTH": "domácí ", "TTA": "hosté "}[kind]
     word = "víc než" if selection == "over" else "méně než"

@@ -24,11 +24,25 @@ from .config import P4, Profil4Config
 from .provider import Fixture
 from .store import iso, open_store, parse_dt, utcnow
 
-SETTLE_EVERY = timedelta(hours=3)
+SETTLE_EVERY = timedelta(hours=1)
 
 
 def _done_slots(store, fid: int) -> set[int]:
     return {r["slot_min"] for r in store.query("SELECT slot_min FROM odds_observations WHERE fixture_id=?", (fid,))}
+
+
+EVAL_KEY = "web_p4_eval"
+
+
+def store_evaluation(st, now: datetime) -> dict:
+    """Uspesnost modelu a tipu pro panel (prepocet po kazdem vyhodnoceni, trva par sekund)."""
+    import json
+
+    from . import history
+
+    ev = history.evaluate(st)
+    st.set(EVAL_KEY, json.dumps({"t": iso(now), **ev}, ensure_ascii=False, default=str))
+    return ev
 
 
 def due(store, now: datetime, cfg: Profil4Config) -> tuple[list[dict], bool]:
@@ -167,6 +181,10 @@ def tick(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> li
 
             notes += history.settle(st, prov, now) + nhl.settle(st, now)
             st.set("auto_settle_at", iso(now))
+            try:
+                store_evaluation(st, now)
+            except Exception as e:  # noqa: BLE001 - prehled uspesnosti nesmi zastavit sledovani kurzu
+                notes.append(f"úspěšnost modelů: chyba ({type(e).__name__})")
     finally:
         st.close()
     return notes

@@ -300,7 +300,7 @@ def mirror_tips(ledger, tips, now: datetime) -> int:
     tipu. Pred zacatkem zapasu se zaznam aktualizuje (obnoveny tip), zruseni / vyprseni se jen poznamena –
     vyhodnoti se vzdy, aby statistika nebyla vylepsena vynechanim tipu, ktere bot pozdeji stahl."""
     picks = load(ledger)
-    have = {p.match_id: p for p in picks if p.profile == TIPS_PROFILE}
+    have = {(p.match_id, p.market, p.selection) for p in picks if p.profile == TIPS_PROFILE}
     n = 0
     for t in tips:
         pid = f"tip{t.id}"
@@ -315,14 +315,15 @@ def mirror_tips(ledger, tips, now: datetime) -> int:
             elif old.result is None and flags and flags != old.flags:
                 old.flags = flags
             continue
-        if t.match_id in have and have[t.match_id].market == t.market and have[t.match_id].selection == t.selection:
+        if (t.match_id, t.market, t.selection) in have:
             continue  # stejny vyber u zapasu uz sledovan (novy tip po zruseni)
-        picks.append(Pick(
+        picks.append(pick := Pick(
             id=pid, league=t.league, match_id=t.match_id, name=t.match_name, day=ko.date().isoformat(),
             kickoff=ko.isoformat(), market=t.market, selection=t.selection, odds=t.raw_odds, book=t.bookmaker,
             p_model=round(t.model_probability, 4), source="tip", created=(t.timestamp or now).isoformat(), flags=flags,
             profile=TIPS_PROFILE, detail=f"EV {t.ev_percentage:+.1f} % (práh {t.ev_threshold:.1f} %), férový kurz "
                                          f"{t.devigged_sharp_odds:.2f}, sázet od {t.min_odds:.2f}"))
+        have.add((pick.match_id, pick.market, pick.selection))
         n += 1
     save(ledger, picks)
     return n

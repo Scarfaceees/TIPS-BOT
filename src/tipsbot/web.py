@@ -738,7 +738,9 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('paper_result', pick_id=p.id) }}" class="row" style="margin:4px 0"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}">
 <select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button class="sm">Zapsat</button></form>
 <form method="post" action="{{ url_for('paper_delete', pick_id=p.id) }}" style="margin:0"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}"><button class="ghost sm">Smazat</button></form></details></td></tr>
-{% else %}<tr><td colspan="6" class="muted">Nic nesledováno. Vlož české kurzy (Nastavení) a spusť sken.</td></tr>{% endfor %}</table></div>
+{% else %}<tr><td colspan="6" class="muted">{% if prof.method == 'tips' %}Žádný otevřený tip. Sem se samo zapíše každé oficiální doporučení bota (TIP / VSADIT z Přehledu), i když ho nevsadíš nebo ho bot později zruší – tak je vidět, jak by tipy dopadly.
+{% if last_tip %}Bot zatím vydal {{ last_tip.n }} tipů, poslední {{ last_tip.when }} ({{ last_tip.name }}). Tip vznikne jen u sázky, která i po smíchání modelu s Pinnacle splní práh čekaného zisku – to bývá vzácné, prázdná záložka tedy neznamená chybu.{% else %}Bot zatím nevydal žádný tip.{% endif %}
+{% else %}Teď nic nečeká. Profil vybírá z kurzů při každém skenu automatu; když u zápasu nic nesplní jeho pravidla, nic nepřidá.{% endif %}</td></tr>{% endfor %}</table></div>
 {% if prof.method == 'sim' %}<h2>Rozbory zápasů ({{ sim_rows|length }})</h2>
 <div class="card"><div class="muted">Profil 3 rozebere při každém skenu každý zápas – i když vhodnou sázku nenajde. Góly se fitují z kurzů kanceláří (kurzové API + medián kanceláří z API-Football), pak simulace a 4 scénáře. Rozbor odehraného zápasu zmizí po 2 dnech.</div>
 {% for a in sim_rows %}<details class="fold"><summary><b>{{ a.name }}</b> <span class="muted">{{ a.kickoff[:16]|replace('T', ' ') }} UTC · {{ leagues[a.league].name if a.league in leagues else a.league }}</span><br>
@@ -1474,6 +1476,7 @@ def create_app(database_url: str | None = None) -> Flask:
             quota=_quota_view(led) if tab == "prehled" else None,
             goalies=_goalie_view(led) if tab == "nastaveni" else None,
             mq=json.loads(led._get("model_quality", "") or "null") if tab == "overeni" else None,
+            last_tip=_last_tip(session) if tab == "sledovani" and prof.method == "tips" else None,
             sim_rows=sorted(paper.load_analyses(led).values(), key=lambda a: a["kickoff"])
             if tab == "sledovani" and prof.method == "sim" else [],
             mq_min=30,
@@ -1509,6 +1512,13 @@ def create_app(database_url: str | None = None) -> Flask:
         except Exception:  # noqa: BLE001 - metrika nesmi shodit panel
             pass
         return out
+
+    def _last_tip(session) -> dict | None:
+        from sqlalchemy import func, select
+
+        n = session.scalar(select(func.count()).select_from(Tip)) or 0
+        t = session.scalars(select(Tip).order_by(Tip.timestamp.desc()).limit(1)).first()
+        return {"n": n, "when": f"{t.timestamp:%d.%m.%Y}", "name": t.match_name} if t else None
 
     def _p4_view(led) -> dict:
         try:

@@ -109,3 +109,24 @@ def test_panel_shows_model_quality(tmp_path):
         s.commit()
     html = create_app(url).test_client().get("/?tab=overeni").get_data(as_text=True)
     assert "Model vs. trh v ostrém provozu" in html and "vyhodnoceno 1 z 1" in html
+
+
+def test_tips_tab_explains_why_it_is_empty(tmp_path):
+    from tipsbot.web import create_app
+
+    url = f"sqlite:///{tmp_path / 't.db'}"
+    c = create_app(url).test_client()
+    html = c.get("/?tab=sledovani&profile=tipy").get_data(as_text=True)
+    assert "Bot zatím nevydal žádný tip" in html and "Vlož české kurzy" not in html
+    with make_session_factory(url)() as s:
+        _tip(Ledger(s), status=TIP_CANCELLED)
+        s.commit()
+    html = c.get("/?tab=sledovani&profile=tipy").get_data(as_text=True)
+    assert "Bot zatím vydal 1 tipů, poslední 19.11.2026" in html
+
+
+def test_reissued_tip_for_same_bet_is_tracked_once():
+    led = Ledger(make_session_factory("sqlite://")())
+    a, b = _tip(led, status=TIP_CANCELLED), _tip(led, odds=2.5)  # zruseny a znovu vydany tip na stejnou sazku
+    assert paper.mirror_tips(led, [a, b], NOW) == 1
+    assert [p.odds for p in paper.load(led) if p.profile == "tipy"] == [2.4]

@@ -416,10 +416,11 @@ def scan_league(
     views.sort(key=lambda v: v.kickoff)
     ledger.set_analysis(league, analysis.dumps(views))
 
-    # vsechny oficialni tipy teto souteze (i zrusene a vyprsele) do Sledovani, at se vyhodnoti skutecna uspesnost
+    # vsechny oficialni tipy teto souteze (i zrusene a vyprsele, i ty starsi nez Sledovani) do Sledovani, at se
+    # vyhodnoti skutecna uspesnost; uz sledovane mirror_tips preskoci
     from sqlalchemy import select as sa_select
 
-    league_tips = list(ledger.s.scalars(sa_select(Tip).where(Tip.league == league, Tip.kickoff > now - timedelta(days=3))))
+    league_tips = list(ledger.s.scalars(sa_select(Tip).where(Tip.league == league)))
     paper.mirror_tips(ledger, league_tips, now)
 
     if provider.unmatched:

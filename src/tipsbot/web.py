@@ -1582,6 +1582,8 @@ def create_app(database_url: str | None = None) -> Flask:
         from .profil4 import history
 
         rows = [dict(r) for r in store.query("SELECT * FROM tips ORDER BY kickoff DESC, id DESC")]
+        for r in rows:  # starsi zaznamy maji popisek "±-0,0"
+            r["label"] = (r["label"] or r["market"]).replace("±-0", "±0")
         bets, _ = history.unique_bets(rows)
         approved = [r for r in bets if r["decision"] == history.APPROVED]
         watch = [r for r in bets if r["decision"] != history.APPROVED and "WATCH" in (r["decision"] or "")]

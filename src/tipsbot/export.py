@@ -281,6 +281,14 @@ METHOD = [
 ]
 
 
+_FORMULA = ("=", "+", "-", "@", "\t", "\r")
+
+
+def safe_text(v):
+    """Text z externich zdroju (nazvy zapasu, tymu) nesmi Excel spustit jako vzorec (CSV/formula injection)."""
+    return "'" + v if isinstance(v, str) and v.startswith(_FORMULA) else v
+
+
 # --- vystupy --------------------------------------------------------------------------------------------------
 def to_csv(d: Data) -> bytes:
     buf = io.StringIO()
@@ -289,7 +297,8 @@ def to_csv(d: Data) -> bytes:
         w.writerow([f"# {line}"])
     w.writerow(COLUMNS)
     for r in d.records:
-        w.writerow(["" if v is None else (f"{v:.4f}".replace(".", ",") if isinstance(v, float) else v) for v in r.row()])
+        w.writerow(["" if v is None else (f"{v:.4f}".replace(".", ",") if isinstance(v, float) else safe_text(v))
+                    for v in r.row()])
     return ("﻿" + buf.getvalue()).encode("utf-8")  # BOM: cesky Excel otevre UTF-8 se strednikem spravne
 
 
@@ -357,6 +366,8 @@ def to_xlsx(d: Data) -> bytes:
         for i, r in enumerate(rows, top + 1):
             for j, v in enumerate(r, 1):
                 c = ws.cell(i, j, v)
+                if isinstance(v, str):  # text vzdy jako text, nikdy jako vzorec
+                    c.data_type = "s"
                 c.font = F
                 if fmt and j in fmt:
                     c.number_format = fmt[j]

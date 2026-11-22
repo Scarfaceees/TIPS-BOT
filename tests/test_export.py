@@ -194,3 +194,13 @@ def test_profil3_analysis_survives_panel_cleanup(tmp_path):
         paper._save_analysis(led, "ENG1", ev2, {"verdict": "sázka"}, NOW)
         assert set(paper.load_analyses(led)) == {"m2"}  # panel: staré po 2 dnech pryč
         assert {k for k, _, _ in led.archived("p3")} == {"m1", "m2"}  # archiv: navždy
+
+
+def test_external_text_is_never_a_formula(tmp_path):
+    evil = _pick("x", "won", 2.0)
+    evil.name = '=HYPERLINK("http://example.invalid","klik")'
+    d = _data(tmp_path, lambda led: paper.save(led, [evil]))
+    assert "'=HYPERLINK" in export.to_csv(d).decode("utf-8-sig")
+    ws = load_workbook(io.BytesIO(export.to_xlsx(d)))["Všechny tipy"]
+    cell = ws.cell(7, 5)
+    assert cell.value.startswith("=HYPERLINK") and cell.data_type == "s"

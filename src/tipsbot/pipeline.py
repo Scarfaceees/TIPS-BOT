@@ -255,6 +255,16 @@ def build_candidates(
     return out, has_line
 
 
+def _release(ledger: Ledger) -> None:
+    """Ulozi rozpracovany zapis skenu a uvolni zamek databaze pred dalsim stahovanim ze site.
+
+    Sken souteze stahuje zraneni, pocasi, sestavy, statistiky tymu a zpravy (s opakovanim i minuty). Kdyby po celou
+    dobu drzel otevrenou zapisovou transakci, panel (zapis tiketu, vysledku) i Profil 4 by po 60 s spadly na
+    "database is locked" (zjisteno v ostrem provozu 22.11.2026). Ulozene casti (cache kurzu, tipy, rozbory tymu)
+    jsou samostatne platne; pri chybe pozdeji se dalsi pruchod postara o zbytek."""
+    ledger.s.commit()
+
+
 def scan_league(
     league: str,
     ledger: Ledger,
@@ -292,10 +302,12 @@ def scan_league(
                 ledger.set_odds_cache(league, now, fetched.payload, fetched.credits_remaining)
         upcoming = [e.kickoff for e in events if e.kickoff > now]
         ledger.set_next_kickoff(league, min(upcoming) if upcoming else now + timedelta(hours=24))
+    _release(ledger)
     events = [e for e in events if now < e.kickoff <= now + timedelta(hours=settings.timing.analysis_hours)]
     report.events = len(events)
     # rohy a karty z API-Football (levne dotazy, obnovuji se nezavisle na kreditech kurzoveho API)
     report.notes.extend(propsodds.attach(events, league, ledger, now, refresh=live))
+    _release(ledger)  # dal se stahuji zraneni, pocasi a stadiony – databaze nesmi byt mezitim zamcena
     czech = czechodds.load(ledger, now)
     if czech:
         report.notes.extend(czechodds.apply(events, czech))
@@ -357,6 +369,7 @@ def scan_league(
         paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings,
                     extra=_sim_extra(events, now) if is_football else None)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
+    _release(ledger)
 
     if events:
         try:
@@ -395,6 +408,7 @@ def scan_league(
     for tip in best_per_match(results):
         ledger.add_tip(tip)
         report.new_tips.append(tip)
+    _release(ledger)  # rozbor nize stahuje zpravy (i desitky sekund) – tipy uz jsou ulozene
 
     # 3) rozbor vsech zapasu pro zobrazeni (vsechny trhy, doporuceni)
     views = []
@@ -479,6 +493,7 @@ def _attach_team_reports(league, events, ledger, now, absences, checked, live, s
                 lineups.get(match_team(name, set(lineups)) or ""),
             )
             ledger.save_team_report(name, rep)
+            _release(ledger)
             sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
 
 
@@ -503,6 +518,7 @@ def _attach_nhl_reports(league, events, ledger, now, absences, checked, live, se
                                            context.for_match(absences, name, name), news, rumours, checked,
                                            league_stats)
             ledger.save_team_report(name, rep)
+            _release(ledger)
             sections.extend({"title": f"{name}: {s['title']}", "lines": s["lines"]} for s in rep["sections"])
 
 

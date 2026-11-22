@@ -27,7 +27,7 @@ from sqlalchemy import select
 
 from . import analysis, auto, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
 from .config import LEAGUES, SETTINGS
-from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_factory, utcnow
+from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, TicketLeg, Tip, make_session_factory, utcnow
 
 # (klic, nazev, ikona); prvni ctyri jsou na mobilu ve spodni liste, ostatni pod "Více"
 TABS = (("prehled", "Přehled", "⚽", "Přehled"), ("tikety", "Moje tikety", "🎫", "Tikety"),
@@ -443,6 +443,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 
 {% macro page_head(eyebrow, title, desc='') %}<header class="page-head"><span class="eyebrow">{{ eyebrow }}</span><h2>{{ title }}</h2>{% if desc %}<p>{{ desc }}</p>{% endif %}</header>{% endmacro %}
 
+{% macro leglist(legs) %}<div class="muted" style="font-size:.92em">{% for l in legs %}<div>{{ {'won': '✅', 'lost': '❌', 'void': '↩️', 'half_won': '½✅', 'half_lost': '½❌'}.get(l.status, '⏳') }} {{ l.match_day.strftime('%d.%m.') }} {{ l.match_name }}: {{ l.market|bet(l.selection, l.match_name) }} @ {{ '%.2f'|format(l.odds) }}{% if l.score %} · {{ l.score }}{% endif %}</div>{% endfor %}</div>{% endmacro %}
 {% macro score_form(back, kind) %}{% set rows = pending|selectattr(kind)|list %}
 {% if rows %}<div class="card sec-acc"><b>Zadat výsledek zápasu</b>
 <div class="muted">Vyber skóre po 90 minutách (domácí : hosté). Bot podle něj vyhodnotí všechny otevřené tikety i sledované výběry toho zápasu.</div>
@@ -669,25 +670,33 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <div class="cols"><aside>
 {{ score_form('tikety', 'tikety') }}
 <h2>Zapsat sázku</h2>
-<div class="card"><div class="muted">Pro sázky mimo tipy bota. Když zvolíš trh ze seznamu, bot ji po zadání skóre vyhodnotí sám.</div>
-<form method="post" action="{{ url_for('ticket_add') }}"><input type="hidden" name="tab" value="tikety"><div class="grid2" style="margin-top:12px">
+<div class="card"><div class="muted">Pro sázky mimo tipy bota. Když zvolíš trh ze seznamu, bot ji po zadání skóre vyhodnotí sám. Tiket s víc zápasy (AKU): „+ další zápas na tiket“.</div>
+<form method="post" action="{{ url_for('ticket_add') }}" data-ticket><input type="hidden" name="tab" value="tikety"><div data-legs>
+<fieldset class="grid2 leg" data-leg style="margin-top:12px"><legend class="muted" data-legno>Zápas 1</legend>
   <label>Zápas (Domácí - Hosté)<input name="match_name" list="matchlist" placeholder="vyber nebo napiš" autocomplete="off" required></label>
   <label>Den zápasu<input name="match_day" type="date" value="{{ today }}" required></label>
-  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><optgroup label="NHL"><option value="REG">NHL – výsledek po 60 min (1 / X / 2)</option><option value="MONEYLINE">NHL – vítěz vč. prodloužení a nájezdů</option><option value="NHL_OU">NHL – počet gólů vč. prodloužení</option><option value="NHL_OU60">NHL – počet gólů za 60 min</option><option value="PUCKLINE">NHL – handicap ±1,5 vč. prodloužení</option></optgroup><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
-  <label>Hranice gólů (jen u počtu gólů)<select name="line">{% for x in ('0.5', '1.5', '2.5', '3.5', '4.5', '5.5', '6.5', '2.0', '3.0', '4.0') %}<option {{ 'selected' if x == '2.5' }}>{{ x }}</option>{% endfor %}</select></label>
+  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="TTH">Góly domácích (over / under)</option><option value="TTA">Góly hostů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><optgroup label="NHL"><option value="REG">NHL – výsledek po 60 min (1 / X / 2)</option><option value="MONEYLINE">NHL – vítěz vč. prodloužení a nájezdů</option><option value="NHL_OU">NHL – počet gólů vč. prodloužení</option><option value="NHL_OU60">NHL – počet gólů za 60 min</option><option value="PUCKLINE">NHL – handicap ±1,5 vč. prodloužení</option></optgroup><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
+  <label>Hranice gólů (jen u počtu gólů)<select name="line">{% for x in ('0.5', '1.5', '2.5', '3.5', '4.5', '5.5', '6.5', '1.0', '2.0', '3.0', '4.0') %}<option {{ 'selected' if x == '2.5' }}>{{ x }}</option>{% endfor %}</select></label>
   <label>Výběr<select name="selection" data-for="market" required></select><input name="selection" class="seltext" placeholder="popis sázky" disabled hidden></label>
+  <label>Kurz zápasu<input name="leg_odds" type="number" step="0.01" min="1.01" required></label>
+  <div class="row"><button type="button" class="ghost sm" data-delleg hidden>Odebrat zápas</button></div>
+</fieldset></div>
+<div class="row" style="margin-top:8px"><button type="button" class="ghost sm" data-addleg>+ další zápas na tiket (AKU)</button></div>
+<div class="grid2" style="margin-top:12px">
   <label>Kancelář<select name="bookmaker">{% for b in books %}<option {{ 'selected' if b == 'tipsport' }}>{{ b }}</option>{% endfor %}</select></label>
-  <label>Kurz<input name="odds" type="number" step="0.01" min="1.01" required></label>
+  <label>Celkový kurz tiketu<input name="odds" type="number" step="0.01" min="1.01" required data-total></label>
   <label>Vklad ({{ cur }})<input name="stake" type="number" step="1" min="1" list="stakes" required></label>
-</div><div class="row"><button>Zapsat sázku</button></div></form></div>
+</div><div class="muted">Celkový kurz se doplní jako součin kurzů zápasů – oprav ho podle tiketu kanceláře.</div>
+<div class="row"><button>Zapsat sázku</button></div></form></div>
 </aside><div class="colmain">
 <h2>Otevřené tikety ({{ open_tickets|length }})</h2>
 <div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Sázka</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th></th></tr>
-{% for k in open_tickets %}<tr><td class="muted">{{ k.match_day.strftime('%d.%m.') }}</td><td><b>{{ k.match_name or k.match_id }}</b></td><td><b>{{ k.market|bet(k.selection, k.match_name) }}</b></td><td>{{ k.bookmaker }}</td>
+{% for k in open_tickets %}<tr><td class="muted">{{ k.match_day.strftime('%d.%m.') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}</td><td><b>{{ 'kombinace' if legs_by_ticket.get(k.id) else k.market|bet(k.selection, k.match_name) }}</b></td><td>{{ k.bookmaker }}</td>
 <td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('ticket_settle', ticket_id=k.id) }}"><input type="hidden" name="tab" value="tikety">
 <label>Kurz bez marže těsně před zápasem (nepovinné)<input name="closing" type="number" step="0.01"></label>
-<div class="row" style="margin-top:6px"><button class="ok sm" name="result" value="won">Výhra</button><button class="bad sm" name="result" value="lost">Prohra</button><button class="ghost sm" name="result" value="void">Vráceno</button></div></form></details></td></tr>
+<div class="row" style="margin-top:6px"><button class="ok sm" name="result" value="won">Výhra</button><button class="bad sm" name="result" value="lost">Prohra</button><button class="ghost sm" name="result" value="void">Vráceno</button></div></form>
+<form method="post" action="{{ url_for('ticket_delete', ticket_id=k.id) }}" onsubmit="return confirm('Smazat tiket #{{ k.id }}? Jen u omylem zapsané sázky.')"><input type="hidden" name="tab" value="tikety"><button class="ghost sm" style="margin-top:6px">Smazat (zapsáno omylem)</button></form></details></td></tr>
 {% else %}<tr><td colspan="7" class="muted">Žádné otevřené tikety.</td></tr>{% endfor %}</table></div>
 <form method="post" action="{{ url_for('settle_all') }}"><input type="hidden" name="tab" value="tikety"><button class="ghost">Stáhnout výsledky a vyhodnotit automaticky</button></form>
 <h2 id="ukoncene">Ukončené tikety ({{ settled|length }})</h2>
@@ -698,8 +707,8 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <div class="muted">Výsledky ({{ rec.n }} sázek): největší propad {{ '%.0f'|format(rec.max_drawdown) }} {{ cur }} · nejdelší série proher {{ rec.longest_losing }}{% if rec.current_losing %} (teď {{ rec.current_losing }}){% endif %}</div>
 {% if rec.n < 30 %}<div class="muted note-inline">Při {{ rec.n }} sázkách jsou čísla jen orientační (potřeba desítky až stovky).</div>{% endif %}</div>{% endif %}
 <div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th>Výsledek</th><th class="num">Zisk / ztráta</th><th class="num" title="o kolik lepší kurz jsi vzal než ten těsně před zápasem; dlouhodobě v plusu = sázíš chytře">Proti závěr. kurzu</th></tr>
-{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td><b>{{ k.match_name or k.match_id }}</b></td>
-<td>{{ k.market|bet(k.selection, k.match_name) }}</td><td>{{ k.bookmaker }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
+{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}</td>
+<td>{{ 'kombinace' if legs_by_ticket.get(k.id) else k.market|bet(k.selection, k.match_name) }}</td><td>{{ k.bookmaker }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
 <td>{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(k.status, k.status) }}</td>
 <td class="num {{ 'pos' if k.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(k.profit_loss) }}</td>
 <td class="num">{{ '%+.1f %%'|format(k.clv_pct) if k.clv_pct is not none else '–' }}</td></tr>
@@ -1242,14 +1251,30 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
   if(m=='JINY')return null;
   if(m=='TTH_0.5'||m=='TTA_0.5')return [['over','ano, dají gól'],['under','ne']];
   return [['over','víc (over)'],['under','míň (under)']];}
- document.querySelectorAll('select[data-for]').forEach(function(sel){
-  var form=sel.form,src=form.elements[sel.dataset.for],txt=sel.parentNode.querySelector('.seltext');
-  var line=form.elements.line;
+ function bindSel(sel){
+  var box=sel.closest('[data-leg]')||sel.form,src=box.querySelector('[name="'+sel.dataset.for+'"]'),txt=sel.parentNode.querySelector('.seltext');
+  var line=box.querySelector('[name="line"]');
   function upd(){var o=sels(src.value);sel.innerHTML='';
-   if(line)line.closest('label').style.display=/^(NHL_)?OU(60)?$/.test(src.value)?'':'none';
+   if(line)line.closest('label').style.display=/^(NHL_)?(OU(60)?|TTH|TTA)$/.test(src.value)?'':'none';
    sel.hidden=sel.disabled=!o;if(txt){txt.hidden=txt.disabled=!!o;txt.required=!o}
    (o||[]).forEach(function(x){var e=document.createElement('option');e.value=x[0];e.textContent=x[1];sel.appendChild(e)});}
-  src.addEventListener('change',upd);upd();});
+  src.addEventListener('change',upd);upd();}
+ document.querySelectorAll('select[data-for]').forEach(bindSel);
+ // tiket s vic zapasy (AKU): pridani a odebrani zapasu, celkovy kurz = soucin kurzu zapasu (lze prepsat)
+ document.querySelectorAll('form[data-ticket]').forEach(function(form){
+  var wrap=form.querySelector('[data-legs]'),total=form.querySelector('[data-total]'),touched=false;
+  function renum(){var ls=wrap.querySelectorAll('[data-leg]');ls.forEach(function(l,i){l.querySelector('[data-legno]').textContent='Zápas '+(i+1);
+   l.querySelector('[data-delleg]').hidden=ls.length<2;});}
+  function calc(){if(touched)return;var p=1,ok=true;wrap.querySelectorAll('[name="leg_odds"]').forEach(function(i){var v=parseFloat(i.value);if(!(v>1))ok=false;else p*=v;});
+   if(ok)total.value=(Math.round(p*100)/100).toFixed(2);}
+  total.addEventListener('input',function(){touched=total.value!=='';});
+  form.addEventListener('input',function(e){if(e.target.name=='leg_odds')calc();});
+  form.querySelector('[data-addleg]').addEventListener('click',function(){
+   var first=wrap.querySelector('[data-leg]'),c=first.cloneNode(true);
+   c.querySelectorAll('input').forEach(function(i){if(i.type!='date')i.value='';});
+   wrap.appendChild(c);bindSel(c.querySelector('select[data-for]'));renum();touched=false;calc();});
+  wrap.addEventListener('click',function(e){var b=e.target.closest('[data-delleg]');if(!b)return;b.closest('[data-leg]').remove();renum();touched=false;calc();});
+  renum();});
  // trhy: filtr kategorii (karty na mobilu i radky tabulky); prazdna kategorie = zprava, nic se nevymysli
  document.querySelectorAll('[data-mlist]').forEach(function(box){
   var bar=box.querySelector('.mfilt');if(!bar)return;
@@ -1359,10 +1384,10 @@ def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
         if nhl_grade(market, selection, {"reg": (0, 0), "final": (1, 0)}) is None:
             raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím.")
         return market, selection
-    if market == "OU":
+    if market in ("OU", "TTH", "TTA"):
         if not line.strip():
             raise ValueError("U počtu gólů vyplň hranici (např. 2.5).")
-        market = f"OU_{float(line.replace(',', '.')):g}"
+        market = f"{market}_{float(line.replace(',', '.')):g}"
     market, selection = normalize_bet(market, selection)
     if grade(market, selection, 0, 0) is None:
         raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím (např. 1/X/2, over/under, ano/ne, 1X).")
@@ -1581,7 +1606,12 @@ def create_app(database_url: str | None = None) -> Flask:
         tab = TAB_ALIASES.get(tab, tab)
         if p2form is None:
             p2form = json.loads(led._get(P2_FORM_KEY, "") or "{}")
-        pending = _pending(open_tickets, [p for p in picks if p.result is None])
+        legs_by_ticket: dict[int, list] = {}
+        for leg in session.scalars(select(TicketLeg).where(TicketLeg.ticket_id.in_(
+                [t.id for t in open_tickets] + [t.id for t in settled])).order_by(TicketLeg.id)):
+            legs_by_ticket.setdefault(leg.ticket_id, []).append(leg)
+        pending = _pending([t for t in open_tickets if t.id not in legs_by_ticket] + led.open_legs(),
+                           [p for p in picks if p.result is None])
         auto_st = auto.status(led)
         if auto_st:
             auto_st["local"] = _local(datetime.fromisoformat(auto_st["t"]))
@@ -1603,6 +1633,7 @@ def create_app(database_url: str | None = None) -> Flask:
             orphan_tips=[t for t in open_tips if t.match_id not in {v.match_id for v in views}],
             open_tickets=open_tickets,
             settled=settled,
+            legs_by_ticket=legs_by_ticket,
             books=SETTINGS.bookmakers.betting_books,
             leagues=LEAGUES,
             exposure=led.open_exposure(today),
@@ -2113,6 +2144,21 @@ def create_app(database_url: str | None = None) -> Flask:
         def fn(led: Ledger, _):
             f = request.form
             tip_id = int(f["tip_id"]) if f.get("tip_id") else None
+            names = f.getlist("match_name")
+            if tip_id is None and len(names) > 1:  # tiket AKU: vic zapasu, jeden vklad
+                legs = []
+                for i, (nm, dy, mk, ln, sl, od) in enumerate(zip(names, f.getlist("match_day"), f.getlist("market"),
+                                                                f.getlist("line"), f.getlist("selection"),
+                                                                f.getlist("leg_odds")), 1):
+                    if not nm.strip() or not dy or not od:
+                        raise ValueError(f"U zápasu {i} vyplň zápas, den a kurz.")
+                    mk, sl = _manual_bet(mk, ln, sl)
+                    legs.append({"match_name": nm.strip(), "match_day": date.fromisoformat(dy), "market": mk,
+                                 "selection": sl, "odds": float(od.replace(",", "."))})
+                ticket = led.add_combo_ticket(bookmaker=f["bookmaker"], odds=float(f["odds"]), stake=float(f["stake"]),
+                                              legs=legs)
+                return (f"Tiket AKU #{ticket.id} zapsán: {len(legs)} zápasy, kurz {ticket.odds:.2f}, "
+                        f"vklad {ticket.stake:.0f} {SETTINGS.currency}.")
             name = f.get("match_name", "").strip()
             day = date.fromisoformat(f["match_day"]) if f.get("match_day") else None
             market, selection = f.get("market") or None, f.get("selection") or None
@@ -2120,7 +2166,7 @@ def create_app(database_url: str | None = None) -> Flask:
                 market, selection = _manual_bet(market, f.get("line", ""), selection or "")
             ticket = led.add_ticket(
                 bookmaker=f["bookmaker"],
-                odds=float(f["odds"]),
+                odds=float(f.get("odds") or f.get("leg_odds")),
                 stake=float(f["stake"]),
                 tip_id=tip_id,
                 match_id=None if tip_id else f"manual:{day}:{name}",
@@ -2130,6 +2176,14 @@ def create_app(database_url: str | None = None) -> Flask:
                 match_name=name,
             )
             return f"Tiket #{ticket.id} zapsán: {ticket.match_name} {ticket.market} {ticket.selection} @ {ticket.odds:.2f}."
+
+        return action(fn, "", tab="tikety")
+
+    @app.post("/tickets/<int:ticket_id>/delete")
+    def ticket_delete(ticket_id: int):
+        def fn(led: Ledger, _):
+            t = led.delete_open_ticket(ticket_id)
+            return f"Tiket #{ticket_id} smazán ({t.match_name})."
 
         return action(fn, "", tab="tikety")
 

@@ -167,10 +167,22 @@ def settle_open_tickets(ledger, df: pd.DataFrame) -> list[str]:
     """Vyhodnoti otevrene tikety, ktere umi. Vraci zpravy o tom, co se stalo."""
     from sqlalchemy import select
 
-    from .storage import TICKET_OPEN, Ticket
+    from .storage import COMBO, TICKET_OPEN, Ticket
 
     notes = []
-    for t in list(ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))):
+    for leg in ledger.open_legs():  # zapasy tiketu AKU
+        got = settle_bet(df, leg.match_name, leg.match_day, leg.market, leg.selection)
+        if got is None:
+            continue
+        score, outcome = got
+        if outcome is None:
+            notes.append(f"Tiket {leg.ticket_id} – {leg.match_name} ({leg.market}:{leg.selection}): trh neumím vyhodnotit, "
+                         "udělej to ručně")
+            continue
+        t = ledger.settle_leg(leg.id, outcome, score)
+        notes.append(f"Tiket AKU {leg.ticket_id}: {leg.match_name} {score} -> {outcome}"
+                     + (f"; celý tiket {t.status} ({t.profit_loss:+.0f})" if t is not None else ""))
+    for t in list(ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN, Ticket.market != COMBO))):
         got = settle_bet(df, t.match_name, t.match_day, t.market, t.selection)
         if got is None:
             continue
@@ -195,7 +207,7 @@ def _pending(ledger, now) -> list[tuple[str, date, str]]:
     from sqlalchemy import select
 
     from . import paper
-    from .storage import TICKET_OPEN, Ticket
+    from .storage import COMBO, TICKET_OPEN, Ticket
 
     lo = now - timedelta(days=FRESH_DAYS)
     from . import kombi
@@ -205,7 +217,9 @@ def _pending(ledger, now) -> list[tuple[str, date, str]]:
     out += [(x["name"], date.fromisoformat(x["day"]), x["market"]) for x in kombi.open_legs(ledger)
             if x["league"] != "NHL" and lo <= datetime.fromisoformat(x["kickoff"]) <= now - FRESH_AFTER]
     out += [(t.match_name, t.match_day, t.market) for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))
-            if t.league != "NHL" and t.match_day and lo.date() <= t.match_day <= now.date()]
+            if t.league != "NHL" and t.market != COMBO and t.match_day and lo.date() <= t.match_day <= now.date()]
+    out += [(x.match_name, x.match_day, x.market) for x in ledger.open_legs()
+            if x.league != "NHL" and lo.date() <= x.match_day <= now.date()]
     return out
 
 

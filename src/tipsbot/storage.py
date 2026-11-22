@@ -24,6 +24,7 @@ from .config import SETTINGS
 
 TIP_OPEN, TIP_PLACED, TIP_CANCELLED, TIP_EXPIRED = "open", "placed", "cancelled", "expired"
 TICKET_OPEN = "open"
+COMBO = "AKU"  # trh tiketu s vic zapasy (akumulator); jednotlive zapasy jsou v ticket_legs
 # vysledek tiketu -> nasobek vkladu, ktery se vraci jako zisk/ztrata (pri kurzu o)
 RESULTS = ("won", "lost", "void", "half_won", "half_lost")
 
@@ -86,6 +87,23 @@ class Ticket(Base):
     clv_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     profit_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TicketLeg(Base):
+    """Jeden zapas tiketu AKU. Tiket je prohrany, jakmile prohraje jedna noha; jinak se vyhodnoti po posledni."""
+
+    __tablename__ = "ticket_legs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticket_id: Mapped[int] = mapped_column(ForeignKey("tickets.id"), index=True)
+    league: Mapped[str] = mapped_column(String, default="")
+    match_name: Mapped[str] = mapped_column(String, default="")
+    match_day: Mapped[date] = mapped_column(Date, index=True)
+    market: Mapped[str] = mapped_column(String)
+    selection: Mapped[str] = mapped_column(String)
+    odds: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String, default=TICKET_OPEN, index=True)
+    score: Mapped[str] = mapped_column(String, default="")
 
 
 class BankrollEntry(Base):
@@ -431,6 +449,72 @@ class Ledger:
         self.s.flush()
         return ticket
 
+    def add_combo_ticket(self, *, bookmaker: str, odds: float, stake: float, legs: list[dict]) -> Ticket:
+        """Tiket AKU (vic zapasu, jeden vklad). `legs`: match_name, match_day, market, selection, odds (+ league).
+        `odds` = celkovy kurz z tiketu kancelare (zaokrouhleny soucin kurzu nohou)."""
+        if len(legs) < 2:
+            raise ValueError("Tiket AKU potřebuje aspoň 2 zápasy.")
+        if odds <= 1.0 or stake <= 0:
+            raise ValueError("Kurz musi byt > 1 a vklad > 0.")
+        for leg in legs:
+            if not (leg.get("match_name") and leg.get("match_day") and leg.get("market") and leg.get("selection")):
+                raise ValueError("U každého zápasu tiketu vyplň zápas, den, trh a výběr.")
+            if not leg.get("odds") or leg["odds"] <= 1.0:
+                raise ValueError(f"Kurz zápasu {leg['match_name']} musí být > 1.")
+        names = [leg["match_name"] for leg in legs]
+        leagues = {leg.get("league", "") for leg in legs}
+        ticket = Ticket(match_id=f"aku:{min(leg['match_day'] for leg in legs)}:{' + '.join(names)}",
+                        league=leagues.pop() if len(leagues) == 1 else "", match_name=" + ".join(names),
+                        match_day=max(leg["match_day"] for leg in legs), market=COMBO, selection=f"{len(legs)} zápasy",
+                        bookmaker=bookmaker, odds=odds, stake=stake)
+        self.s.add(ticket)
+        self.s.flush()
+        for leg in legs:
+            self.s.add(TicketLeg(ticket_id=ticket.id, league=leg.get("league", ""), match_name=leg["match_name"],
+                                 match_day=leg["match_day"], market=leg["market"], selection=leg["selection"],
+                                 odds=leg["odds"]))
+        self.s.flush()
+        return ticket
+
+    def ticket_legs(self, ticket_id: int) -> list[TicketLeg]:
+        return list(self.s.scalars(select(TicketLeg).where(TicketLeg.ticket_id == ticket_id).order_by(TicketLeg.id)))
+
+    def open_legs(self) -> list[TicketLeg]:
+        """Nevyhodnocene nohy otevrenych tiketu AKU."""
+        return list(self.s.scalars(select(TicketLeg).join(Ticket, Ticket.id == TicketLeg.ticket_id).where(
+            TicketLeg.status == TICKET_OPEN, Ticket.status == TICKET_OPEN).order_by(TicketLeg.match_day)))
+
+    def settle_leg(self, leg_id: int, result: str, score: str = "") -> Ticket | None:
+        """Vysledek jedne nohy; kdyz tim je tiket AKU rozhodnuty, vyhodnoti se cely (vraci ho)."""
+        if result not in RESULTS:
+            raise ValueError(f"Neznámý výsledek {result}.")
+        leg = self.s.get(TicketLeg, leg_id)
+        if leg is None or leg.status != TICKET_OPEN:
+            return None
+        leg.status, leg.score = result, score
+        self.s.flush()
+        return self._close_combo(leg.ticket_id)
+
+    def _close_combo(self, ticket_id: int) -> Ticket | None:
+        ticket = self.s.get(Ticket, ticket_id)
+        if ticket is None or ticket.status != TICKET_OPEN:
+            return None
+        legs = self.ticket_legs(ticket_id)
+        if any(x.status == "lost" for x in legs):
+            return self.settle_ticket(ticket_id, "lost")
+        if any(x.status == TICKET_OPEN for x in legs):
+            return None
+        # jako kancelar: vracena noha ma kurz 1, polovicni vyhra/prohra (asijske linie) puli sazku na te noze
+        factor = 1.0
+        for x in legs:
+            factor *= {"won": 1.0, "void": 1.0 / x.odds, "half_won": (1.0 + x.odds) / (2.0 * x.odds),
+                       "half_lost": 0.5 / x.odds}[x.status]
+        if all(x.status == "void" for x in legs):
+            return self.settle_ticket(ticket_id, "void")
+        pnl = ticket.stake * (ticket.odds * factor - 1.0)
+        status = "won" if pnl > 1e-9 else "void" if abs(pnl) <= 1e-9 else "half_lost"  # zisk = kurz po prepoctu
+        return self.settle_ticket(ticket_id, status, pnl=pnl)
+
     def placed_for_tip(self, tip_id: int) -> float:
         q = select(func.coalesce(func.sum(Ticket.stake), 0.0)).where(Ticket.tip_id == tip_id)
         return float(self.s.scalar(q) or 0.0)
@@ -440,19 +524,42 @@ class Ledger:
         ticket.closing_odds = fair_closing_odds
         ticket.clv_pct = (ticket.odds / fair_closing_odds - 1.0) * 100.0
 
-    def settle_ticket(self, ticket_id: int, result: str, fair_closing_odds: float | None = None) -> Ticket:
+    def settle_ticket(self, ticket_id: int, result: str, fair_closing_odds: float | None = None,
+                      pnl: float | None = None) -> Ticket:
         ticket = self.s.get(Ticket, ticket_id)
         if ticket is None:
             raise ValueError(f"Tiket {ticket_id} neexistuje.")
         if ticket.status != TICKET_OPEN:
             raise ValueError(f"Tiket {ticket_id} uz je vyhodnocen ({ticket.status}).")
-        pnl = profit_for(result, ticket.odds, ticket.stake)
+        if pnl is None:
+            pnl = profit_for(result, ticket.odds, ticket.stake)
         ticket.status = result
         ticket.profit_loss = pnl
         ticket.settled_at = utcnow()
         if fair_closing_odds:
             self.set_closing(ticket, fair_closing_odds)
         self._move(pnl, "settlement", ticket.id)
+        return ticket
+
+    def delete_open_ticket(self, ticket_id: int) -> Ticket:
+        """Smaze omylem zapsany OTEVRENY tiket (i jeho nohy). Vyhodnoceny tiket se nemaze – je v bankrollu."""
+        ticket = self.s.get(Ticket, ticket_id)
+        if ticket is None:
+            raise ValueError(f"Tiket {ticket_id} neexistuje.")
+        if ticket.status != TICKET_OPEN:
+            raise ValueError(f"Tiket {ticket_id} je už vyhodnocený ({ticket.status}), nejde smazat.")
+        if self.s.scalar(select(func.count()).select_from(BankrollEntry).where(BankrollEntry.ticket_id == ticket_id)):
+            raise ValueError(f"Tiket {ticket_id} má pohyb v bankrollu, nejde smazat.")
+        for leg in self.ticket_legs(ticket_id):
+            self.s.delete(leg)
+        if ticket.tip_id is not None:
+            tip = self.s.get(Tip, ticket.tip_id)
+            others = self.s.scalar(select(func.count()).select_from(Ticket).where(Ticket.tip_id == ticket.tip_id,
+                                                                                   Ticket.id != ticket_id))
+            if tip is not None and tip.status == TIP_PLACED and not others:
+                tip.status = TIP_OPEN
+        self.s.delete(ticket)
+        self.s.flush()
         return ticket
 
     # --- prehled --------------------------------------------------------

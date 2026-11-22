@@ -160,14 +160,16 @@ def settle_tickets(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
     """Vyhodnoti otevrene tikety zapasu NHL (rucne zapsane i z tipu) z oficialniho NHL API."""
     from sqlalchemy import select
 
-    from .storage import TICKET_OPEN, Ticket
+    from .storage import COMBO, TICKET_OPEN, Ticket
 
     today = now.date()
-    todo = [t for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))
+    todo = [t for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN, Ticket.market != COMBO))
             if t.match_day and t.match_day <= today and (t.league == "NHL" or is_nhl_match(t.match_name))]
-    if not todo:
+    legs = [x for x in ledger.open_legs()
+            if x.match_day <= today and (x.league == "NHL" or is_nhl_match(x.match_name))]  # zapasy tiketu AKU
+    if not todo and not legs:
         return []
-    days = sorted({t.match_day - timedelta(days=d) for t in todo for d in (0, 1)})
+    days = sorted({t.match_day - timedelta(days=d) for t in todo + legs for d in (0, 1)})
     games, notes = [], []
     for d in days:
         try:
@@ -186,6 +188,19 @@ def settle_tickets(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
             continue
         ledger.settle_ticket(t.id, res, fair_closing_odds=t.closing_odds)
         notes.append(f"Tiket {t.id}: {t.match_name} {score} -> {res}")
+    for x in legs:
+        g = _game_for_day(games, x.match_name, x.match_day)
+        if g is None:
+            continue
+        market, sel = ticket_market(x.market, x.selection)
+        res = grade(market, sel, g)
+        score = f"{g['final'][0]}:{g['final'][1]}" + ("" if g["end"] == "REG" else f" ({g['end']}, po 60 min {g['reg'][0]}:{g['reg'][1]})")
+        if res is None:
+            notes.append(f"Tiket AKU {x.ticket_id} – {x.match_name} {score}: trh neumím vyhodnotit, udělej to ručně")
+            continue
+        t = ledger.settle_leg(x.id, res, score)
+        notes.append(f"Tiket AKU {x.ticket_id}: {x.match_name} {score} -> {res}"
+                     + (f"; celý tiket {t.status} ({t.profit_loss:+.0f})" if t is not None else ""))
     return notes
 
 

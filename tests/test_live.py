@@ -356,3 +356,43 @@ def test_cache_only_rescan_never_spends_credits(ledger, monkeypatch):
     ledger.set_odds_cache("ENG1", NOW, _payload(kick=NOW + timedelta(hours=10)), 400)
     rep = pipeline.scan_league("ENG1", ledger, now=NOW + timedelta(hours=2), provider=_NoModel(), cache_only=True)
     assert "z cache" in rep.summary() and rep.events == 1
+
+
+def test_scan_does_not_hold_db_lock_during_network(tmp_path, monkeypatch):
+    """Ostry provoz 22.11.2026: sken souteze drzel zapisovou transakci i behem stahovani zprav, zraneni a rozboru
+    tymu (minuty) a zapis tiketu z panelu spadl na "database is locked". Behem sitovych kroku musi byt DB volna."""
+    import sqlite3
+
+    from tipsbot import context, propsodds
+    from tipsbot.storage import Ledger, make_session_factory
+
+    path = tmp_path / "t.db"
+    factory = make_session_factory(f"sqlite:///{path}")
+    checked = []
+
+    def db_free(what):
+        other = sqlite3.connect(str(path), timeout=0.2)
+        try:
+            other.execute("BEGIN IMMEDIATE")  # selze, kdyz sken drzi zapisovy zamek
+            other.rollback()
+            checked.append(what)
+        finally:
+            other.close()
+
+    def fetch(league, settings=None, api_key=None):
+        return oddsapi.FetchResult(oddsapi.parse_events(_payload(), "ENG1"), 480, 20, payload=_payload())
+
+    monkeypatch.setattr(oddsapi, "fetch_events", fetch)
+    monkeypatch.setattr(propsodds, "attach", lambda *a, **k: [])
+    monkeypatch.setattr(pipeline, "_absences", lambda *a, **k: db_free("zraneni") or ([], False))
+    monkeypatch.setattr(pipeline, "_attach_team_reports", lambda *a, **k: db_free("rozbor tymu"))
+    monkeypatch.setattr(context, "fetch_news", lambda team: db_free("zpravy") or [])
+    with factory() as s:
+        led = Ledger(s)
+        led.deposit(10_000)
+        s.commit()
+        rep = pipeline.scan_league("ENG1", led, now=NOW, provider=_NoModel())
+        s.commit()
+    assert rep.new_tips and {"zraneni", "rozbor tymu", "zpravy"} <= set(checked)
+    with factory() as s:
+        assert Ledger(s).odds_cache("ENG1") is not None and len(Ledger(s).open_tips()) == 1

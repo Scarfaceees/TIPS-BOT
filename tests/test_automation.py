@@ -161,3 +161,55 @@ def test_profil4_morning_scan_analyses_all_fixtures_once_a_day(tmp_path):
         assert closing.morning_scan(now + timedelta(hours=2), cfg, lambda: (store, prov)) == []  # jen jednou denne
     finally:
         cl.open_store = orig
+
+
+# --- vyhodnoceni NHL mezi pruchody automatu (ostry provoz 22.11.2026) ---------------
+
+VAN_MIN = {"games": [  # Vancouver - Minnesota 4:3 po najezdech (zacatek 03:00 UTC), po 60 min 3:3
+    {"id": 9, "gameState": "OFF", "startTimeUTC": "2026-11-22T03:00:00Z", "gameOutcome": {"lastPeriodType": "SO"},
+     "homeTeam": {"abbrev": "VAN", "score": 4}, "awayTeam": {"abbrev": "MIN", "score": 3},
+     "goals": [_goal(2, 0, 1), _goal(2, 1, 1), _goal(2, 1, 2), _goal(3, 2, 2), _goal(3, 2, 3), _goal(3, 3, 3),
+               _goal(5, 4, 3)]}]}
+
+
+def test_nhl_settles_between_passes_not_hours_later(monkeypatch):
+    """Ranni pruchod v 07:04 (06:04 UTC) byl jen 3 h po zacatku zapasu, dalsi pruchod by byl az za 6 h.
+    Lehke vyhodnoceni NHL mezi pruchody ho vyhodnoti do 15 min po uplynuti lhuty 3,5 h."""
+    factory = make_session_factory("sqlite://")
+    ko = datetime(2026, 11, 22, 3, 0)
+    with factory() as s:
+        paper.save(Ledger(s), [_pick("Vancouver Canucks - Minnesota Wild", "PUCKLINE_1.5R", "away-1.5", ko, 1.87)])
+        s.commit()
+    monkeypatch.setattr(nhl_settle, "fetch_scores", lambda d, timeout=20: VAN_MIN)
+    monkeypatch.setattr(nhl_settle.settle_paper, "__defaults__", (lambda d, timeout=20: VAN_MIN,))
+    monkeypatch.setattr(nhl_settle.settle_tickets, "__defaults__", (lambda d, timeout=20: VAN_MIN,))
+    assert auto.settle_nhl(factory, datetime(2026, 11, 22, 6, 4)) == []  # 3 h po zacatku: jeste ne
+    with factory() as s:
+        assert paper.load(Ledger(s))[0].result is None
+    notes = auto.settle_nhl(factory, datetime(2026, 11, 22, 6, 45))
+    with factory() as s:
+        p = paper.load(Ledger(s))[0]
+    assert p.result == "lost" and p.profit == -1 and "SO" in p.score  # Minnesota -1.5 pri 3:4
+    assert notes and "lost" in notes[0]
+
+
+def test_run_forever_settles_nhl_while_waiting(monkeypatch):
+    """Smycka automatu vola vyhodnoceni NHL i behem sestihodinoveho cekani mezi pruchody."""
+    clock = [datetime(2026, 11, 22, 6, 4)]
+    calls, passes = [], []
+
+    def fake_sleep(sec):
+        clock[0] += timedelta(seconds=sec)
+        if clock[0] > datetime(2026, 11, 22, 7, 10):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(auto, "utcnow", lambda: clock[0])
+    monkeypatch.setattr(auto.time, "sleep", fake_sleep)
+    monkeypatch.setattr(auto, "_start_profil4", lambda: None)
+    monkeypatch.setattr(auto, "run_once", lambda f, settings=None, morning=False: passes.append(clock[0]) or [])
+    monkeypatch.setattr(auto, "morning_due", lambda led, now, settings=None: False)
+    monkeypatch.setattr(auto, "settle_nhl", lambda f, now: calls.append(now) or [])
+    with pytest.raises(KeyboardInterrupt):
+        auto.run_forever(make_session_factory("sqlite://"))
+    assert len(passes) == 1  # dalsi plny pruchod az za 6 h
+    assert len(calls) >= 4 and all(b - a >= auto.NHL_SETTLE_EVERY for a, b in zip(calls, calls[1:]))

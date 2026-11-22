@@ -153,16 +153,7 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
         except Exception as e:  # noqa: BLE001
             s.rollback()
             notes.append(f"výsledky z kurzového API: chyba ({e})")
-    with factory() as s:
-        led = Ledger(s)
-        try:
-            from . import nhl_settle
-
-            notes += nhl_settle.settle_tickets(led, now) + nhl_settle.settle_paper(led, now)
-            s.commit()
-        except Exception as e:  # noqa: BLE001
-            s.rollback()
-            notes.append(f"vyhodnocení NHL: chyba ({e})")
+    notes += settle_nhl(factory, now)
     if verify:
         notes += weekly_verify(factory, now)
         notes += model_quality(factory, now)
@@ -174,6 +165,28 @@ def run_once(factory, now: datetime | None = None, settings: Settings = SETTINGS
         led._set(STATUS_KEY, json.dumps({"t": now.isoformat(), "notes": notes[-60:]}, ensure_ascii=False))
         s.commit()
     return notes
+
+
+NHL_SETTLE_EVERY = timedelta(minutes=15)
+
+
+def settle_nhl(factory, now: datetime) -> list[str]:
+    """Vyhodnoceni NHL (tikety, sledovane vybery, kombi) z oficialniho NHL API, ktere je zdarma.
+
+    Bezi pri kazdem pruchodu automatu a mezi pruchody kazdych NHL_SETTLE_EVERY. Pruchod je jen jednou za 6 h, takze
+    zapas dohrany tesne po nem cekal na vyhodnoceni hodiny (22.11.2026: Vancouver - Minnesota v 04:00, ranni pruchod
+    v 07:04 byl pred lhutou 3,5 h od zacatku, dalsi az ve 13:00). Dotaz jde jen pri otevrenem vyberu NHL."""
+    from . import nhl_settle
+
+    with factory() as s:
+        led = Ledger(s)
+        try:
+            notes = nhl_settle.settle_tickets(led, now) + nhl_settle.settle_paper(led, now)
+            s.commit()
+            return notes
+        except Exception as e:  # noqa: BLE001
+            s.rollback()
+            return [f"vyhodnocení NHL: chyba ({e})"]
 
 
 def model_quality(factory, now: datetime) -> list[str]:
@@ -270,10 +283,17 @@ def run_forever(factory, settings: Settings = SETTINGS) -> None:
         finally:
             _set(factory, RUNNING_KEY, "")
         waited = 0
+        last_nhl = utcnow()
         while waited < every and not _take_request(factory):  # tlacitko v panelu zkrati cekani
             with factory() as s:
                 if morning_due(Ledger(s), utcnow(), settings):
                     break  # ranni analyza nepocka na konec sestihodinoveho intervalu
+            if utcnow() - last_nhl >= NHL_SETTLE_EVERY:  # dohrane zapasy NHL hned, ne az pri dalsim pruchodu
+                last_nhl = utcnow()
+                from .oddsapi import redact
+
+                for n in settle_nhl(factory, last_nhl):
+                    print(redact(n), flush=True)
             time.sleep(60)
             waited += 60
 

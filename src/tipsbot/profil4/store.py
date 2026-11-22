@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS odds_observations (
     observed_at TEXT NOT NULL, status TEXT NOT NULL, n_quotes INTEGER NOT NULL, latest_update TEXT, note TEXT
 );
 CREATE INDEX IF NOT EXISTS observations_fixture ON odds_observations(fixture_id);
+CREATE TABLE IF NOT EXISTS rankings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, computed_at TEXT NOT NULL, version TEXT NOT NULL, fixture_id INTEGER NOT NULL,
+    match TEXT, league TEXT, kickoff TEXT, market TEXT NOT NULL, selection TEXT NOT NULL, label TEXT, odds REAL,
+    bookmaker TEXT, odds_time TEXT, ev REAL, ev_conservative REAL, robustness REAL, quality REAL, rank REAL,
+    decision TEXT, integrity TEXT, valid INTEGER NOT NULL, detail TEXT
+);
+CREATE INDEX IF NOT EXISTS rankings_key ON rankings(fixture_id, market, selection);
 """
 
 # sloupce pridane pozdeji (ALTER TABLE u existujicich databazi)

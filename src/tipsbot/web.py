@@ -1042,9 +1042,37 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% if opp %}<div class="p4opp">{% for o in opp[:8] %}<details class="p4oppc"><summary><span class="p4rank">{{ '%.0f'|format(o.rank or 0) }}</span><span><b>{{ o.label }}</b> @ {{ '%.2f'|format(o.odds) }} <span class="muted">{{ o.book }}</span><br><small class="muted">{{ o.match }} · {{ (o.kickoff or '')[:16]|replace('T', ' ') }}</small></span>
 <span class="badge {{ 'tipb' if o.decision == 'APPROVED BET' else 'warn' if 'WATCH' in (o.decision or '') else 'bad' }}">{{ o.decision }}</span></summary>
 <div class="p4kv">EV {{ '%+.1f %%'|format(o.ev * 100) if o.ev is not none else '–' }} · konzervativní {{ '%+.1f %%'|format(o.ev_conservative * 100) if o.ev_conservative is not none else '–' }} · min. kurz {{ '%.2f'|format(o.min_odds) if o.min_odds else '–' }} · kvalita dat {{ '%.0f'|format(o.quality) if o.quality is not none else '–' }}/100 · robustnost {{ '%.0f'|format(o.robustness or 0) }}/100</div>
+{% if o.quality_groups %}<div class="p4kv">Kvalita: {% for gk, gv in o.quality_groups.items() if gv is not none %}{{ gk }} {{ '%.0f'|format(gv) }}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endif %}
+{% if o.integrity %}<div class="p4kv">Integrita: <b>{{ o.integrity }}</b>{% if o.computed_at %} <small class="muted">· výpočet {{ o.computed_at[:16]|replace('T', ' ') }} · {{ o.version }}</small>{% endif %}</div>{% endif %}
 <div class="muted">{{ o.reasons|join('; ') }}</div>{% if o.flags %}<div class="p4risk">{{ o.flags|join('; ') }}</div>{% endif %}</details>{% endfor %}</div>
 <div class="muted">Ranking je pořadí zajímavosti, ne pravděpodobnost výhry ani doporučení k sázce. BEST AVAILABLE a WATCH nejsou schválené sázky.</div>
-{% else %}<div class="card muted">Zatím žádné nadcházející tipy s rankingem (ranking se ukládá od Fáze 3 při každé analýze).</div>{% endif %}
+{% else %}<div class="card muted">Zatím žádné nadcházející příležitosti s rankingem. Ranking se ukládá při každém rozboru zápasu (sken automatu, Detail, NHL) – od Fáze 3.1 pro všechny kandidáty, ne jen pro uložené tipy.</div>{% endif %}
+{% set mi = ig.integrity or {} %}<h3>Market Integrity</h3>
+<div class="muted">Ověření kurzu, trhu, výběru, linie a nezávislý přepočet EV u nadcházejících výběrů (poslední výpočet). Neshoda výpočtu = NO BET; neověřitelný trh nemůže být APPROVED.</div>
+{% if mi.total %}<div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0">{% for k, v in mi.counts.items() %}<span class="badge {{ 'tipb' if k == 'OVĚŘENO' else 'bad' if 'NO BET' in k or 'PODEZ' in k else 'warn' }}">{{ k }}: {{ v }}</span>{% endfor %}</div>
+<details class="fold"><summary>Neověřené a podezřelé kurzy ({{ mi['items']|rejectattr('verdict', 'equalto', 'OVĚŘENO')|list|length }})</summary><div class="p4mcards">
+{% for it in mi['items'] if it.verdict != 'OVĚŘENO' %}{% if loop.index <= 30 %}<div class="p4mcard"><div class="p4mhead"><b>{{ it.label }}</b><small>{{ it.book }} {{ '%.2f'|format(it.odds) }}</small></div>
+<div class="p4kv">{{ it.match }} · {{ (it.kickoff or '')[:16]|replace('T', ' ') }}</div>
+<div class="p4kv">Medián {{ '%.2f'|format(it.median) if it.median else '–' }} · férový trh {{ '%.2f'|format(it.fair_market) if it.fair_market else '–' }} · odchylka {{ '%+.0f %%'|format(it.dev * 100) if it.dev is not none else '–' }} · {{ it.books or 0 }} kanc. · stáří {{ it.age_min if it.age_min is not none else '–' }} min</div>
+<div class="p4kv">Protistrana: {{ '–' if it.counterside is none else ('ověřena' if it.counterside else 'chybí') }} · přepočet: {{ it.independent or '–' }}</div>
+<div class="p4kv"><b>{{ it.verdict }}</b></div><div class="muted">{{ it.reasons|join('; ') }}</div></div>{% endif %}{% endfor %}</div></details>
+{% else %}<div class="card muted">Zatím žádný uložený výpočet – naplní se při příštím rozboru.</div>{% endif %}
+{% set rv = ig.ranking_validation or {} %}<h3>Ranking Validation</h3>
+<div class="muted">Dosahují příležitosti s vyšším rankingem lepších výsledků? Poslední předzápasový ranking každého výběru proti výsledku; intervaly z bootstrapu po zápasech. Váhy se neladí automaticky.</div>
+<div class="p4kv"><b>{{ rv.status or 'MÁLO DAT – RANKING ZATÍM NEOVĚŘEN' }}</b> · {{ rv.matches or 0 }} zápasů / {{ rv.n or 0 }} výběrů · {{ rv.version }}</div>
+{% if rv.bands %}<div class="p4mcards">{% for b in rv.bands %}<div class="p4mcard"><div class="p4mhead"><b>Ranking {{ b.band }}</b><small>{{ b.matches }} záp. · {{ b.n }} výb.</small></div>
+<div class="p4kv">ROI {{ '%+.1f %%'|format(b.roi * 100) if b.roi is not none else '–' }}{% if b.roi_ci95 %} <small>({{ '%+.0f'|format(b.roi_ci95[0] * 100) }} až {{ '%+.0f'|format(b.roi_ci95[1] * 100) }} %)</small>{% endif %} · zisk {{ '%+.2f'|format(b.profit) }} j.</div>
+<div class="p4kv">Brier {{ '%.4f'|format(b.brier) if b.brier is not none else '–' }} · log loss {{ '%.4f'|format(b.log_loss) if b.log_loss is not none else '–' }} · CLV {{ '%+.1f %%'|format(b.clv * 100) if b.clv is not none else '–' }}</div>
+<div class="p4kv">APPROVED {{ '%.0f %%'|format(b.approved_share * 100) if b.approved_share is not none else '–' }} · kvalita dat {{ '%.0f'|format(b.quality) if b.quality is not none else '–' }}</div>
+<div class="muted">{{ b.status }}</div></div>{% endfor %}</div>{% endif %}
+{% set pf = ig.portfolio or {} %}<h3>Portfolio &amp; riziko</h3>
+<div class="p4three"><div class="p4kv">Čeká<br><b>{{ pf.pending or 0 }}</b> tipů</div><div class="p4kv">Zápasů<br><b>{{ pf.pending_matches or 0 }}</b></div><div class="p4kv">Vyhodnoceno<br><b>{{ pf.settled or 0 }}</b></div><div class="p4kv">Virtuální výsledek<br><b>{{ '%+.2f'|format(pf.profit_units or 0) }} j.</b></div></div>
+<div class="muted">{{ pf.note }}</div>
+{% if pf.correlated %}<details class="fold"><summary>Korelované výběry stejného zápasu ({{ pf.correlated|length }})</summary>{% for c in pf.correlated %}<div class="p4kv"><b>{{ c.match }}</b> – {{ c.tips }} tipů: {{ c.markets|join(', ') }}{% if c.opposite %} <span class="neg">protichůdné: {{ c.opposite|join(', ') }}</span>{% endif %}</div>{% endfor %}</details>{% endif %}
+{% if pf.by_league %}<details class="fold"><summary>Koncentrace (soutěž, sport, kurzové pásmo)</summary>
+<div class="p4kv">Soutěže: {% for k, v in pf.by_league %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</div>
+<div class="p4kv">Sporty: {% for k, v in pf.by_sport %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</div>
+<div class="p4kv">Kurzová pásma: {% for k, v in pf.by_band %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}</div></details>{% endif %}
 {% for sport, sd in ig.sports.items() %}<h3>{{ 'Fotbal' if sport == 'fotbal' else 'NHL (samostatná kalibrace)' }}</h3>
 <div class="muted">Vyhodnocené předpovědi před výkopem: {{ sd.predictions }} ({{ sd.matches_any }} zápasů). Společný vzorek všech modelů A–D a trhu: <b>{{ sd.common_matches }} zápasů</b>, {{ sd.common_rows }} výběrů – jen na něm se modely porovnávají.</div>
 {% if sd.models %}<div class="p4mcards">{% for k, m in sd.models.items() %}<div class="p4mcard"><div class="p4mhead"><b>{{ 'Trh (bez marže)' if k == 'trh' else 'Model ' ~ k }}</b><small>{{ m.matches }} záp.</small></div>
@@ -1068,7 +1096,9 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 <div class="muted">{{ tr.recommendation }}{% if tr.weight_c is defined %} · váha C {{ '%.2f'|format(tr.weight_c) }} · log loss mimo trénink {{ '%.4f'|format(tr.before) }} → {{ '%.4f'|format(tr.after) }}{% if tr.ci95 %} (rozdíl {{ '%+.4f'|format(tr.ci95[0]) }} až {{ '%+.4f'|format(tr.ci95[1]) }}){% endif %} · trénink {{ tr.train_matches }} / test {{ tr.test_matches }} záp.{% endif %}. Rizika: {{ tr.risks }}. Změna modelu se nikdy nenasazuje automaticky.</div></details>
 {% endfor %}
 <details class="fold"><summary>Analýza chyb ({{ ig.errors|length }} vyhodnocených tipů)</summary><div class="muted">Jen to, co je v datech doloženo. Jednotlivá prohra sama nedokazuje chybu modelu.</div>
-{% for e in ig.errors|reverse %}{% if loop.index <= 40 %}<div class="p4kv"><b>{{ e.match }}</b> – {{ e.label }} @ {{ '%.2f'|format(e.odds) }} ({{ e.decision }}): {{ e.diagnosis|join('; ') }}</div>{% endif %}{% endfor %}</details>
+{% if ig.error_counts %}<div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0">{% for k, v in ig.error_counts.items() %}<span class="badge">{{ k }}: {{ v }}</span>{% endfor %}</div>{% endif %}
+{% for e in ig.errors|reverse %}{% if loop.index <= 40 %}<div class="p4kv"><b>{{ e.match }}</b> – {{ e.label }} @ {{ '%.2f'|format(e.odds) }} ({{ e.decision }}){% if e.classification %} · <b>{{ e.classification.primary }}</b>{% endif %}: {{ e.diagnosis|join('; ') }}</div>{% endif %}{% endfor %}
+{% if ig.known_issues %}<div class="muted" style="margin-top:8px"><b>Známé a opravené chyby</b></div>{% for k in ig.known_issues %}<div class="p4kv">{{ k.date }} · <b>{{ k.category }}</b>: {{ k.what }} – {{ k.fixed }} <small class="muted">(test: {{ k.test }})</small></div>{% endfor %}{% endif %}</details>
 <details class="fold"><summary>Kontrola úniku informací (data leakage)</summary>
 {% for ch in ig.leakage.checks %}<div class="p4kv">{{ '✓' if ch.ok else '✗' }} {{ ch.name }}: <b>{{ ch.count }}</b> <span class="muted">– {{ ch.note }}</span></div>{% endfor %}
 <div class="muted">Z kalibrace vyřazeno: {{ ig.dropped['po_výkopu'] }} předpovědí po výkopu, {{ ig.dropped['opakované'] }} opakovaných skenů.</div></details>

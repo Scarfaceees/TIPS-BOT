@@ -235,6 +235,8 @@ def candidates(fx: Fixture, model: dict | None, quotes: list[OddsQuote], now: da
             min_odds=(1.0 + cfg.decision.ev_min) / pc, robustness=rob, data_quality=dq,
             models_complete=pa is not None and pb is not None, lineups="confirmed" if goalie_known else "pending",
             stress=stress, robustness_parts={})
+        if not hard:  # nezavisly prepocet EV, ferového a minimalniho kurzu (binarni trh)
+            hard = IN.binary_check(pc, q.odds, c.ev_c, c.fair_odds_c, c.min_odds, cfg.decision.ev_min)
         c.validation = (hard + ph, ps)
         c.p_market = pb
         c.ev_market = pb * q.odds - 1.0 if pb is not None else None

@@ -161,6 +161,7 @@ bez nich platí 100/den. Nastavení (prahy, váhy, TTL cache, limity) je v `src/
     tipsbot profil4 settle                vyhodnocení skončených zápasů (90 min, půlvýhry, vrácení, CLV)
     tipsbot profil4 evaluate              Brier, log loss, ROI, yield, úspěšnost, CLV po modelech/trzích/soutěžích/…
     tipsbot profil4 intel                 Intelligence & Calibration: A–D a trh na společném vzorku, leakage, ranking (bez API)
+    tipsbot profil4 intel integrity|ranking|calibration|data-quality|portfolio|errors [--out report.json]
     tipsbot profil4 backtest --league 39 --season 2025      walk-forward modelu A bez data leakage
     tipsbot profil4 competitions --disable 848 --priority 345 1 --add 207 --name "Super League"
     tipsbot profil4 auto --every-hours 6  plánované skenování (vynechá sken, když kvóta dochází)
@@ -229,6 +230,25 @@ Nadstavba nad modely A–D, která **nemění pravděpodobnosti, EV ani rozhodnu
 - **Analýza chyb**, **kontrola úniku informací** a **diagnostický návrh ladění** (chronologický out-of-sample test;
   nic se nenasazuje automaticky).
 - Panel: Profil 4 → sekce *Intelligence & Calibration* (karty pro mobil). Excel export má 5 nových listů.
+
+### Fáze 3.1 – Market Integrity & Ranking Validation
+
+Podrobně `docs/profil4-faze3-1-market-integrity-ranking-validation.md`:
+
+- **Market Integrity** – u každého kandidáta dohledatelný audit (kurz, zdroj, kancelář, trh, výběr, linie, p A–D,
+  trh, férový kurz, EV, konzervativní EV, nezávislý přepočet, verdikt). Neshoda nezávislého výpočtu = NO BET
+  s označením „MATEMATICKÁ INTEGRITA NEOVĚŘENA“; u NHL nově nezávislá kontrola vzorců binárního trhu.
+- **Quality of Data** rozdělená na kvalitu kurzu, sportovní data a úplnost zdrojů; všechny vstupy uložené podle
+  názvu (NULL = neuloženo, ne nula). Excel list Kvalita dat čte hodnoty podle názvů polí a časy jako datum.
+- **Opportunity Ranking** se ukládá do tabulky `rankings` pro **všechny** předzápasové kandidáty každého rozboru
+  (nový řádek jen při změně kurzu, rankingu, kvality nebo rozhodnutí), s časem výpočtu a verzí algoritmu.
+- **Ranking Validation** po pásmech 0–39 / 40–59 / 60–79 / 80–100 (ROI, Brier, Log Loss, CLV, intervaly z bootstrapu
+  po zápasech); závěr až od 100 zápasů, jinak „MÁLO DAT – RANKING ZATÍM NEOVĚŘEN“. Váhy se neladí automaticky.
+- **Portfolio Risk** – koncentrace podle zápasu, soutěže, sportu a kurzu, korelované a protichůdné výběry;
+  oficiální tipy, sledované výběry, skutečné tikety a kombi odděleně (jednotky a Kč se nesčítají).
+- **Analýza chyb** s kategoriemi (mapování, settlement nezávislým přepočtem ze skóre, kurz, protistrana, …)
+  a registrem známých opravených chyb s testy. Excel má 3 nové listy (Market Integrity, Ranking Validation,
+  Portfolio Risk).
 
 ### Známá omezení
 

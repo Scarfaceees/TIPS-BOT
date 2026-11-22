@@ -57,6 +57,7 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
         # rozbor po vykopu (napr. tlacitko Detail u odehraneho zapasu) neni predpoved – tip by znal pozdejsi stav
         # a do vysledku by se zapocital neopravnene (chyba do 22.11.2026: 6 tipu ulozenych az po zapase)
         return 0
+    record_rankings(store, an)
     chosen = {c.key: c for c in an.selection.approved}
     for c in an.selection.categories.values():
         if c:
@@ -84,6 +85,44 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
              (c.intel.get("rank") or {}).get("score"), json.dumps(c.intel, ensure_ascii=False, default=str) if c.intel else None))
         n += 1
     record_predictions(store, an, cfg)
+    return n
+
+
+def record_rankings(store: Store, an: MatchAnalysis) -> int:
+    """Opportunity Ranking VSECH predzapasovych kandidatu analyzy (nejen ulozenych tipu) do tabulky `rankings`.
+
+    Novy radek jen pri zmene (kancelar, kurz, ranking, kvalita dat nebo rozhodnuti) – opakovany sken bez zmeny
+    nic nepridava. `valid` = aktualni kurz a nezavisla kontrola bez tvrde chyby. Historicke radky se nemeni."""
+    fx = an.fixture
+    if an.created >= fx.kickoff:
+        return 0
+    n = 0
+    for c in an.candidates:
+        intel = c.intel or {}
+        rk, qd = intel.get("rank") or {}, intel.get("quality") or {}
+        if rk.get("score") is None:
+            continue
+        integ = intel.get("integrity") or {}
+        valid = int(c.quote_status == O.CURRENT and c.validation is not None and not c.validation[0])
+        last = store.query("SELECT bookmaker, odds, rank, quality, decision FROM rankings WHERE fixture_id=? AND market=? "
+                           "AND selection=? ORDER BY id DESC LIMIT 1", (fx.id, c.market, c.selection))
+        now_vals = (c.quote.bookmaker, c.odds, rk["score"], qd.get("score"), c.decision)
+        if last and tuple(last[0]) == now_vals:
+            continue
+        oi = intel.get("odds") or {}
+        detail = {"reasons": rk.get("parts", []), "quality": {k: qd.get(k) for k in ("score", "groups", "details", "parts",
+                                                                                         "uncertain")},
+                  "odds": {k: oi.get(k) for k in ("median", "fair_market", "dev", "books", "flags", "suspicious")},
+                  "integrity": integ, "p": c.p, "p_market": c.p_market, "category": c.category,
+                  "reasons_decision": c.reasons[:6]}
+        store.execute(
+            "INSERT INTO rankings(computed_at, version, fixture_id, match, league, kickoff, market, selection, label, odds, "
+            "bookmaker, odds_time, ev, ev_conservative, robustness, quality, rank, decision, integrity, valid, detail) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (iso(an.created), intel.get("version", ""), fx.id, fx.name, fx.league, iso(fx.kickoff), c.market, c.selection,
+             c.label, c.odds, c.quote.bookmaker, iso(c.quote.stamp), c.ev_c, c.ev_d, c.robustness, qd.get("score"),
+             rk["score"], c.decision, integ.get("verdict"), valid, json.dumps(detail, ensure_ascii=False, default=str)))
+        n += 1
     return n
 
 

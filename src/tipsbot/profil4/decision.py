@@ -69,6 +69,9 @@ class Candidate:
         return abs(self.p["A"] - self.p["B"])
 
 
+INTEGRITY_FAIL = "MATEMATICKÁ INTEGRITA NEOVĚŘENA"
+
+
 def decide(c: Candidate, cfg: DecisionConfig) -> Candidate:
     """Doplni rozhodnuti a duvody. Tvrde podminky => NO BET, mekke => WATCH."""
     fails_hard, fails_soft, ok = [], [], []
@@ -124,7 +127,8 @@ def _integrity(c: Candidate, cfg: DecisionConfig, fails_hard: list[str], fails_s
     if c.validation is None:
         fails_soft.append("výpočet nebyl nezávisle ověřen")
     else:
-        fails_hard.extend(c.validation[0])
+        # tvrda chyba nezavisle kontroly = NO BET s jasnym oznacenim (EV/kurz nelze brat vazne)
+        fails_hard.extend(f"{INTEGRITY_FAIL}: {h}" for h in c.validation[0])
         fails_soft.extend(c.validation[1])
     if not c.market_covered:
         fails_soft.append(f"cenu trhu pro tuto sázku nelze ověřit ({c.market_src or 'trh chybí'})")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
 from pathlib import Path
@@ -41,7 +42,11 @@ def add_parser(sub) -> None:
     o.add_argument("--list", action="store_true", help="vypíše uložené kurzy zápasu")
     s.add_parser("settle", help="vyhodnotí skončené zápasy (výsledek, settlement, CLV)")
     s.add_parser("evaluate", help="Brier, log loss, ROI, yield, CLV po modelech, trzích, soutěžích…")
-    s.add_parser("intel", help="Intelligence & Calibration: A–D na společném vzorku, leakage, ranking (bez API)")
+    it = s.add_parser("intel", help="Intelligence & Calibration: A–D na společném vzorku, integrita, ranking (bez API)")
+    it.add_argument("section", nargs="?", default="all",
+                    choices=["all", "integrity", "ranking", "calibration", "data-quality", "portfolio", "errors"],
+                    help="jen jedna část přehledu (výchozí: vše)")
+    it.add_argument("--out", help="uloží analytický report (JSON) do souboru; historii nemění")
     b = s.add_parser("backtest", help="walk-forward backtest modelu A na výsledcích z API")
     b.add_argument("--league", type=int, required=True, help="id soutěže v API-Football (39 = Premier League)")
     b.add_argument("--season", type=int, required=True, help="testovací sezóna (rok začátku, např. 2025)")
@@ -172,7 +177,11 @@ def run(args, cfg: Profil4Config = P4) -> int:
         elif cmd == "intel":
             from . import intelligence
 
-            print(intelligence.format_text(intelligence.store_intel(store, now)))
+            out = intelligence.store_intel(store, now)
+            print(intelligence.format_text(out, args.section))
+            if args.out:
+                Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
+                print(f"Report uložen: {args.out}")
         elif cmd == "backtest":
             from datetime import date
 

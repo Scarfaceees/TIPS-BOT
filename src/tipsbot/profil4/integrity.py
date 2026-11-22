@@ -129,6 +129,19 @@ def validate(c, mat: np.ndarray) -> tuple[list[str], list[str]]:
     return hard, soft
 
 
+def binary_check(p: float, odds: float, ev: float, fair: float, min_odds: float, ev_min: float) -> list[str]:
+    """Nezavisla kontrola binarniho trhu bez vraceni (NHL): EV = p·kurz − 1, ferovy kurz = 1/p,
+    minimalni kurz = (1 + prah EV)/p. Pocita se znovu z p a kurzu, ne z hodnot kandidata."""
+    out = []
+    if not (0.0 < p < 1.0) or not (odds > 1.0):
+        return [f"neplatná pravděpodobnost {p!r} nebo kurz {odds!r}"]
+    for what, mine, theirs in (("EV", p * odds - 1.0, ev), ("férový kurz", 1.0 / p, fair),
+                               ("minimální kurz", (1.0 + ev_min) / p, min_odds)):
+        if theirs is None or not _close(mine, theirs):
+            out.append(f"{what} nesouhlasí s nezávislým výpočtem ({theirs!r} vs {mine:.6f})")
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 2. Sparovani kurzu s trhem kancelare
 # ---------------------------------------------------------------------------

@@ -634,6 +634,16 @@ KNOWN_ISSUES = [
      "wrong": "duplicitní řádky tipu", "fixed": "ano – porovnává se uložený text rozhodnutí, duplicity se při výpočtu slučují",
      "test": "test_profil4_calibration.py::test_repeated_scans_do_not_duplicate_tips_and_settled_predictions_stay, "
              "::test_duplicate_tip_rows_count_as_one_bet"},
+    {"id": "nhl-push-as-void", "category": "chyba settlementu", "date": "2026-11-22",
+     "what": "NHL vrácení vkladu (součet přesně na celé linii) se ukládalo jako 'void' = neplatná sázka (konvence hlavního "
+             "bota), ne 'push'; neplatné sázky se nepočítají do obratu, win rate ani CLV",
+     "input": "NHL over/under 6.0 při skóre 3:3", "expected": "push (vráceno), zisk 0, započítáno do obratu a CLV",
+     "wrong": "void (neplatné), zisk 0, vyřazeno z počtu sázek, yieldu, win rate a CLV; v živých datech 0 případů "
+              "(jen půlové linie)",
+     "fixed": "ano – profil4.nhl.p4_result převádí void na push; starší záznamy se nepřepisují, historický audit je hlásí "
+              "jako INTEGRITY MISMATCH s vysvětlením",
+     "test": "test_profil4_phase32.py::test_nhl_push_saved_as_push_and_counted_in_statistics, "
+             "::test_legacy_nhl_void_push_stays_and_is_reported"},
 ]
 
 ERR_CATEGORIES = ("chyba mapování", "chyba settlementu", "chyba kurzu", "zastaralý kurz", "chybná protistrana",

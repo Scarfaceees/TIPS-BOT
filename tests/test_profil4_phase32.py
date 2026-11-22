@@ -295,14 +295,62 @@ def test_nhl_needs_regulation_score_or_is_unverifiable():
 
 
 def test_known_finding_nhl_push_stored_as_void_is_flagged():
-    """Nalez Faze 3.2 (nemeni se bez souhlasu): nhl_settle.grade vraci u souctu presne na linii 'void', ktery
-    Profil 4 chape jako neplatnou sazku (ne vraceni). Zisk 0 je stejny, lisi se trida vysledku."""
+    """Nalez Faze 3.2: nhl_settle.grade (hlavni bot) vraci u souctu presne na linii 'void', ktery Profil 4 chape
+    jako neplatnou sazku. Hlavni bot zustava beze zmeny; Profil 4 prevadi na push (profil4.nhl.p4_result)."""
     from tipsbot import nhl_settle
+    from tipsbot.profil4 import nhl
 
     g = {"reg": (3, 3), "final": (3, 3), "end": "REG"}
-    assert nhl_settle.grade("OU_6.0", "under", g) == "void"
+    assert nhl_settle.grade("OU_6.0", "under", g) == "void"  # konvence hlavniho bota (Ticket.status void = vraceno)
+    assert nhl.p4_result("void") == P and nhl.p4_result(W) == W and nhl.p4_result(None) is None
     st, why = SA.compare("void", 0.0, SA.nhl_check("OU_6.0", "under", (3, 3), (3, 3), "REG", 1.9))
-    assert st == SA.MISMATCH and "void (neplatná sázka)" in why and "push" in why
+    assert st == SA.MISMATCH and "void (neplatná sázka)" in why and "známá chyba" in why
+
+
+def _nhl_game(fid, home=3, away=3, ko=T0):
+    goals = [{"period": 1, "homeScore": h, "awayScore": a} for h, a in ((1, 0), (2, 1), (3, 2), (3, 3))]
+    return {"games": [{"id": fid, "gameState": "FINAL", "startTimeUTC": ko.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                       "homeTeam": {"abbrev": "TOR", "score": home}, "awayTeam": {"abbrev": "LAK", "score": away},
+                       "goals": goals, "gameOutcome": {"lastPeriodType": "REG"}}]}
+
+
+def test_nhl_push_saved_as_push_and_counted_in_statistics():
+    from tipsbot.profil4 import nhl
+
+    st = Store()
+    nhl_tip = dict(league="NHL", market="OU_6.0", selection="under", odds=1.9, closing_kind=None)
+    t = _insert(st, _tip(7001, **nhl_tip))
+    _insert(st, _tip(7002, league="NHL", market="MONEYLINE", selection="home", odds=2.0, ko=T0))
+    st.execute("INSERT INTO predictions (fixture_id, match, league, kickoff, market, selection, market_type, model, p, "
+               "predicted_at, model_version, config_hash) VALUES (7001, 'H - A', 'NHL', ?, 'OU_6.0', 'under', 'OU', 'C', "
+               "0.5, ?, 'p4', 'x')", (iso(T0), iso(T0 - timedelta(hours=4))))
+    games = {"games": _nhl_game(7001)["games"] + [dict(_nhl_game(7002, 4, 2)["games"][0], id=7002)]}
+    nhl.settle(st, T0 + timedelta(hours=5), fetch=lambda d: games)
+    row = st.query("SELECT * FROM tips WHERE id=?", (t["id"],))[0]
+    assert row["result"] == P and row["profit"] == 0.0 and row["score"] == "3:3"
+    assert st.query("SELECT result, outcome FROM predictions")[0][:] == (P, None)
+    a = st.query("SELECT * FROM settlement_audit WHERE tip_id=?", (t["id"],))[0]
+    assert a["status"] == SA.MATCH and a["algo_version"] == nhl.NHL_GRADE_VERSION and "push" in a["method"]
+    assert json.loads(a["raw_result"])["reg"] == [3, 3]
+    # agregace: vraceni je sazka s obratem 1 j. a ziskem 0 (ne neplatna sazka)
+    tips = [dict(r) for r in st.query("SELECT * FROM tips ORDER BY id")]
+    bs = history.bet_stats(tips)
+    assert bs["n"] == 2 and bs["profit"] == pytest.approx(1.0) and bs["yield"] == pytest.approx(0.5)
+    fin = PF.finance(tips, [])["by_sport"]["hokej"]["all"]
+    assert fin["push"] == 1 and fin["turnover"] == 2.0 and fin["win_rate"] == pytest.approx(1.0)
+    assert PF.finance(tips, [])["excluded"]["neplatné (void)"] == 0
+
+
+def test_legacy_nhl_void_push_stays_and_is_reported():
+    """Starsi zaznam (pred opravou) se NEPREPISUJE – audit ho jen oznaci se srozumitelnym duvodem."""
+    st = Store()
+    _insert(st, _tip(7100, league="NHL", market="OU_6.0", selection="under", odds=1.9, result=V, profit=0.0,
+                     score="3:3"))
+    before = [dict(r) for r in st.query("SELECT * FROM tips")]
+    out = SA.audit_history(st, T0 + timedelta(days=1))
+    assert [dict(r) for r in st.query("SELECT * FROM tips")] == before
+    assert out["total"][SA.MISMATCH] == 1 and "známá chyba NHL" in out["items"][0]["reason"]
+    assert any(k["id"] == "nhl-push-as-void" for k in IG.KNOWN_ISSUES)
 
 
 def test_audit_record_at_settlement_and_no_silent_overwrite():

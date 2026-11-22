@@ -422,6 +422,18 @@ def _fetch_event(sport: str, key: str, event_id: str, markets: list[str], base_u
     return r.json(), quota, ""
 
 
+NHL_GRADE_VERSION = "nhl-grade-2 (22.11.2026: vrácení = push)"
+
+
+def p4_result(out: str | None) -> str | None:
+    """Vysledek nhl_settle.grade v konvenci Profilu 4.
+
+    Hlavni bot oznacuje vraceni vkladu (soucet presne na cele linii) jako 'void'; v Profilu 4 je 'void' NEPLATNA
+    sazka (zruseny zapas, opravene mapovani), ktera se nepocita do obratu, win rate ani CLV. Vraceni je 'push'.
+    Oprava Faze 3.2 (schvalena 22.11.2026) – zisk se nemeni (0), meni se jen trida vysledku."""
+    return mathcore.PUSH if out == "void" else out
+
+
 def settle(store, now: datetime, fetch=None) -> list[str]:
     """Vyhodnoti tipy a predikce NHL z NHL API (zapas zacal pred vic nez 3,5 h, nejvys 10 dni zpet)."""
     from .. import nhl_settle
@@ -449,13 +461,15 @@ def settle(store, now: datetime, fetch=None) -> list[str]:
         ko = g["start"].replace(tzinfo=timezone.utc) if g["start"] else None
         score = f"{g['final'][0]}:{g['final'][1]}" + ("" if g["end"] == "REG" else f" ({g['end']})")
         for t in store.query("SELECT * FROM tips WHERE fixture_id=? AND result IS NULL", (fid,)):
-            out = nhl_settle.grade(t["market"], t["selection"], g)
+            out = p4_result(nhl_settle.grade(t["market"], t["selection"], g))
             if out is not None:
                 msgs.append(history.settle_tip(store, t, out, score, ko or parse_dt(t["kickoff"]), now,
                                                {"raw": {"game_id": g.get("id"), "final": list(g["final"]),
-                                                        "reg": list(g["reg"]), "end": g["end"]}}))
+                                                        "reg": list(g["reg"]), "end": g["end"]},
+                                                "method": "nhl_settle.grade + převod vrácení void -> push (Profil 4)",
+                                                "version": NHL_GRADE_VERSION}))
         for p in store.query("SELECT id, market, selection FROM predictions WHERE fixture_id=? AND result IS NULL", (fid,)):
-            out = nhl_settle.grade(p["market"], p["selection"], g)
+            out = p4_result(nhl_settle.grade(p["market"], p["selection"], g))
             if out is not None:
                 store.execute("UPDATE predictions SET result=?, outcome=?, score=?, settled_at=? WHERE id=?",
                               (out, history.outcome_value(out), score, iso(now), p["id"]))

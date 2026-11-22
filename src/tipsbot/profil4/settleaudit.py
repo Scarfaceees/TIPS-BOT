@@ -149,7 +149,8 @@ def compare(result: str, profit: float | None, check: tuple[str, float] | None, 
     if result != cres:
         if result == VOID and cres == PUSH:
             reasons.append("produkce: void (neplatná sázka), nezávisle: push (vrácení vkladu) – zisk stejný, "
-                           "liší se jen třída výsledku")
+                           "liší se jen třída výsledku (známá chyba NHL vyhodnocení před opravou 22.11.2026; "
+                           "uložený záznam se nepřepisuje)")
         else:
             reasons.append(f"výsledek produkce {result}, nezávisle {cres}")
     if profit is None or abs(profit - cprofit) > 1e-6:

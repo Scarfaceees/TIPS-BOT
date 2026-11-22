@@ -28,7 +28,39 @@ Nic se nesází, žádný historický záznam se nemaže ani nepřepisuje. Nové
 | Statistická nejistota | částečně | Intervaly z bootstrapu po zápasech fungují, ale model_table je ukazoval i pro 14 zápasů NHL, což vypadá falešně přesně. Ve 3.2 se pod 30 zápasů intervaly nezobrazují. |
 | Data pro out-of-sample | omezená | Ukládá se čas předpovědi, verze modelu, hash konfigurace, kurz s časem a seznam zdrojů, ale **ne snímek vstupních dat**. Historické vstupy proto nelze plně zrekonstruovat a předpovědi přepočítat. |
 
-### Nalezená chyba – jen zdokumentována, NEOPRAVENA (settlement bez souhlasu neměním)
+### Nalezená chyba NHL push/void – OPRAVENA se souhlasem 22. 11. 2026
+
+**Rozsah: ukládání i agregace** (rozbor kódu po souhlasu). Zisk je vždy správně (0), liší se jen třída výsledku.
+Ta ale ovlivňuje všechny výpočty, které neplatné sázky vyřazují:
+
+| Místo | Dopad `void` místo `push` |
+|---|---|
+| `history.bet_stats` / Úspěšnost modelů, `history.evaluate` | sázka chybí v počtu sázek, obratu a počtu zápasů; yield = zisk / menší obrat; win rate s menším jmenovatelem; CLV sázky se nezapočítá |
+| `performance` (finance, CLV, ranking) | obrat, počet push, win rate, CLV a počet výběrů v pásmu rankingu |
+| `intelligence` (skupiny, portfolio, Ranking Validation) | počty vyhodnocených tipů, yield skupin, výběry v pásmech |
+| `intelligence.diagnose` / `classify_error` | chybné vysvětlení „zrušený zápas nebo opravené mapování“ |
+| Excel (`export`) | „neplatné“ místo „vráceno“ (ROI Excelu se nemění – vrácení ani neplatné se do vsazeného nepočítají) |
+| Kalibrace (Brier, log loss) | bez dopadu – vrácení i neplatná sázka mají `outcome` NULL |
+
+**Historická data:** v živé databázi **0 případů**. NHL tipy (38) a předpovědi (390) mají jen výsledky won / lost
+na půlových liniích (OU 5.5 / 6.5, puck line ±1.5, moneyline), kde vrácení nemůže nastat. Zpětná oprava proto není
+potřeba a žádný záznam se nemění.
+
+**Oprava:** `profil4/nhl.p4_result` převádí `void` z `nhl_settle.grade` na `push`, a to pro tipy i předpovědi
+Profilu 4. Hlavní bot (`nhl_settle`, tikety) má vlastní konvenci, kde `void` znamená vráceno, a nemění se.
+
+**Auditovatelnost:**
+
+- Auditní záznam nového vyhodnocení NHL nese metodu „nhl_settle.grade + převod vrácení void → push (Profil 4)“
+  a verzi `nhl-grade-2 (22.11.2026: vrácení = push)`, spolu se surovými daty z NHL API (konečné skóre, skóre po
+  60 minutách, způsob konce).
+- Případný starší záznam (z jiné instalace nebo zálohy) se **nepřepisuje**. Historický audit ho označí jako
+  INTEGRITY MISMATCH s důvodem „známá chyba NHL vyhodnocení před opravou 22.11.2026; uložený záznam se
+  nepřepisuje“.
+- Chyba je v registru `KNOWN_ISSUES` (Analýza chyb v panelu a Excelu) s odkazem na testy.
+- Testy: `test_nhl_push_saved_as_push_and_counted_in_statistics`, `test_legacy_nhl_void_push_stays_and_is_reported`.
+
+Původní popis nálezu:
 
 **NHL: vrácení vkladu se ukládá jako „neplatná sázka“.**
 
@@ -39,7 +71,7 @@ Nic se nesází, žádný historický záznam se nemaže ani nepřepisuje. Nové
 - **Výskyt:** v živých datech zatím **0 případů**. Linky NHL tipů jsou dosud jen půlové.
 - **Zachycení:** nový nezávislý výpočet to hlásí jako INTEGRITY MISMATCH s vysvětlením (test
   `test_known_finding_nhl_push_stored_as_void_is_flagged`).
-- **Navržená oprava (čeká na souhlas):** v `profil4/nhl.settle` převést `void` z `nhl_settle.grade` na `push`, a to
+- **Navržená oprava (schválena a provedena, viz výše):** v `profil4/nhl.settle` převést `void` z `nhl_settle.grade` na `push`, a to
   jen pro Profil 4. Hlavní bot má vlastní konvenci a nemění se.
 
 ## 2. Architektura nových částí
@@ -139,7 +171,8 @@ Nic se nesází, žádný historický záznam se nemaže ani nepřepisuje. Nové
 - `src/tipsbot/profil4/store.py` – tabulky `settlement_audit`, `settlement_audit_runs`
 - `src/tipsbot/profil4/history.py` – `settle_tip(evidence=)` a auditní záznam (výsledek beze změny);
   `cluster_ci(level=)` (výchozí 95 % jako dřív)
-- `src/tipsbot/profil4/nhl.py` – předání surových dat NHL API do auditu
+- `src/tipsbot/profil4/nhl.py` – předání surových dat NHL API do auditu; `p4_result` (vrácení = push, oprava schválená 22. 11. 2026)
+- `src/tipsbot/profil4/intelligence.py` – záznam `nhl-push-as-void` v registru KNOWN_ISSUES
 - `src/tipsbot/profil4/closing.py` – `refresh_performance`, `perf_daily`
 - `src/tipsbot/profil4/cli.py` – sekce `performance`, `ranking-performance`, `model-comparison`, `clv`,
   `settlement-integrity`, přepínač `--audit-history`

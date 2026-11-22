@@ -675,8 +675,9 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <fieldset class="grid2 leg" data-leg style="margin-top:12px"><legend class="muted" data-legno>Zápas 1</legend>
   <label>Zápas (Domácí - Hosté)<input name="match_name" list="matchlist" placeholder="vyber nebo napiš" autocomplete="off" required></label>
   <label>Den zápasu<input name="match_day" type="date" value="{{ today }}" required></label>
-  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="TTH">Góly domácích (over / under)</option><option value="TTA">Góly hostů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><optgroup label="NHL"><option value="REG">NHL – výsledek po 60 min (1 / X / 2)</option><option value="MONEYLINE">NHL – vítěz vč. prodloužení a nájezdů</option><option value="NHL_OU">NHL – počet gólů vč. prodloužení</option><option value="NHL_OU60">NHL – počet gólů za 60 min</option><option value="PUCKLINE">NHL – handicap ±1,5 vč. prodloužení</option></optgroup><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
+  <label>Trh<select name="market"><option value="1X2">Výsledek (1 / X / 2)</option><option value="OU">Počet gólů (over / under)</option><option value="TTH">Góly domácích (over / under)</option><option value="TTA">Góly hostů (over / under)</option><option value="BTTS">Oba dají gól (ano / ne)</option><option value="DC">Dvojitá šance (1X / 12 / X2)</option><option value="DNB">Bez remízy (home / away)</option><option value="AH">Handicap (např. hosté +1,5)</option><option value="1X2_OU">Výsledek a počet gólů</option><optgroup label="NHL"><option value="REG">NHL – výsledek po 60 min (1 / X / 2)</option><option value="MONEYLINE">NHL – vítěz vč. prodloužení a nájezdů</option><option value="NHL_OU">NHL – počet gólů vč. prodloužení</option><option value="NHL_OU60">NHL – počet gólů za 60 min</option><option value="PUCKLINE">NHL – handicap ±1,5 vč. prodloužení</option><option value="REG_OU60">NHL – výsledek a počet gólů za 60 min</option><option value="OT">NHL – rozhodne se v prodloužení (ano / ne)</option></optgroup><option value="JINY">Jiný trh (vyhodnotíš ručně)</option></select></label>
   <label>Hranice gólů (jen u počtu gólů)<select name="line">{% for x in ('0.5', '1.5', '2.5', '3.5', '4.5', '5.5', '6.5', '1.0', '2.0', '3.0', '4.0') %}<option {{ 'selected' if x == '2.5' }}>{{ x }}</option>{% endfor %}</select></label>
+  <label>Handicap vybraného týmu<select name="hcap">{% for x in ('-2.5', '-2', '-1.5', '-1', '-0.5', '0', '+0.5', '+1', '+1.5', '+2', '+2.5') %}<option {{ 'selected' if x == '+1.5' }}>{{ x }}</option>{% endfor %}</select></label>
   <label>Výběr<select name="selection" data-for="market" required></select><input name="selection" class="seltext" placeholder="popis sázky" disabled hidden></label>
   <label>Kurz zápasu<input name="leg_odds" type="number" step="0.01" min="1.01" required></label>
   <div class="row"><button type="button" class="ghost sm" data-delleg hidden>Odebrat zápas</button></div>
@@ -1307,16 +1308,19 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
   if(m=='1X2'||m=='REG')return [['1','1 – domácí'],['X','X – remíza'],['2','2 – hosté']];
   if(m=='PUCKLINE')return [['home-1.5','domácí −1,5'],['away+1.5','hosté +1,5'],['home+1.5','domácí +1,5'],['away-1.5','hosté −1,5']];
   if(m=='DC')return [['1X','1X'],['12','12'],['X2','X2']];
-  if(m=='DNB'||m=='MONEYLINE')return [['home','domácí'],['away','hosté']];
+  if(m=='DNB'||m=='MONEYLINE'||m=='AH')return [['home','domácí'],['away','hosté']];
+  if(m=='OT')return [['no','ne'],['yes','ano']];
+  if(m=='1X2_OU'||m=='REG_OU60'){var o=[];[['1','domácí'],['X','remíza'],['2','hosté']].forEach(function(r){o.push([r[0]+'&over',r[1]+' a víc gólů'],[r[0]+'&under',r[1]+' a míň gólů'])});return o;}
   if(m=='BTTS')return [['yes','ano'],['no','ne']];
   if(m=='JINY')return null;
   if(m=='TTH_0.5'||m=='TTA_0.5')return [['over','ano, dají gól'],['under','ne']];
   return [['over','víc (over)'],['under','míň (under)']];}
  function bindSel(sel){
   var box=sel.closest('[data-leg]')||sel.form,src=box.querySelector('[name="'+sel.dataset.for+'"]'),txt=sel.parentNode.querySelector('.seltext');
-  var line=box.querySelector('[name="line"]');
+  var line=box.querySelector('[name="line"]'),hcap=box.querySelector('[name="hcap"]');
   function upd(){var o=sels(src.value);sel.innerHTML='';
-   if(line)line.closest('label').style.display=/^(NHL_)?(OU(60)?|TTH|TTA)$/.test(src.value)?'':'none';
+   if(line)line.closest('label').style.display=/^((NHL_)?(OU(60)?|TTH|TTA)|1X2_OU|REG_OU60)$/.test(src.value)?'':'none';
+   if(hcap)hcap.closest('label').style.display=src.value=='AH'?'':'none';
    sel.hidden=sel.disabled=!o;if(txt){txt.hidden=txt.disabled=!!o;txt.required=!o}
    (o||[]).forEach(function(x){var e=document.createElement('option');e.value=x[0];e.textContent=x[1];sel.appendChild(e)});}
   src.addEventListener('change',upd);upd();}
@@ -1432,23 +1436,25 @@ def _manual_bet(market: str, line: str, selection: str) -> tuple[str, str]:
     market = market.strip().upper()
     if market == "JINY":
         return "JINY", selection.strip()
-    if market in ("REG", "MONEYLINE", "NHL_OU", "NHL_OU60", "PUCKLINE"):  # NHL: vyhodnoceni z NHL API
+    if market in ("REG", "MONEYLINE", "NHL_OU", "NHL_OU60", "PUCKLINE", "OT", "REG_OU60"):  # NHL: z NHL API
         from .nhl_settle import grade as nhl_grade
 
-        if market in ("NHL_OU", "NHL_OU60"):
+        if market in ("NHL_OU", "NHL_OU60", "REG_OU60"):
             if not line.strip():
                 raise ValueError("U počtu gólů vyplň hranici (např. 5.5).")
-            market = f"{'OU60' if market == 'NHL_OU60' else 'OU'}_{float(line.replace(',', '.')):g}"
+            kind = {"NHL_OU": "OU", "NHL_OU60": "OU60", "REG_OU60": "REG&OU60"}[market]
+            market = f"{kind}_{float(line.replace(',', '.')):g}"
         elif market == "PUCKLINE":
             market = "PUCKLINE_1.5" if selection in ("home-1.5", "away+1.5") else "PUCKLINE_1.5R"
         selection = selection.strip()
         if nhl_grade(market, selection, {"reg": (0, 0), "final": (1, 0)}) is None:
             raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím.")
         return market, selection
-    if market in ("OU", "TTH", "TTA"):
+    if market in ("OU", "TTH", "TTA", "1X2_OU", "AH"):
         if not line.strip():
-            raise ValueError("U počtu gólů vyplň hranici (např. 2.5).")
-        market = f"{market}_{float(line.replace(',', '.')):g}"
+            raise ValueError("U handicapu a počtu gólů vyplň hranici (např. 2.5 nebo +1.5).")
+        num = float(line.replace(",", "."))
+        market = f"AH_{num:+g}" if market == "AH" else f"{'1X2&OU' if market == '1X2_OU' else market}_{num:g}"
     market, selection = normalize_bet(market, selection)
     if grade(market, selection, 0, 0) is None:
         raise ValueError(f"Výběru '{selection}' u trhu {market} nerozumím (např. 1/X/2, over/under, ano/ne, 1X).")
@@ -2233,12 +2239,13 @@ def create_app(database_url: str | None = None) -> Flask:
             names = f.getlist("match_name")
             if tip_id is None and len(names) > 1:  # tiket AKU: vic zapasu, jeden vklad
                 legs = []
-                for i, (nm, dy, mk, ln, sl, od) in enumerate(zip(names, f.getlist("match_day"), f.getlist("market"),
-                                                                f.getlist("line"), f.getlist("selection"),
-                                                                f.getlist("leg_odds")), 1):
+                hcaps = f.getlist("hcap") or [""] * len(names)
+                for i, (nm, dy, mk, ln, hc, sl, od) in enumerate(zip(names, f.getlist("match_day"), f.getlist("market"),
+                                                                    f.getlist("line"), hcaps, f.getlist("selection"),
+                                                                    f.getlist("leg_odds")), 1):
                     if not nm.strip() or not dy or not od:
                         raise ValueError(f"U zápasu {i} vyplň zápas, den a kurz.")
-                    mk, sl = _manual_bet(mk, ln, sl)
+                    mk, sl = _manual_bet(mk, hc if mk.strip().upper() == "AH" else ln, sl)
                     legs.append({"match_name": nm.strip(), "match_day": date.fromisoformat(dy), "market": mk,
                                  "selection": sl, "odds": float(od.replace(",", "."))})
                 ticket = led.add_combo_ticket(bookmaker=f["bookmaker"], odds=float(f["odds"]), stake=float(f["stake"]),
@@ -2249,7 +2256,8 @@ def create_app(database_url: str | None = None) -> Flask:
             day = date.fromisoformat(f["match_day"]) if f.get("match_day") else None
             market, selection = f.get("market") or None, f.get("selection") or None
             if tip_id is None and market:
-                market, selection = _manual_bet(market, f.get("line", ""), selection or "")
+                market, selection = _manual_bet(market, f.get("hcap" if market.strip().upper() == "AH" else "line", ""),
+                                                selection or "")
             ticket = led.add_ticket(
                 bookmaker=f["bookmaker"],
                 odds=float(f.get("odds") or f.get("leg_odds")),

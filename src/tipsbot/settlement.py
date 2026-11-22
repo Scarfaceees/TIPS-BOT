@@ -39,6 +39,10 @@ def _plain(text: str) -> str:
 
 def normalize_bet(market: str, selection: str) -> tuple[str, str]:
     """Rucne zapsany trh/vyber -> tvar, kterému rozumi `grade` (napr. 'under' + '1,5' -> 'OU_1.5', 'under')."""
+    if "&" in market:  # kombinace trhu ('1X2&OU_1.5' + '1&over'): casti se normalizuji v `grade`
+        return market.strip().upper(), selection.strip()
+    if market.strip().upper() == "JINY":  # volny popis se nevyhodnocuje (22.11.2026: 'a vice nez 1.5' se cetlo jako OU)
+        return "JINY", selection.strip()
     if market.strip().upper().startswith(COUNT_MARKETS):  # rohy a karty: linie je v nazvu trhu
         return market.strip().upper(), {"nad": "over", "vic": "over", "pod": "under", "min": "under"}.get(_plain(selection), _plain(selection))
     m, s = _plain(market), _plain(selection)
@@ -67,6 +71,9 @@ def parse_score(text: str) -> tuple[int, int]:
 def grade(market: str, selection: str, hg: int, ag: int) -> str | None:
     """Vysledek sazky po 90 minutach; None = trh neumime."""
     market, selection = normalize_bet(market, selection)
+    if "&" in market:  # kombinace: '1X2&OU_1.5' + '1&over' = vyhra domacich a vic nez 1,5 golu
+        ms, ss = market.split("&"), selection.split("&")
+        return combined([grade(m, x, hg, ag) for m, x in zip(ms, ss)]) if len(ms) == len(ss) else None
     sel = selection.strip()
     low = sel.lower()
     if market == "1X2":
@@ -97,22 +104,33 @@ def grade(market: str, selection: str, hg: int, ag: int) -> str | None:
             line = float(market[3:])
         except ValueError:
             return None
-        over, total = low == "over", hg + ag
-        quarter = abs(line * 4 - round(line * 4)) < 1e-9 and abs(line * 2 - round(line * 2)) > 1e-9
-        if not quarter:
-            return _ou_single(total, line, over)
-        a, b = _ou_single(total, line - 0.25, over), _ou_single(total, line + 0.25, over)
-        pair = {a, b}
-        if pair == {"won"}:
-            return "won"
-        if pair == {"lost"}:
-            return "lost"
-        if pair == {"won", "void"}:
-            return "half_won"
-        if pair == {"lost", "void"}:
-            return "half_lost"
-        return None
+        return _asian(hg + ag, line, low == "over")
+    if market.startswith("AH_") and low in ("home", "away", "1", "2"):  # handicap vybraneho tymu: AH_+1.5 away = hoste +1,5
+        try:
+            line = float(market[3:])
+        except ValueError:
+            return None
+        margin = hg - ag if low in ("home", "1") else ag - hg
+        return _asian(margin, -line, True)
     return None
+
+
+def _asian(value: float, line: float, over: bool) -> str | None:
+    """value proti linii; ctvrtinova linie (2.25) = pul sazky na 2.0 a pul na 2.5."""
+    quarter = abs(line * 4 - round(line * 4)) < 1e-9 and abs(line * 2 - round(line * 2)) > 1e-9
+    if not quarter:
+        return _ou_single(value, line, over)
+    pair = {_ou_single(value, line - 0.25, over), _ou_single(value, line + 0.25, over)}
+    return {frozenset({"won"}): "won", frozenset({"lost"}): "lost", frozenset({"won", "void"}): "half_won",
+            frozenset({"lost", "void"}): "half_lost"}.get(frozenset(pair))
+
+
+def combined(parts: list[str | None]) -> str | None:
+    """Vysledek kombinace trhu (vsechny casti musi vyjit): prohra kterekoli = prohra, vyhra vsech = vyhra;
+    vracena nebo polovicni cast -> None (vyhodnoti se rucne podle pravidel kancelare)."""
+    if "lost" in parts:
+        return "lost"
+    return "won" if parts and all(p == "won" for p in parts) else None
 
 
 COUNT_MARKETS = ("ROHY_", "KARTY_")

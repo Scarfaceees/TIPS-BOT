@@ -49,6 +49,8 @@ class MatchView:
 
 
 def label(market: str, selection: str, home: str, away: str) -> str:
+    if "&" in market:  # kombinace trhu
+        return " a ".join(label(m, x, home, away) for m, x in zip(market.split("&"), selection.split("&")))
     if market == "1X2":
         return {"1": f"Výhra {home}", "X": "Remíza", "2": f"Výhra {away}"}[selection]
     if market == "MONEYLINE":
@@ -65,7 +67,7 @@ def label(market: str, selection: str, home: str, away: str) -> str:
         team = home if market.startswith("TTH_") else away
         return f"{team}: {'Over' if selection == 'over' else 'Under'} {market[4:]} gólů"
     if market.startswith("AH_"):
-        return f"Asijský handicap {home if selection == 'home' else away} {market[3:]}"
+        return f"Handicap {home if selection in ('home', '1') else away} {float(market[3:]):+g}"
     if market == "REG":
         return {"1": f"Základní doba: {home}", "X": "Základní doba: remíza", "2": f"Základní doba: {away}"}[selection]
     if market.startswith("OU60_"):

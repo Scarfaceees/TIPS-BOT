@@ -1072,7 +1072,7 @@ def to_xlsx(d: Data) -> bytes:
 
     # 6 Bankroll
     ws = sheet("Vývoj bankrollu")
-    reason = {"deposit": "vklad", "withdrawal": "výběr", "settlement": "vyhodnocený tiket"}
+    reason = {"deposit": "vklad", "withdrawal": "výběr", "settlement": "vyhodnocený tiket", "correction": "oprava vyhodnocení"}
     end = table(ws, 6, ["Čas (UTC)", "Pohyb (Kč)", "Důvod", "Zůstatek (Kč)", "Tiket"],
                 [[b["t"].strftime("%Y-%m-%d %H:%M"), b["amount"], reason.get(b["reason"], b["reason"]), b["balance"],
                   b["ticket"]] for b in d.bankroll], {2: '+#,##0;-#,##0;0', 4: "#,##0"}, [18, 12, 18, 14, 8], False)

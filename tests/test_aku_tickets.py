@@ -140,3 +140,62 @@ def test_panel_aku_form_settle_and_delete(client):
                                    "match_name": ["A - B", ""], "match_day": [day, day], "market": ["OU", "OU"],
                                    "line": ["2.5", "2.5"], "selection": ["under", "under"], "leg_odds": ["1.5", ""]})
     assert bad.status_code == 400
+
+
+# --- handicap a kombinace vysledek + goly (pozadavek 22.11.2026: tikety Elche +1.5, Marseille a vic nez 1.5,
+# Tampa a vic nez 5.5 se nedaly vyhodnotit automaticky) -------------------------------------------------------
+
+def test_grade_handicap_and_result_goals_combo():
+    from tipsbot.settlement import grade
+
+    assert grade("AH_+1.5", "away", 1, 0) == "won"  # Elche +1.5: prohra o 1 = vyhra sazky
+    assert grade("AH_+1.5", "away", 2, 0) == "lost"
+    assert grade("AH_-1", "home", 2, 1) == "void" and grade("AH_-0.75", "home", 2, 1) == "half_won"
+    assert grade("1X2&OU_1.5", "1&over", 2, 0) == "won"  # Marseille a vic nez 1,5 golu
+    assert grade("1X2&OU_1.5", "1&over", 1, 0) == "lost" and grade("1X2&OU_1.5", "1&over", 1, 2) == "lost"
+    assert grade("1X2&OU_2", "1&over", 2, 0) is None  # vracena cast: rucne podle pravidel kancelare
+
+
+def test_grade_nhl_result_goals_60min_and_ot():
+    g_reg = {"reg": (4, 2), "final": (4, 2), "end": "REG"}
+    g_ot = {"reg": (3, 3), "final": (4, 3), "end": "OT"}
+    assert nhl_settle.grade("REG&OU60_5.5", "1&over", g_reg) == "won"
+    assert nhl_settle.grade("REG&OU60_5.5", "1&over", g_ot) == "lost"  # po 60 min remiza
+    assert nhl_settle.grade("OT", "no", g_reg) == "won" and nhl_settle.grade("OT", "no", g_ot) == "lost"
+
+
+def test_combo_with_handicap_and_combo_legs_settles(led):
+    t = led.add_combo_ticket(bookmaker="tipsport", odds=1.65, stake=25, legs=[
+        _leg("Levante - Elche", "AH_+1.5", "away", 1.24), _leg("Marseille - Le Mans", "1X2&OU_1.5", "1&over", 1.33)])
+    settle_open_tickets(led, _df([("Levante", "Elche", 1, 0), ("Marseille", "Le Mans", 3, 1)]))
+    assert [x.status for x in led.ticket_legs(t.id)] == ["won", "won"] and t.status == "won"
+
+
+def test_panel_handicap_and_combo_markets(client):
+    c = client
+    day = date.today().isoformat()
+    html = c.get("/?tab=tikety").get_data(as_text=True)
+    assert 'value="AH"' in html and 'value="1X2_OU"' in html and 'value="REG_OU60"' in html and 'value="OT"' in html
+    r = c.post("/tickets", data={"tab": "tikety", "bookmaker": "tipsport", "odds": "3.25", "stake": "25",
+                                 "match_name": ["Levante - Elche", "Marseille - Le Mans",
+                                                "Tampa Bay Lightning - Buffalo Sabres", "Dallas Stars - Pittsburgh Penguins"],
+                                 "match_day": [day] * 4, "market": ["AH", "1X2_OU", "REG_OU60", "OT"],
+                                 "line": ["2.5", "1.5", "5.5", "2.5"], "hcap": ["+1.5", "+1.5", "+1.5", "+1.5"],
+                                 "selection": ["away", "1&over", "1&over", "no"], "leg_odds": ["1.24", "1.64", "2.59", "1.11"]})
+    html = r.get_data(as_text=True)
+    assert r.status_code == 200 and "Tiket AKU #1 zapsán: 4 zápasy" in html
+    assert "Handicap Elche +1.5" in html and "Výhra Marseille a Over 1.5 gólů" in html
+    assert "Zápas jde do prodloužení: ne" in html
+
+
+def test_other_market_text_is_never_auto_graded(led):
+    """22.11.2026: noha 'JINY' s popisem 'Marseille a více než 1.5 gólu' se vyhodnotila jako over 1.5 (2:3 -> výhra)."""
+    from tipsbot.settlement import grade
+
+    assert grade("JINY", "Marseille a více než 1.5 gólu", 2, 3) is None
+    t = led.add_combo_ticket(bookmaker="tipsport", odds=2.07, stake=25, legs=[
+        _leg("Getafe - Atletico Madrid", "OU_3.5", "under", 1.26),
+        _leg("Marseille - Le Mans", "JINY", "Marseille a více než 1.5 gólu", 1.64)])
+    notes = settle_open_tickets(led, _df([("Getafe", "Atletico Madrid", 0, 3), ("Marseille", "Le Mans", 2, 3)]))
+    assert [x.status for x in led.ticket_legs(t.id)] == ["won", "open"] and t.status == "open"
+    assert any("neumím vyhodnotit" in n for n in notes)

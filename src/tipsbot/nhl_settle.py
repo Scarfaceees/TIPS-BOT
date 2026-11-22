@@ -56,6 +56,11 @@ def _ou(total: float, line: float, over: bool) -> str:
 
 def grade(market: str, selection: str, g: dict) -> str | None:
     """Vysledek sazky NHL; None = trh neznam."""
+    if "&" in market:  # kombinace: 'REG&OU60_5.5' + '1&over' = vyhra domacich za 60 min a vic nez 5,5 golu za 60 min
+        from .settlement import combined
+
+        ms, ss = market.split("&"), selection.split("&")
+        return combined([grade(m, x, g) for m, x in zip(ms, ss)]) if len(ms) == len(ss) else None
     rh, ra = g["reg"]
     fh, fa = g["final"]
     sel = selection.strip()

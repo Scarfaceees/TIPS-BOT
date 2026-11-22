@@ -267,7 +267,11 @@ def analyse(fx: Fixture, model: dict | None, quotes: list[OddsQuote], now: datet
     notes = [] if model else ["model A není k dispozici (tým chybí v datech MoneyPuck) – jen trh"]
     ms = NHLModels("model bota NHL (xG, brankáři, únava)", "Pinnacle / medián kanceláří bez marže",
                    f"{weight:.0%} model A, {1 - weight:.0%} trh B (váha ze zpětného testu bota pro NHL)", weight)
-    return NHLAnalysis(fx, now, cov, ms, cands, select(cands, cfg.decision), quotes, notes, goalie_note)
+    sel = select(cands, cfg.decision)
+    from . import intelligence as IG  # Faze 3: diagnostika po rozhodnuti (rozhodnuti nemeni)
+
+    IG.annotate(cands, None, quotes, cov, now, cfg)
+    return NHLAnalysis(fx, now, cov, ms, cands, sel, quotes, notes, goalie_note)
 
 
 # ---------------------------------------------------------------------------

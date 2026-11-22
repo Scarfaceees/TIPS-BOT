@@ -52,6 +52,7 @@ class Candidate:
     market_src: str = ""
     market_covered: bool = False  # ma trh B pro tento typ sazky aktualni kurzy
     confirmed_by: list[str] = field(default_factory=list)  # jine kancelare s podobnym kurzem
+    intel: dict = field(default_factory=dict)  # Faze 3 (intelligence.annotate): kvalita dat, kurzy, EV, ranking – bez vlivu na rozhodnuti
 
     @property
     def odds(self) -> float:

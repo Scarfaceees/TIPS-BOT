@@ -375,6 +375,13 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 .p4risk{margin-top:6px;color:#94600a;background:#fff8e8;border-radius:8px;padding:6px 9px;font-size:12px}
 .p4nowrap td.num{white-space:nowrap}.p4list{margin:6px 0;padding-left:18px;font-size:13px;line-height:1.55}.p4pre{white-space:pre-wrap;font:12px/1.45 ui-monospace,monospace;overflow-x:auto;margin:8px 0 0}
 @media(max-width:1100px){.p4metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.p4three{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0}.p4three>div{background:#f4f8fd;border-radius:10px;padding:8px 10px;min-width:0}.p4three span,.p4three small{display:block;font-size:11px;color:#6c7f98}.p4three b{font-size:16px}
+.p4kv{font-size:13px;margin:4px 0;overflow-wrap:anywhere}.p4mcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin:8px 0}.p4mcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-width:0}
+.p4mhead{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.p4mhead small{color:var(--muted)}.p4opp{display:grid;gap:8px}.p4oppc{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 12px}
+.p4oppc summary{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;cursor:pointer;list-style:none}.p4rank{display:inline-flex;width:40px;height:40px;border-radius:50%;background:var(--accbg);color:var(--acc);font-weight:800;align-items:center;justify-content:center}
+.p4svg{width:100%;max-width:420px;height:auto;display:block;margin:6px 0}
+@media(max-width:640px){.p4three{grid-template-columns:repeat(2,minmax(0,1fr))}.p4oppc summary{grid-template-columns:auto 1fr}.p4oppc summary .badge{grid-column:1/-1;justify-self:start}}
+
 @media(max-width:720px){.p4stats{grid-template-columns:repeat(2,minmax(0,1fr))}.p4metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.p4actions form{flex:1 1 calc(50% - 8px)}.p4actions button{width:100%}.page-head h2{font-size:19px}}
 </style></head><body>
 
@@ -911,6 +918,19 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% if c.stress %}<details class="fold"><summary>Stress test a robustnost</summary><div class="tablewrap"><table class="mkt"><tr><th>Scénář</th><th class="num">EV</th></tr>
 {% for n, ev, ok in c.stress %}<tr><td>{{ n }}</td><td class="num {{ 'pos' if ok else 'neg' }}">{{ ev }}</td></tr>{% endfor %}</table></div>
 <div class="muted">Robustnost: {{ c.robust_parts|join(', ') }}</div></details>{% endif %}
+{% if c.intel %}{% set i = c.intel %}<div class="p4three"><div><span>Šance na výhru</span><b>{{ c.p_win }}</b><small>odhad modelu C</small></div>
+<div><span>Robustnost odhadu</span><b>{{ c.robustness }}/100</b><small>stabilita odhadu</small></div>
+<div><span>Kvalita dat</span><b>{{ '%.0f'|format(i.quality) }}/100</b><small>vstupní informace</small></div>
+<div><span>Opportunity Ranking</span><b>{{ '%.0f'|format(i.rank) }}/100</b><small>pořadí zajímavosti</small></div></div>
+{% if i.flags %}<div class="{{ 'p4risk' if i.suspicious else 'muted' }}">Kurz: {{ i.flags|join('; ') }}</div>{% endif %}
+<details class="fold"><summary>Kvalita dat, kurz a EV podle modelů</summary>
+<div class="muted">Žádný z ukazatelů není zárukou zisku. Šance = odhad výhry; robustnost = jak stabilní je odhad; kvalita dat = jak dobré jsou vstupy; ranking = jen pořadí mezi příležitostmi.</div>
+<div class="p4kv"><b>Kurz proti trhu</b> nejlepší {{ c.odds }} ({{ c.book }}) · medián {{ i.median }} ({{ i.books }} kanc.) · férový tržní {{ i.fair_market }} · odchylka od mediánu {{ i.dev }}</div>
+<div class="p4kv"><b>EV při dostupném kurzu</b> {% for k, v in i.ev_models.items() %}{{ k }} {{ v }}{{ ' · ' if not loop.last }}{% endfor %} · konzervativní {{ c.ev_d }} · proti trhu {{ i.ev_market }} · min. kurz {{ c.min_odds }}</div>
+<div class="p4kv"><b>Odkud hodnota</b> z ceny (kurz nad férovou cenou trhu) {{ i.value_price }} · z modelu (navíc nad trh) {{ i.value_model }}{% if not i.market_backed %} · <span class="neg">cena trhu neověřena – hodnota stojí jen na modelu</span>{% endif %}</div>
+<div class="p4kv"><b>Citlivost EV na šanci</b> {% for d, v, ok in i.sensitivity %}<span class="{{ 'pos' if ok else 'neg' }}">{{ d }}: {{ v }}</span>{{ ' · ' if not loop.last }}{% endfor %}</div>
+<div class="p4kv"><b>Kvalita dat</b> {{ i.quality_parts|join('; ') }}{% if i.uncertain %} · <i>nejistota: {{ i.uncertain|join(', ') }}</i>{% endif %}</div>
+<div class="p4kv"><b>Ranking</b> {{ i.rank_parts|join('; ') }} <i>(váhy experimentální)</i></div></details>{% endif %}
 </div>{% endmacro %}
 {% macro p4verdict(v) %}<div class="p4verdict {{ 'yes' if v.verdict == 'APPROVED BET' else 'watch' if v.verdict == 'WATCH' else 'no' }}"><span class="eyebrow">Verdikt</span><b>{{ v.verdict or 'NO BET' }}</b><p>{{ v.explanation }}</p></div>
 {% if v.best_available %}{{ p4tip(v.best_available, 'BEST AVAILABLE – není schválená sázka') }}{% endif %}
@@ -1013,6 +1033,46 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% for k, s in ev.groups[g].items() if s.n %}<tr><td>{{ k }}</td><td class="num">{{ s.n }}</td><td class="num {{ 'pos' if s.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(s.profit) }}</td><td class="num">{{ '%+.1f %%'|format(s.yield * 100) }}</td><td class="num">{{ ('%+.1f %%'|format(s.avg_clv * 100)) if s.clv_n else '–' }}</td></tr>
 {% else %}<tr><td colspan="5" class="muted">zatím nic vyhodnoceno</td></tr>{% endfor %}</table></div></details>{% endfor %}</div>
 {% else %}<div class="card muted">Zatím nespočítáno – klikni na „Úspěšnost modelů“ nahoře, nebo počkej na automat (po vyhodnocení zápasů).</div>{% endif %}
+{% set ig = p4.intel %}<h2 id="p4intel">Intelligence &amp; Calibration</h2>
+<div class="card"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><div class="muted">Měří, jak přesné jsou šance modelů A–D proti trhu, kde systém funguje a kde ne. Počítá se jen z uložených dat (bez API) – automat po každém vyhodnocení{% if ig %}, naposledy {{ ig.t[:16]|replace('T', ' ') }} UTC{% endif %}.</div>
+<form method="post" action="{{ url_for('profil4_intel') }}" style="margin:0"><button class="ghost sm">Přepočítat</button></form></div>
+<details class="fold"><summary>Co znamenají ukazatele</summary><div class="muted"><b>Brier</b> – jak přesně model odhaduje pravděpodobnosti (nižší = lepší). <b>Log loss</b> – jak silně jsou trestány sebejisté chybné odhady (nižší = lepší). <b>Proti trhu</b> – rozdíl log loss modelu a trhu bez marže na stejných řádcích; záporný = model lepší. <b>Kalibrace</b> – sedí odhad 60 % s tím, že to vyjde v 60 % případů? <b>CLV</b> – zda jsme získali lepší kurz než závěrečný trh. <b>Kvalita dat</b> – kvalita vstupních informací. <b>Opportunity Ranking</b> – jak zajímavá je příležitost proti ostatním (ne šance na výhru). Intervaly 95 % jsou z bootstrapu po zápasech; pod 30 zápasy se o průkaznosti nerozhoduje.</div></details></div>
+{% if ig %}
+{% set opp = ig.opportunities %}<h3>Opportunity Ranking – nejlepší aktuální příležitosti</h3>
+{% if opp %}<div class="p4opp">{% for o in opp[:8] %}<details class="p4oppc"><summary><span class="p4rank">{{ '%.0f'|format(o.rank or 0) }}</span><span><b>{{ o.label }}</b> @ {{ '%.2f'|format(o.odds) }} <span class="muted">{{ o.book }}</span><br><small class="muted">{{ o.match }} · {{ (o.kickoff or '')[:16]|replace('T', ' ') }}</small></span>
+<span class="badge {{ 'tipb' if o.decision == 'APPROVED BET' else 'warn' if 'WATCH' in (o.decision or '') else 'bad' }}">{{ o.decision }}</span></summary>
+<div class="p4kv">EV {{ '%+.1f %%'|format(o.ev * 100) if o.ev is not none else '–' }} · konzervativní {{ '%+.1f %%'|format(o.ev_conservative * 100) if o.ev_conservative is not none else '–' }} · min. kurz {{ '%.2f'|format(o.min_odds) if o.min_odds else '–' }} · kvalita dat {{ '%.0f'|format(o.quality) if o.quality is not none else '–' }}/100 · robustnost {{ '%.0f'|format(o.robustness or 0) }}/100</div>
+<div class="muted">{{ o.reasons|join('; ') }}</div>{% if o.flags %}<div class="p4risk">{{ o.flags|join('; ') }}</div>{% endif %}</details>{% endfor %}</div>
+<div class="muted">Ranking je pořadí zajímavosti, ne pravděpodobnost výhry ani doporučení k sázce. BEST AVAILABLE a WATCH nejsou schválené sázky.</div>
+{% else %}<div class="card muted">Zatím žádné nadcházející tipy s rankingem (ranking se ukládá od Fáze 3 při každé analýze).</div>{% endif %}
+{% for sport, sd in ig.sports.items() %}<h3>{{ 'Fotbal' if sport == 'fotbal' else 'NHL (samostatná kalibrace)' }}</h3>
+<div class="muted">Vyhodnocené předpovědi před výkopem: {{ sd.predictions }} ({{ sd.matches_any }} zápasů). Společný vzorek všech modelů A–D a trhu: <b>{{ sd.common_matches }} zápasů</b>, {{ sd.common_rows }} výběrů – jen na něm se modely porovnávají.</div>
+{% if sd.models %}<div class="p4mcards">{% for k, m in sd.models.items() %}<div class="p4mcard"><div class="p4mhead"><b>{{ 'Trh (bez marže)' if k == 'trh' else 'Model ' ~ k }}</b><small>{{ m.matches }} záp.</small></div>
+<div class="p4kv">Brier <b>{{ '%.4f'|format(m.brier) }}</b>{% if m.brier_ci95 %} <small>({{ '%.3f'|format(m.brier_ci95[0]) }}–{{ '%.3f'|format(m.brier_ci95[1]) }})</small>{% endif %}</div>
+<div class="p4kv">Log loss <b>{{ '%.4f'|format(m.log_loss) }}</b>{% if m.log_loss_ci95 %} <small>({{ '%.3f'|format(m.log_loss_ci95[0]) }}–{{ '%.3f'|format(m.log_loss_ci95[1]) }})</small>{% endif %}</div>
+<div class="p4kv">Odhad / skutečnost {{ '%.1f'|format(m.mean_p * 100) }} / {{ '%.1f'|format(m.rate * 100) }} %</div>
+<div class="p4kv">Kalibrace: <b>{{ m.calibration.status }}</b></div>
+{% if m.vs_market %}<div class="p4kv">Proti trhu: {{ '%+.4f'|format(m.vs_market.diff) }}{% if m.vs_market.ci95 %} <small>({{ '%+.3f'|format(m.vs_market.ci95[0]) }} až {{ '%+.3f'|format(m.vs_market.ci95[1]) }})</small>{% endif %} – <b>{{ m.vs_market.status }}</b></div>{% endif %}
+<details class="fold"><summary>Kalibrační pásma</summary>{{ calib_svg(m.bins)|safe }}
+{% for b in m.bins %}<div class="p4kv">{{ b.bin }}: odhad {{ '%.0f'|format(b.predicted * 100) }} %, skutečnost {{ '%.0f'|format(b.actual * 100) }} % ({{ '%.0f'|format(b.ci95[0] * 100) }}–{{ '%.0f'|format(b.ci95[1] * 100) }} %) · {{ b.matches }} záp.{% if not b.enough %} <i>málo dat</i>{% elif b.ok %} ✓{% else %} <span class="neg">mimo interval</span>{% endif %}</div>{% endfor %}</details></div>{% endfor %}</div>
+{% if sd.series|length > 1 %}<details class="fold"><summary>Vývoj v čase (log loss po měsících)</summary>{{ series_svg(sd.series)|safe }}</details>{% endif %}
+{% else %}<div class="card muted">Zatím žádný společný vzorek – modely a trh se srovnají, až budou vyhodnocené zápasy, kde mají předpověď všechny.</div>{% endif %}
+{% for title, key in (('Výkon podle soutěží', 'competitions'), ('Výkon podle trhů', 'markets'), ('Kurzová pásma', 'bands')) if sd[key] %}<details class="fold"><summary>{{ title }}</summary><div class="p4mcards">
+{% for k, g in sd[key].items() %}<div class="p4mcard"><div class="p4mhead"><b>{{ k }}</b><small>{{ g.matches }} záp. · {{ g.confidence }}</small></div>
+{% if g.brier is defined %}<div class="p4kv">Model C: Brier {{ '%.4f'|format(g.brier) }} · log loss {{ '%.4f'|format(g.log_loss) }} (trh {{ '%.4f'|format(g.market_log_loss) }})</div>
+<div class="p4kv">Proti trhu: {{ g.status }} · kalibrace: {{ g.calibration }} · odhad {{ '%.0f'|format(g.mean_p * 100) }} % / skutečnost {{ '%.0f'|format(g.rate * 100) }} %</div>
+{% if g.stability %}<div class="p4kv">Stabilita (log loss 1. / 2. polovina): {{ '%.3f'|format(g.stability.first) }} / {{ '%.3f'|format(g.stability.second) }}</div>{% endif %}{% endif %}
+{% if g.tips is defined %}<div class="p4kv">Tipy: {{ g.tips }} · zisk {{ '%+.2f'|format(g.profit) }} j. · yield {{ '%+.1f %%'|format(g.yield_ * 100) }}{% if g.clv is not none %} · CLV {{ '%+.1f %%'|format(g.clv * 100) }} ({{ g.clv_n }}){% endif %}</div>{% endif %}
+</div>{% endfor %}</div></details>{% endfor %}
+{% set tr = sd.tuning %}<details class="fold"><summary>Návrh ladění (jen diagnostika)</summary><div class="p4kv"><b>{{ tr.proposal }}</b> – {{ tr.status }}</div>
+<div class="muted">{{ tr.recommendation }}{% if tr.weight_c is defined %} · váha C {{ '%.2f'|format(tr.weight_c) }} · log loss mimo trénink {{ '%.4f'|format(tr.before) }} → {{ '%.4f'|format(tr.after) }}{% if tr.ci95 %} (rozdíl {{ '%+.4f'|format(tr.ci95[0]) }} až {{ '%+.4f'|format(tr.ci95[1]) }}){% endif %} · trénink {{ tr.train_matches }} / test {{ tr.test_matches }} záp.{% endif %}. Rizika: {{ tr.risks }}. Změna modelu se nikdy nenasazuje automaticky.</div></details>
+{% endfor %}
+<details class="fold"><summary>Analýza chyb ({{ ig.errors|length }} vyhodnocených tipů)</summary><div class="muted">Jen to, co je v datech doloženo. Jednotlivá prohra sama nedokazuje chybu modelu.</div>
+{% for e in ig.errors|reverse %}{% if loop.index <= 40 %}<div class="p4kv"><b>{{ e.match }}</b> – {{ e.label }} @ {{ '%.2f'|format(e.odds) }} ({{ e.decision }}): {{ e.diagnosis|join('; ') }}</div>{% endif %}{% endfor %}</details>
+<details class="fold"><summary>Kontrola úniku informací (data leakage)</summary>
+{% for ch in ig.leakage.checks %}<div class="p4kv">{{ '✓' if ch.ok else '✗' }} {{ ch.name }}: <b>{{ ch.count }}</b> <span class="muted">– {{ ch.note }}</span></div>{% endfor %}
+<div class="muted">Z kalibrace vyřazeno: {{ ig.dropped['po_výkopu'] }} předpovědí po výkopu, {{ ig.dropped['opakované'] }} opakovaných skenů.</div></details>
+{% else %}<div class="card muted">Zatím nespočítáno – klikni na „Přepočítat“ nebo počkej na automat.</div>{% endif %}
 {% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
 <h2 id="p4nhl">NHL</h2>
 {% set n = p4.nhl %}{% if n %}<div class="card"><div class="muted">Automat rozebere každých 6 hodin (a ráno) všechny zápasy NHL na 48 h ze zahraničních kurzů, které právě stáhl – kredity navíc nespotřebuje. Modely: A model bota (xG, brankáři, únava), B trh (Pinnacle / medián bez marže), C smíšený, D konzervativní. Stejná kontrolní vrstva a pravidla jako u fotbalu; vyhodnocení z NHL API.</div>
@@ -1133,7 +1193,7 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
 {% set m = ex.money %}<div class="card"><b>Moje tikety – skutečné peníze:</b> vsazeno {{ '%.0f'|format(m.stake_sum or 0) }} {{ cur }} · výsledek {{ '%+.0f'|format(m.profit_money or 0) }} {{ cur }} · skutečné ROI {{ ('%+.1f %%'|format(m.roi_real * 100)) if m.get('roi_real') is not none else '–' }} · průměrné ROI na tiket {{ ('%+.1f %%'|format(m.roi_avg * 100)) if m.get('roi_avg') is not none else '–' }}</div>
 <div class="muted">ROI na 1 j. = zisk / vsazené vyhodnocené tipy; čekající, vrácené a neplatné se nepočítají. Profily se nesčítají – stejný zápas může být ve více profilech.</div>
 <h2>Archiv rozborů</h2><div class="card muted">Bot si trvale ukládá každou změnu rozborů a skenů (nic se nemaže):
-{% set an = {'scan': 'skeny Přehledu', 'p3': 'rozbory Profilu 3', 'p4_scan': 'skeny Profilu 4', 'p4_nhl': 'skeny Profilu 4 NHL', 'p4_detail': 'rozbory zápasů Profilu 4'} %}
+{% set an = {'scan': 'skeny Přehledu', 'p3': 'rozbory Profilu 3', 'p4_scan': 'skeny Profilu 4', 'p4_nhl': 'skeny Profilu 4 NHL', 'p4_detail': 'rozbory zápasů Profilu 4', 'p4_intel': 'přepočty Intelligence & Calibration'} %}
 {% for k, n in ex.archive|dictsort %}{{ an.get(k, k) }} {{ n }}{{ ' · ' if not loop.last }}{% else %}zatím nic (plní se od teď při každém skenu){% endfor %}</div>
 {% endif %}
 {% endif %}
@@ -1385,12 +1445,53 @@ def _pending(open_tickets, open_picks) -> list[dict]:
     return rows
 
 
+def _calib_svg(bins: list) -> str:
+    """Kalibracni krivka (odhad vs. skutecnost) jako male SVG – funguje i na mobilu (sirka 100 %)."""
+    if not bins:
+        return ""
+    w = h = 200
+    pts = " ".join(f"{20 + b['predicted'] * 170:.1f},{180 - b['actual'] * 170:.1f}" for b in bins)
+    dots = "".join(f'<circle cx="{20 + b["predicted"] * 170:.1f}" cy="{180 - b["actual"] * 170:.1f}" r="{3 + min(5, b["matches"] / 20):.1f}" '
+                   f'fill="{"#16794a" if b.get("ok") else "#b42318" if b.get("ok") is False else "#94a3b8"}"/>' for b in bins)
+    return (f'<svg class="p4svg" viewBox="0 0 {w} {h}" role="img" aria-label="kalibrační křivka">'
+            f'<rect x="20" y="10" width="170" height="170" fill="none" stroke="#dfe4ea"/>'
+            f'<line x1="20" y1="180" x2="190" y2="10" stroke="#94a3b8" stroke-dasharray="4 3"/>'
+            f'<polyline points="{pts}" fill="none" stroke="#1d5fd1" stroke-width="2"/>{dots}'
+            f'<text x="105" y="198" font-size="9" text-anchor="middle" fill="#64707d">odhad</text>'
+            f'<text x="8" y="95" font-size="9" fill="#64707d" transform="rotate(-90 8 95)" text-anchor="middle">skutečnost</text></svg>')
+
+
+def _series_svg(series: list) -> str:
+    """Log loss po mesicich pro A–D a trh (spolecny vzorek)."""
+    keys = [("A", "#7c3aed"), ("B", "#0891b2"), ("C", "#1d5fd1"), ("D", "#a16207"), ("trh", "#111827")]
+    vals = [s[k]["log_loss"] for s in series for k, _ in keys if s.get(k) and s[k]["log_loss"] == s[k]["log_loss"]]
+    if len(series) < 2 or not vals:
+        return ""
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    n = len(series)
+
+    def xy(i, v):
+        return f"{30 + i * 250 / (n - 1):.1f},{150 - (v - lo) / span * 130:.1f}"
+
+    lines = "".join(f'<polyline points="{" ".join(xy(i, s[k]["log_loss"]) for i, s in enumerate(series))}" fill="none" '
+                    f'stroke="{c}" stroke-width="{2.5 if k == "trh" else 1.6}"/><text x="{285}" y="{150 - (series[-1][k]["log_loss"] - lo) / span * 130:.1f}" '
+                    f'font-size="9" fill="{c}">{k}</text>' for k, c in keys)
+    labels = "".join(f'<text x="{30 + i * 250 / (n - 1):.1f}" y="168" font-size="8" text-anchor="middle" fill="#64707d">{s["month"]}</text>'
+                     for i, s in enumerate(series))
+    return (f'<svg class="p4svg" viewBox="0 0 310 175" role="img" aria-label="vývoj log loss">'
+            f'<text x="2" y="20" font-size="8" fill="#64707d">{hi:.3f}</text><text x="2" y="150" font-size="8" fill="#64707d">{lo:.3f}</text>'
+            f'{lines}{labels}</svg>')
+
+
 def create_app(database_url: str | None = None) -> Flask:
     app = Flask(__name__)
     factory = make_session_factory(database_url)
     app.add_template_filter(_bet, "bet")
     app.add_template_filter(market_cat, "mcat")
     app.jinja_env.globals["market_cats"] = MARKET_CATS
+    app.jinja_env.globals["calib_svg"] = _calib_svg
+    app.jinja_env.globals["series_svg"] = _series_svg
     app.secret_key = os.urandom(24)  # jen pro zpravu po presmerovani; po restartu se nic dulezitého neztratí
     valid_tabs = {k for k, *_ in TABS}
 
@@ -1581,6 +1682,7 @@ def create_app(database_url: str | None = None) -> Flask:
                         "view": last if last and last.get("kind") == "scan" else None,
                         "detail": details.get(fid) or _p4_archived_detail(store, fid), "cached": set(details), "tips": _p4_tips(store),
                         "eval": json.loads(store.get("web_p4_eval", "") or "null"),
+                        "intel": json.loads(store.get("web_p4_intel", "") or "null"),
                         "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
                 store.close()
@@ -1751,6 +1853,23 @@ def create_app(database_url: str | None = None) -> Flask:
         except Exception as e:  # noqa: BLE001
             flash(f"Chyba: {e}")
         return redirect(url_for("index", tab="profil4", _anchor="p4tips"))
+
+    @app.post("/profil4/intel")
+    def profil4_intel():
+        from .profil4 import intelligence
+        from .profil4.cli import build
+        from .profil4.store import utcnow as p4_now
+
+        try:
+            store, _ = build(database_url)
+            try:
+                intelligence.store_intel(store, p4_now())
+            finally:
+                store.close()
+            flash("Intelligence & Calibration přepočítáno z uložených dat (bez API).")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba: {e}")
+        return redirect(url_for("index", tab="profil4", _anchor="p4intel"))
 
     @app.post("/profil4/evaluate")
     def profil4_eval():

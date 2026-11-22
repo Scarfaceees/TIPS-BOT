@@ -181,6 +181,43 @@ class RobustnessWeights:
 
 
 @dataclass(frozen=True)
+class IntelligenceConfig:
+    """Faze 3 – Intelligence & Calibration. Jen diagnostika a razeni: NEMENI pravdepodobnosti, EV ani rozhodnuti.
+
+    Vahy kvality dat a Opportunity Rankingu jsou EXPERIMENTALNI vychozi hodnoty (soucet 100) – zatim nejsou
+    overene na historickych datech; meni se jen rucne a po overeni (viz docs/profil4-faze3-intelligence-calibration.md)."""
+
+    # Kvalita dat (Quality of Data Score 0–100)
+    q_odds_fresh: float = 20.0  # stari kurzu vuci limitu
+    q_provider_lag: float = 10.0  # zpozdeni stazeni za aktualizaci u poskytovatele
+    q_counterside: float = 15.0  # protistrana trhu ze stejne aktualizace
+    q_books: float = 15.0  # pocet kancelari s aktualnim kurzem na tentyz vyber
+    q_consistency: float = 10.0  # rozptyl kurzu mezi kancelarmi
+    q_stats: float = 15.0  # vysledky a statistiky pro model
+    q_lineups: float = 5.0
+    q_injuries: float = 5.0
+    q_completeness: float = 5.0  # ostatni zdroje (tabulka, zapas)
+    # Opportunity Ranking 0–100 (NENI pravdepodobnost vyhry)
+    r_conservative_ev: float = 25.0
+    r_data_quality: float = 20.0
+    r_robustness: float = 15.0
+    r_model_market: float = 15.0
+    r_freshness: float = 10.0
+    r_confirmation: float = 5.0
+    r_risks: float = 5.0
+    r_calibration: float = 5.0
+    r_ev_floor: float = -0.05  # konzervativni EV, ktere dava 0 bodu
+    r_ev_cap: float = 0.10  # konzervativni EV, ktere dava plny pocet bodu
+    # kalibrace
+    min_matches_verdict: int = 100  # pod tim se o kalibraci a srovnani s trhem nerozhoduje (31 zapasu x 100 vyberu
+    # neni 3 100 nezavislych vzorku – vysledky jednoho zapasu jsou silne korelovane)
+    min_bin_matches: int = 15  # kalibracni pasmo s mene zapasy se slouci se sousednim
+    well_calibrated_tol: float = 0.03  # |skutecnost − odhad| do 3 p.b. (cely interval) = prukazne dobre kalibrovany
+    outlier_pct: float = 0.10  # kurz o vic nez 10 % nad medianem kancelari = extremne odlisny
+    model_market_gap: float = 0.10  # model vs trh o vic nez 10 p.b. = rozchod s trhem
+
+
+@dataclass(frozen=True)
 class Profil4Config:
     enabled: bool = _env_bool("TIPSBOT_PROFIL4", True)
     data_dir: Path = Path(os.environ.get("TIPSBOT_DATA_DIR", "data"))
@@ -195,6 +232,7 @@ class Profil4Config:
     decision: DecisionConfig = field(default_factory=DecisionConfig)
     hunter: HunterConfig = field(default_factory=HunterConfig)
     robustness: RobustnessWeights = field(default_factory=RobustnessWeights)
+    intel: IntelligenceConfig = field(default_factory=IntelligenceConfig)
 
     @property
     def db_path(self) -> Path:
@@ -204,6 +242,7 @@ class Profil4Config:
         """Kratky otisk nastaveni (bez cest) – uklada se ke kazde predikci."""
         d = asdict(self)
         d.pop("data_dir", None)
+        d.pop("intel", None)  # diagnostika (Faze 3) nemeni predikce – otisk modelu zustava stejny
         raw = json.dumps(d, sort_keys=True, default=str)
         return hashlib.sha1(raw.encode()).hexdigest()[:10]
 

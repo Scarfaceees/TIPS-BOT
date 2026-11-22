@@ -185,6 +185,12 @@ def tick(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> li
                 store_evaluation(st, now)
             except Exception as e:  # noqa: BLE001 - prehled uspesnosti nesmi zastavit sledovani kurzu
                 notes.append(f"úspěšnost modelů: chyba ({type(e).__name__})")
+            try:
+                from . import intelligence
+
+                intelligence.store_intel(st, now)  # jen ulozena data, zadne API
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"Intelligence & Calibration: chyba ({type(e).__name__})")
     finally:
         st.close()
     return notes

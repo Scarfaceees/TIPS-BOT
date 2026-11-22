@@ -53,6 +53,10 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
                       "predicted_at, model_version, config_hash, data_sources) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                       (fx.id, fx.name, fx.league_id, fx.league, iso(fx.kickoff), "1X2", json.dumps(probs), when,
                        MODEL_VERSION, h, sources))
+    if an.created >= fx.kickoff:
+        # rozbor po vykopu (napr. tlacitko Detail u odehraneho zapasu) neni predpoved – tip by znal pozdejsi stav
+        # a do vysledku by se zapocital neopravnene (chyba do 22.11.2026: 6 tipu ulozenych az po zapase)
+        return 0
     chosen = {c.key: c for c in an.selection.approved}
     for c in an.selection.categories.values():
         if c:
@@ -71,12 +75,13 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
         store.execute(
             "INSERT INTO tips(fixture_id, match, league_id, league, kickoff, market, selection, label, probs, fair_odds, "
             "odds, bookmaker, odds_source, odds_time, ev, ev_conservative, robustness, decision, category, predicted_at, "
-            "model_version, config_hash, data_sources, odds_fetched_at, odds_age_min, odds_status, p_market) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "model_version, config_hash, data_sources, odds_fetched_at, odds_age_min, odds_status, p_market, quality, rank, "
+            "intel) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (fx.id, fx.name, fx.league_id, fx.league, iso(fx.kickoff), c.market, c.selection, c.label, json.dumps(c.p),
              c.fair_odds_c, c.odds, q.bookmaker, q.source, iso(q.stamp), c.ev_c, c.ev_d, c.robustness,
              decision, c.category, when, MODEL_VERSION, h, sources, iso(q.fetched_at), q.age_minutes(an.created),
-             c.quote_status, c.p_market))
+             c.quote_status, c.p_market, (c.intel.get("quality") or {}).get("score"),
+             (c.intel.get("rank") or {}).get("score"), json.dumps(c.intel, ensure_ascii=False, default=str) if c.intel else None))
         n += 1
     record_predictions(store, an, cfg)
     return n
@@ -361,11 +366,20 @@ def _clusters(rows: list[dict], num, den=lambda r: 1.0) -> dict:
     return dict(out)
 
 
+def pre_kickoff(r: dict) -> bool | None:
+    """Byl tip ulozen pred vykopem? None = cas nelze overit (stary zaznam)."""
+    pt, ko = parse_dt(r.get("predicted_at")), parse_dt(r.get("kickoff"))
+    return None if pt is None or ko is None else pt < ko
+
+
 def unique_bets(rows: list[dict]) -> tuple[list[dict], int]:
     """Jeden vyber jednoho zapasu = jedna sazka. Opakovane ulozeny tip (dalsi sken, jiny kurz) se do ROI
-    nepocita znovu: bere se prvni schvaleny, jinak prvni platny zaznam. Vraci (sazky, pocet vyrazenych)."""
+    nepocita znovu: bere se prvni schvaleny, jinak prvni platny zaznam. Tipy ulozene az po vykopu se vyradi.
+    Vraci (sazky, pocet vyrazenych)."""
     best: dict[tuple, dict] = {}
     for r in sorted(rows, key=lambda r: r.get("id", 0)):
+        if pre_kickoff(r) is False:  # tip ulozeny az po vykopu neni platna predpoved (do vysledku se nepocita)
+            continue
         k = (r.get("fixture_id"), r["market"], r["selection"])
         cur = best.get(k)
         rank = (r["result"] == mathcore.VOID, r.get("decision") != APPROVED)

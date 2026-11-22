@@ -206,6 +206,9 @@ def deep_analysis(provider: DataProvider, fx: Fixture, now: datetime, cfg: Profi
     lstate = lineup_state(cov.status("lineups"), fx.kickoff, now)
     cands = build_candidates(fx, ms, data["quotes"], now, cfg, dq, lstate)
     sel = select(cands, cfg.decision)
+    from . import intelligence as IG  # Faze 3: diagnostika po rozhodnuti (rozhodnuti nemeni)
+
+    IG.annotate(cands, ms, data["quotes"], cov, now, cfg, IG.market_calibration(provider.client.store))
 
     mc = None
     if ms.c_unc is not None:

@@ -160,6 +160,7 @@ bez nich platí 100/den. Nastavení (prahy, váhy, TTL cache, limity) je v `src/
     tipsbot profil4 watchlist check       upozornění jen se skutečným důvodem (kurz, EV, sestavy, změna rozhodnutí)
     tipsbot profil4 settle                vyhodnocení skončených zápasů (90 min, půlvýhry, vrácení, CLV)
     tipsbot profil4 evaluate              Brier, log loss, ROI, yield, úspěšnost, CLV po modelech/trzích/soutěžích/…
+    tipsbot profil4 intel                 Intelligence & Calibration: A–D a trh na společném vzorku, leakage, ranking (bez API)
     tipsbot profil4 backtest --league 39 --season 2025      walk-forward modelu A bez data leakage
     tipsbot profil4 competitions --disable 848 --priority 345 1 --add 207 --name "Super League"
     tipsbot profil4 auto --every-hours 6  plánované skenování (vynechá sken, když kvóta dochází)
@@ -213,6 +214,21 @@ Robustnost 0–100 = shoda modelu a trhu (20) + stabilita EV ve scénářích (2
 - **NO BET:** bez prokázané hodnoty nebo tvrdé porušení (kurz mimo pásmo, výrazně záporné konzervativní EV…).
 - **BEST AVAILABLE:** nejlepší nalezená možnost, když nic není schválené – s důvodem, proč není schválená.
 - Kategorie **A – nejrozumnější**, **B – value tip** (schválený, kurz ≥ 1,50), **C – maximum value**. Nejsou zárukou výhry.
+
+### Fáze 3 – Intelligence & Calibration
+
+Nadstavba nad modely A–D, která **nemění pravděpodobnosti, EV ani rozhodnutí** – jen měří, kontroluje a vysvětluje
+(podrobně `docs/profil4-faze3-intelligence-calibration.md`):
+
+- **Kalibrace A–D na společném vzorku** – všechny modely i trh bez marže se srovnávají na stejných zápasech, trzích
+  a výběrech; jen předpovědi před výkopem, poslední před zápasem. Brier, log loss, 95% intervaly z bootstrapu po
+  zápasech, kalibrační pásma (malá pásma se slučují), stav průkaznosti až od 100 zápasů. Fotbal a NHL zvlášť.
+- **Kvalita dat 0–100**, **kurzová inteligence** (odchylka od mediánu, férový tržní kurz, podezření), **EV po
+  modelech** (A, B, C, D, proti trhu, citlivost) a **Opportunity Ranking 0–100** (pořadí zajímavosti, ne šance
+  na výhru; váhy experimentální) – u každého tipu v panelu i v databázi (`tips.quality`, `tips.rank`, `tips.intel`).
+- **Analýza chyb**, **kontrola úniku informací** a **diagnostický návrh ladění** (chronologický out-of-sample test;
+  nic se nenasazuje automaticky).
+- Panel: Profil 4 → sekce *Intelligence & Calibration* (karty pro mobil). Excel export má 5 nových listů.
 
 ### Známá omezení
 

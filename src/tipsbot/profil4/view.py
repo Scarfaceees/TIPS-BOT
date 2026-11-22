@@ -37,6 +37,28 @@ def candidate(c: Candidate, now: datetime) -> dict:
         "robust_parts": Robustness(0, c.robustness_parts).lines(),
         "market": ({"p": pct(c.p_market), "ev": pct(c.ev_market), "src": c.market_src}
                    if c.p_market is not None else None),
+        "intel": _intel(c),
+    }
+
+
+def _intel(c: Candidate) -> dict | None:
+    """Faze 3 pro kartu tipu: kvalita dat, kurzova inteligence, EV po modelech a ranking (uz spocitane)."""
+    i = c.intel or {}
+    if not i or "error" in i:
+        return None
+    ev, oi = i.get("ev") or {}, i.get("odds") or {}
+    return {
+        "quality": i["quality"]["score"], "quality_parts": [f"{p['name']}: {p['text']} ({p['points']:.0f}/{p['max']:.0f})"
+                                                           for p in i["quality"]["parts"]],
+        "uncertain": i["quality"].get("uncertain", []),
+        "rank": i["rank"]["score"], "rank_parts": [f"{p['name']}: {p['text']} ({p['points']:.0f}/{p['max']:.0f})"
+                                                   for p in i["rank"]["parts"]],
+        "ev_models": {k: pct(v) for k, v in (ev.get("models") or {}).items()},
+        "ev_market": pct(ev.get("market")), "value_model": pct(ev.get("value_model")), "value_price": pct(ev.get("value_price")),
+        "market_backed": ev.get("market_backed"),
+        "sensitivity": [(f"{d * 100:+.0f} p.b.", pct(v), v >= 0) for d, v in ev.get("sensitivity", [])],
+        "median": odds_s(oi.get("median")), "fair_market": odds_s(oi.get("fair_market")),
+        "dev": pct(oi.get("dev")), "books": oi.get("books"), "flags": oi.get("flags", []), "suspicious": oi.get("suspicious"),
     }
 
 

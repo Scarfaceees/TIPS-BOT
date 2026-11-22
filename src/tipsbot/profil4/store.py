@@ -84,7 +84,7 @@ CREATE INDEX IF NOT EXISTS observations_fixture ON odds_observations(fixture_id)
 LATER_COLUMNS = {
     "tips": {"odds_fetched_at": "TEXT", "odds_age_min": "REAL", "odds_status": "TEXT", "p_market": "REAL",
              "clv_status": "TEXT", "closing_time": "TEXT", "closing_kind": "TEXT", "closing_reason": "TEXT",
-             "clv_last": "REAL"},
+             "clv_last": "REAL", "quality": "REAL", "rank": "REAL", "intel": "TEXT"},
 }
 
 

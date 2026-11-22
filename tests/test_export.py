@@ -13,7 +13,8 @@ from tipsbot.profil4.store import Store
 from tipsbot.storage import Ledger, make_session_factory
 
 NOW = datetime(2026, 11, 22, 12, 0)
-SHEETS = ["Souhrn", "Všechny tipy", "Kombi tikety", "Kurzová pásma", "Soutěže a sporty", "Vývoj bankrollu", "Metodika"]
+SHEETS = ["Souhrn", "Všechny tipy", "Kombi tikety", "Kurzová pásma", "Soutěže a sporty", "Vývoj bankrollu",
+          "Kalibrace modelů", "EV analýza", "Kvalita dat", "Analýza chyb", "Opportunity Ranking", "Metodika"]
 
 
 def _pick(pid, result, odds, profile="zaklad", p=0.6, match=None, market="1X2", sel="1"):
@@ -28,7 +29,7 @@ def _p4_tip(st, fid, decision, odds, result, profit, clv=None, kind=None, sel="h
                " odds_source, decision, category, predicted_at, model_version, config_hash, result, profit, clv,"
                " closing_kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                (fid, f"H{fid} - A{fid}", "Bundesliga", "2026-11-21T14:30:00+00:00", "1X2", sel, "výhra domácích",
-                json.dumps({"C": 0.55}), odds, "pinnacle", "api", decision, "", NOW.isoformat(), "p4-1.0.0", "x",
+                json.dumps({"C": 0.55}), odds, "pinnacle", "api", decision, "", "2026-11-21T10:00:00+00:00", "p4-1.0.0", "x",
                 result, profit, clv, kind))
 
 

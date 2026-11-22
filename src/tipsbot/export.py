@@ -95,6 +95,7 @@ class Data:
     versions: list[str]
     duplicates: int = 0
     p4_eval: dict | None = None
+    intel: dict | None = None
     notes: list[str] = field(default_factory=list)
 
 
@@ -115,6 +116,127 @@ def _p4_rows(path: Path | None) -> tuple[list[dict], dict | None]:
         return [], None
     finally:
         con.close()
+
+
+def _p4_intel(path: Path | None, now: datetime) -> dict | None:
+    """Faze 3: kalibrace, EV, kvalita dat, chyby a ranking z databaze Profilu 4 (jen cteni, bez API)."""
+    if path is None or not Path(path).exists():
+        return None
+    from .profil4 import intelligence as IG
+    from .profil4.config import P4
+
+    con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        preds, tips = IG.load_rows(lambda q: con.execute(q).fetchall())
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        con.close()
+    clean, _ = IG.clean_predictions(preds)
+    common = {sp: IG.common_sample([r for r in clean if IG.sport_of(r.get("league")) == sp]) for sp in (IG.FOOTBALL, IG.HOCKEY)}
+    return {"summary": IG.build(preds, tips, now, P4), "common": common, "tips": IG.tip_rows_unique(tips)}
+
+
+def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
+    from openpyxl.chart import LineChart, Reference
+
+    ig = d.intel
+    note = "Data Profilu 4 nejsou k dispozici." if ig is None else None
+    # Kalibrace modelu
+    ws = sheet("Kalibrace modelů")
+    if note:
+        ws.cell(6, 1, note).font = F
+    else:
+        rows = []
+        for sp, sd in ig["summary"]["sports"].items():
+            for k, m in sd["models"].items():
+                vm = m.get("vs_market") or {}
+                rows.append([sp, "trh (bez marže)" if k == "trh" else f"model {k}", m["matches"], m["n"], m["brier"],
+                             *(m["brier_ci95"] or (None, None)), m["log_loss"], *(m["log_loss_ci95"] or (None, None)),
+                             m["mean_p"], m["rate"], m["calibration"]["status"], vm.get("diff"),
+                             *((vm.get("ci95") or (None, None)) if vm else (None, None)), vm.get("status", "–")])
+        end = table(ws, 6, ["Sport", "Model", "Zápasů", "Předpovědí", "Brier", "Brier 95% od", "Brier 95% do", "Log Loss",
+                            "LL 95% od", "LL 95% do", "Prům. odhad", "Skutečnost", "Kalibrace", "Rozdíl LL proti trhu",
+                            "Rozdíl 95% od", "Rozdíl 95% do", "Proti trhu"], rows,
+                    {5: DEC4, 6: DEC4, 7: DEC4, 8: DEC4, 9: DEC4, 10: DEC4, 11: PCT, 12: PCT, 14: "+0.0000;-0.0000",
+                     15: "+0.0000;-0.0000", 16: "+0.0000;-0.0000"}, [10, 16, 8, 10, 8, 9, 9, 8, 9, 9, 9, 9, 34, 10, 9, 9, 34], False)
+        top = end + 2
+        ws.cell(top, 1, "Všechny modely i trh na STEJNÝCH řádcích (společný vzorek). Intervaly 95 % z bootstrapu po zápasech; "
+                        "o průkaznosti se rozhoduje od 100 zápasů.").font = FB
+        cal = []
+        for sp, rs in ig["common"].items():
+            for r in sorted(rs, key=lambda r: (r["kickoff"] or "", r["match"] or "")):
+                cal.append([sp, r["league"], r["match"], (r["kickoff"] or "")[:16].replace("T", " "), r["market_type"],
+                            r["market"], r["selection"], r["odds"], r["p"]["A"], r["p"]["B"], r["p"]["C"], r["p"]["D"],
+                            r["p_market"], r["outcome"]])
+        table(ws, top + 2, ["Sport", "Soutěž", "Zápas", "Výkop (UTC)", "Typ trhu", "Trh", "Výběr", "Kurz", "p(A)", "p(B)",
+                            "p(C)", "p(D)", "Trh bez marže", "Výsledek (1 = výhra)"], cal,
+              {8: ODDS, 9: PCT, 10: PCT, 11: PCT, 12: PCT, 13: PCT}, filt=False)
+        series = ig["summary"]["sports"]["fotbal"]["series"]
+        if len(series) > 1:
+            st = top + 3 + len(cal) + 2
+            srows = [[s["month"]] + [s[k]["log_loss"] for k in ("A", "B", "C", "D", "trh")] for s in series]
+            se = table(ws, st, ["Měsíc (fotbal)", "A", "B", "C", "D", "trh"], srows, {j: DEC4 for j in range(2, 7)}, filt=False)
+            ch = chart(LineChart(), "Log Loss v čase (fotbal)", "log loss")
+            ch.add_data(Reference(ws, min_col=2, max_col=6, min_row=st, max_row=se), titles_from_data=True)
+            ch.set_categories(Reference(ws, min_col=1, min_row=st + 1, max_row=se))
+            ws.add_chart(ch, f"S{st}")
+
+    tips = [] if note else ig["tips"]
+    # EV analyza
+    ws = sheet("EV analýza")
+    ev_rows = []
+    for t in tips:
+        probs = json.loads(t["probs"]) if t.get("probs") else {}
+        intel = json.loads(t["intel"]) if t.get("intel") else {}
+        ev = intel.get("ev") or {}
+        ev_rows.append([t["match"], t.get("league"), (t.get("kickoff") or "")[:16].replace("T", " "), t["market"],
+                        safe_text(t.get("label") or t["selection"]), t["odds"], t.get("bookmaker"), probs.get("A"), probs.get("B"),
+                        probs.get("C"), probs.get("D"), t.get("fair_odds"), t.get("p_market"), t.get("ev"),
+                        t.get("ev_conservative"), ev.get("market"), ev.get("min_odds"), t.get("decision")])
+    table(ws, 6, ["Zápas", "Soutěž", "Výkop (UTC)", "Trh", "Výběr", "Kurz", "Kancelář", "p(A)", "p(B)", "p(C)", "p(D)",
+                  "Férový kurz (C)", "Trh bez marže", "EV (C)", "Konzervativní EV (D)", "EV proti trhu", "Minimální kurz",
+                  "Rozhodnutí"], ev_rows,
+          {6: ODDS, 8: PCT, 9: PCT, 10: PCT, 11: PCT, 12: ODDS, 13: PCT, 14: "+0.0%;-0.0%", 15: "+0.0%;-0.0%",
+           16: "+0.0%;-0.0%", 17: ODDS}, [34, 14, 16, 10, 24, 7, 12, 8, 8, 8, 8, 9, 9, 9, 10, 9, 9, 24])
+    ws.cell(5, 1, "Minimální kurz a EV proti trhu jsou uložené od Fáze 3 (starší tipy je nemají). Jeden výběr zápasu = jeden řádek.").font = F
+
+    # Kvalita dat
+    ws = sheet("Kvalita dat")
+    q_rows = []
+    for t in tips:
+        intel = json.loads(t["intel"]) if t.get("intel") else {}
+        qd, oi = intel.get("quality") or {}, intel.get("odds") or {}
+        src = json.loads(t["data_sources"]) if t.get("data_sources") else {}
+        q_rows.append([t["match"], safe_text(t.get("label") or t["selection"]), t.get("odds_age_min"), t.get("odds_time"),
+                       t.get("odds_fetched_at"), t.get("odds_status"), oi.get("books"), src.get("model_data"),
+                       src.get("lineups"), src.get("injuries"), sum(1 for v in src.values() if v == "AVAILABLE"), len(src),
+                       qd.get("score"), "; ".join(qd.get("uncertain", []))])
+    table(ws, 6, ["Zápas", "Výběr", "Stáří kurzu (min)", "Poslední aktualizace u zdroje", "Čas stažení", "Stav kurzu",
+                  "Kanceláří", "Statistiky", "Sestavy", "Absence", "Dostupných zdrojů", "Zdrojů celkem",
+                  "Kvalita dat (0–100)", "Nejistota"], q_rows, {3: "0"}, [34, 24, 9, 22, 22, 12, 9, 12, 12, 12, 9, 9, 10, 40])
+    ws.cell(5, 1, "Kvalita dat 0–100 se ukládá od Fáze 3. Chybějící data = nejistota, ne negativní sportovní informace.").font = F
+
+    # Analyza chyb
+    ws = sheet("Analýza chyb")
+    errs = [] if note else ig["summary"]["errors"]
+    table(ws, 6, ["Zápas", "Sport", "Tip", "Šance (C)", "Trh bez marže", "Kurz", "Výsledek", "Rozhodnutí", "Diagnóza (jen doložené)"],
+          [[e["match"], e["sport"], safe_text(e["label"]), e["p"], e["p_market"], e["odds"], e["result"], e["decision"],
+            "; ".join(e["diagnosis"])] for e in errs], {4: PCT, 5: PCT, 6: ODDS}, [34, 8, 24, 9, 9, 7, 10, 22, 90])
+    ws.cell(5, 1, "Příčina prohry se uvádí jen tehdy, když je doložena daty. Jednotlivý výsledek nedokazuje chybu modelu.").font = F
+
+    # Opportunity Ranking
+    ws = sheet("Opportunity Ranking")
+    opp = [] if note else ig["summary"]["opportunities"]
+    table(ws, 6, ["Pořadí", "Ranking (0–100)", "Zápas", "Výkop (UTC)", "Trh", "Výběr", "Kurz", "EV", "Konzervativní EV",
+                  "Robustnost", "Kvalita dat", "Rozhodnutí", "Důvody pořadí"],
+          [[i, o["rank"], o["match"], (o["kickoff"] or "")[:16].replace("T", " "), o["market"], safe_text(o["label"]), o["odds"],
+            o["ev"], o["ev_conservative"], o["robustness"], o["quality"], o["decision"], "; ".join(o["reasons"])]
+           for i, o in enumerate(opp, 1)], {7: ODDS, 8: "+0.0%;-0.0%", 9: "+0.0%;-0.0%"},
+          [7, 9, 34, 16, 10, 24, 7, 8, 9, 9, 9, 22, 100])
+    ws.cell(5, 1, "Ranking = pořadí zajímavosti, NE pravděpodobnost výhry. BEST AVAILABLE a WATCH nejsou doporučení k sázce. "
+                  "Váhy jsou experimentální.").font = F
 
 
 def p4_archive_counts(path: Path | None) -> dict[str, int]:
@@ -181,7 +303,8 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
         bank.append({"t": b.timestamp, "amount": b.amount, "reason": b.reason, "balance": bal, "ticket": b.ticket_id})
     versions = sorted({r.model for r in recs if r.model} | {SETTINGS.model_version, MODEL_VERSION})
     recs.sort(key=lambda r: (r.group, r.kickoff or ""))
-    return Data(now or utcnow(), recs, legs, bank, versions, dup, p4_eval)
+    created = now or utcnow()
+    return Data(created, recs, legs, bank, versions, dup, p4_eval, _p4_intel(p4_path, created))
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -242,7 +365,7 @@ def progression(recs: list[Rec]) -> tuple[list[str], dict[str, list[float | None
 def meta_lines(d: Data) -> list[str]:
     return [f"Vytvořeno: {d.created:%Y-%m-%d %H:%M} UTC (export čte aktuální databázi, nic nemění)",
             f"Záznamů: {len(d.records)} tipů/sázek, {len(d.legs)} kombi nohou, {len(d.bankroll)} pohybů bankrollu; "
-            f"vyřazených duplicit: {d.duplicates}",
+            f"vyřazených duplicit a tipů uložených po výkopu: {d.duplicates}",
             f"Verze modelu: {', '.join(d.versions)}"]
 
 
@@ -278,6 +401,16 @@ METHOD = [
                      "výsledek proto počítá s tímto minimálním kurzem."),
     ("Bankroll", "Pohyby bankrollu (vklady, výběry, vyhodnocené tikety) a zůstatek po každém pohybu."),
     ("Malé vzorky", "Pod ~30 vyhodnocenými tipy jsou úspěšnost i ROI jen orientační."),
+    ("Kalibrace modelů", "Profil 4: modely A–D a trh bez marže na STEJNÝCH řádcích (zápas, trh, výběr), jen předpovědi "
+                         "před výkopem, poslední před zápasem. Kalibrační pásma po 10 %, pásma s < 15 zápasy se slučují. "
+                         "Průkaznost (dobře/špatně kalibrovaný, lepší/horší než trh) až od 100 zápasů. Fotbal a NHL zvlášť."),
+    ("Kvalita dat", "0–100 z aktuálnosti kurzu, zpoždění stažení, protistrany trhu, počtu kanceláří, konzistence kurzů, "
+                    "statistik, sestav, absencí a úplnosti. Není to šance na výhru ani robustnost."),
+    ("Opportunity Ranking", "0–100: konzervativní EV, kvalita dat, robustnost, shoda modelu s trhem, aktuálnost a "
+                            "potvrzení kurzu, rizika a historie typu trhu. Pořadí zajímavosti, ne šance na výhru; "
+                            "váhy experimentální."),
+    ("Analýza chyb", "Diagnóza vyhodnoceného tipu jen z uložených dat (stav kurzu, kvalita dat, rozchod s trhem, CLV, "
+                     "podezřelý kurz). Příčinu prohry bez doložení netvrdí."),
 ]
 
 
@@ -492,6 +625,9 @@ def to_xlsx(d: Data) -> bytes:
         ws.add_chart(ch, "G6")
     else:
         ws.cell(7, 1, "Zatím žádné pohyby bankrollu.").font = F
+
+    # 8–12 Profil 4 – Intelligence & Calibration (Faze 3)
+    _intel_sheets(d, sheet, table, chart, F, FB)
 
     # 7 Metodika
     ws = sheet("Metodika")

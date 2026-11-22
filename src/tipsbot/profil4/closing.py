@@ -200,6 +200,9 @@ MORNING_MAX_REQUESTS = 500  # strop pozadavku ranniho skenu (denni kvota API-Foo
 MORNING_DEEP_MAX = 200  # hloubkove se rozebere kazdy zapas okna
 
 
+MORNING_RETRY = timedelta(minutes=10)
+
+
 def morning_scan(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> list[str]:
     """Kazde rano (od auto_morning_hour ceskeho casu, jednou denne): sken na 48 h s hloubkovou analyzou VSECH
     zapasu sledovanych soutezi. Ulozi tipy i predikce (kalibrace) a vysledek ukaze v panelu jako posledni sken."""
@@ -221,7 +224,10 @@ def morning_scan(now: datetime | None = None, cfg: Profil4Config = P4, build=Non
             return []
         started = parse_dt(store.get("auto_morning_started") or None)
         if started is not None and now - started < timedelta(hours=3):
-            return []  # prave bezi (nebo selhal pred chvili) – dalsi pokus nejdriv po 3 h, at se neplytva kvotou
+            return []  # prave bezi (restart uprostred) – dalsi pokus nejdriv po 3 h, at se neplytva kvotou
+        retry = parse_dt(store.get("auto_morning_retry") or None)
+        if retry is not None and now < retry:
+            return []  # predchozi pokus selhal – novy za MORNING_RETRY
         store.set("auto_morning_started", iso(now))
     finally:
         store.close()
@@ -236,7 +242,14 @@ def morning_scan(now: datetime | None = None, cfg: Profil4Config = P4, build=Non
 
     st, prov = build()
     try:
-        rep = hunter.run_scan(prov, "upcoming", now, big, hours=SETTINGS.timing.analysis_hours, deep_all=True)
+        try:
+            rep = hunter.run_scan(prov, "upcoming", now, big, hours=SETTINGS.timing.analysis_hours, deep_all=True)
+        except Exception:
+            # chyba neni "prave bezi": dalsi pokus za MORNING_RETRY, ne az za 3 h (22.11.2026 se kvuli zamcene
+            # databazi ranni sken posunul ze 7:00 na 10:00); stazena data zustavaji v cache, opakovani je levne
+            st.set("auto_morning_started", "")
+            st.set("auto_morning_retry", iso(now + MORNING_RETRY))
+            raise
         st.set("web_last_report", report.format_scan(rep))
         st.set("web_last_view", json.dumps(view.scan(rep), ensure_ascii=False, default=str))
         st.set("auto_morning_scan", day.date().isoformat())  # hotovo az po dobehnuti (restart uprostred = novy pokus)

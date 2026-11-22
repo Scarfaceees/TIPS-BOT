@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -110,6 +111,12 @@ def parse_dt(s: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+# Jak dlouho cekat na zamek databaze, nez zapis selze. Do profil4.db zapisuje panel i automat (vic vlaken
+# i kontejneru); vychozich 5 s nestacilo a 22.11.2026 kvuli tomu padl ranni sken i stahovani kurzu pred
+# vykopem ("database is locked"). Hlavni databaze bota ma stejne 60 s (storage.py).
+BUSY_TIMEOUT_S = 60
+
+
 class Store:
     """Tenka vrstva nad sqlite3. `path=':memory:'` pro testy."""
 
@@ -117,7 +124,8 @@ class Store:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._batch = 0
+        self.conn = sqlite3.connect(str(path), check_same_thread=False, timeout=BUSY_TIMEOUT_S)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self.conn.commit()
@@ -144,8 +152,26 @@ class Store:
     def execute(self, sql: str, params: Iterable[Any] = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self.conn.execute(sql, tuple(params))
-            self.conn.commit()
+            if not self._batch:
+                self.conn.commit()
             return cur
+
+    @contextmanager
+    def batch(self):
+        """Vic zapisu v jedne transakci (jeden commit, zamek databaze jen jednou a kratce). Pri chybe se vrati
+        cela davka; vnorene davky se commitnou az na konci te vnejsi."""
+        with self._lock:
+            self._batch += 1
+            try:
+                yield self
+            except BaseException:
+                self._batch -= 1
+                if not self._batch:
+                    self.conn.rollback()
+                raise
+            self._batch -= 1
+            if not self._batch:
+                self.conn.commit()
 
     def query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:

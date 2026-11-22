@@ -99,6 +99,12 @@ def record_rankings(store: Store, an: MatchAnalysis) -> int:
     fx = an.fixture
     if an.created >= fx.kickoff:
         return 0
+    with store.batch():  # vsechny kandidaty jednim commitem – kratky zamek databaze i pri 100+ radcich
+        return _record_rankings(store, an)
+
+
+def _record_rankings(store: Store, an: MatchAnalysis) -> int:
+    fx = an.fixture
     n = 0
     for c in an.candidates:
         intel = c.intel or {}

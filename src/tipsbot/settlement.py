@@ -198,6 +198,7 @@ def settle_open_tickets(ledger, df: pd.DataFrame) -> list[str]:
 API_FOOTBALL = "https://v3.football.api-sports.io"
 FRESH_DAYS = 3  # cerstve vysledky z API-Football jen pro zapasy z poslednich dni (starsi doplni football-data.co.uk)
 FRESH_AFTER = timedelta(hours=2)  # od vykopu: 90 minut + nastaveni + prestavka
+TICKETS_FROM_HOUR = 12  # tiket zna jen den zapasu; drive (UTC) nemuze byt zadny evropsky zapas dohrany
 
 
 def _pending(ledger, now) -> list[tuple[str, date, str]]:
@@ -210,6 +211,7 @@ def _pending(ledger, now) -> list[tuple[str, date, str]]:
     from .storage import COMBO, TICKET_OPEN, Ticket
 
     lo = now - timedelta(days=FRESH_DAYS)
+    last = now.date() if now.hour >= TICKETS_FROM_HOUR else now.date() - timedelta(days=1)
     from . import kombi
 
     out = [(p.name, date.fromisoformat(p.day), p.market) for p in paper.load(ledger)
@@ -217,9 +219,9 @@ def _pending(ledger, now) -> list[tuple[str, date, str]]:
     out += [(x["name"], date.fromisoformat(x["day"]), x["market"]) for x in kombi.open_legs(ledger)
             if x["league"] != "NHL" and lo <= datetime.fromisoformat(x["kickoff"]) <= now - FRESH_AFTER]
     out += [(t.match_name, t.match_day, t.market) for t in ledger.s.scalars(select(Ticket).where(Ticket.status == TICKET_OPEN))
-            if t.league != "NHL" and t.market != COMBO and t.match_day and lo.date() <= t.match_day <= now.date()]
+            if t.league != "NHL" and t.market != COMBO and t.match_day and lo.date() <= t.match_day <= last]
     out += [(x.match_name, x.match_day, x.market) for x in ledger.open_legs()
-            if x.league != "NHL" and lo.date() <= x.match_day <= now.date()]
+            if x.league != "NHL" and lo.date() <= x.match_day <= last]
     return out
 
 
@@ -298,6 +300,17 @@ def fresh_results(ledger, now, get=None) -> tuple[pd.DataFrame, list[str]]:
     return df, notes
 
 
+def settle_fresh(ledger, now) -> list[str]:
+    """Jen cerstve vysledky z API-Football (bez stahovani CSV): automat to vola i kazdych 15 min mezi pruchody.
+    Dotaz jde jen, kdyz neco ceka na vysledek (1 pozadavek na den zapasu)."""
+    from . import kombi, paper
+
+    fresh, notes = fresh_results(ledger, now)
+    if len(fresh):
+        notes += settle_open_tickets(ledger, fresh) + paper.settle(ledger, fresh) + kombi.settle(ledger, fresh)
+    return notes
+
+
 def settle_everything(ledger) -> list[str]:
     """Stahne aktualni vysledky (ligy, poharty, reprezentace) a vyhodnoti tikety i sledovane vybery."""
     import sys
@@ -309,9 +322,7 @@ def settle_everything(ledger) -> list[str]:
     from .teamreport import load_all_results
 
     # nejdriv cerstve vysledky z API-Football (zapasy odehrane dnes), samostatne – jine nazvy tymu se nemichaji
-    fresh, notes = fresh_results(ledger, utcnow())
-    if len(fresh):
-        notes += settle_open_tickets(ledger, fresh) + paper.settle(ledger, fresh) + kombi.settle(ledger, fresh)
+    notes = settle_fresh(ledger, utcnow())
     for lg in DOMESTIC:  # aktualni sezona (football-data.co.uk se dopln jednou denne)
         fetch_football(lg, seasons=1)
     fetch_cups(ledger.api_football_key(), ledger.football_data_key(), seasons=1)

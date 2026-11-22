@@ -209,7 +209,10 @@ def test_run_forever_settles_nhl_while_waiting(monkeypatch):
     monkeypatch.setattr(auto, "run_once", lambda f, settings=None, morning=False: passes.append(clock[0]) or [])
     monkeypatch.setattr(auto, "morning_due", lambda led, now, settings=None: False)
     monkeypatch.setattr(auto, "settle_nhl", lambda f, now: calls.append(now) or [])
+    football = []
+    monkeypatch.setattr(auto, "settle_football", lambda f, now: football.append(now) or [])
     with pytest.raises(KeyboardInterrupt):
         auto.run_forever(make_session_factory("sqlite://"))
     assert len(passes) == 1  # dalsi plny pruchod az za 6 h
-    assert len(calls) >= 4 and all(b - a >= auto.NHL_SETTLE_EVERY for a, b in zip(calls, calls[1:]))
+    assert len(calls) >= 4 and all(b - a >= auto.SETTLE_EVERY for a, b in zip(calls, calls[1:]))
+    assert football == calls  # fotbal se vyhodnocuje ve stejnem rytmu

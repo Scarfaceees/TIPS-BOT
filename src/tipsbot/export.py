@@ -98,6 +98,8 @@ class Data:
     p4_eval: dict | None = None
     intel: dict | None = None
     notes: list[str] = field(default_factory=list)
+    perf: dict | None = None  # Faze 3.2: Predictive Performance Profilu 4 (jen cteni)
+    ticket_kinds: dict = field(default_factory=dict)  # id zaznamu tiketu -> AKU / z tipu bota / rucne zadany
 
 
 def _sport(league: str) -> str:
@@ -160,6 +162,9 @@ def xdt(v):
 
 DT = "yyyy-mm-dd hh:mm"
 INTEL_SHEETS = ("Market Integrity", "Ranking Validation", "Portfolio Risk")
+PERF_SHEETS = ("Predictive Performance", "Ranking Performance", "Model Comparison", "CLV Performance",
+               "Settlement Integrity")
+NA = "není k dispozici"  # chybejici hodnota se nikdy nezobrazuje jako 0
 
 
 def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
@@ -401,6 +406,222 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
                     [[k, v, v / len(pend)] for k, v in sorted(cnt.items(), key=lambda kv: -kv[1])], {3: PCT}, filt=False)
 
 
+def _perf_sheets(d, sheet, table, F, FB) -> None:
+    pf = d.perf
+    missing = "Data Profilu 4 nejsou k dispozici – prázdné buňky znamenají chybějící data, ne nulu."
+    SP = {"fotbal": "Fotbal", "hokej": "NHL"}
+    PC = "+0.0%;-0.0%;0.0%"
+
+    def ci(c, i):
+        return c[i] if c else None
+
+    def lines(ws, start, items):
+        for k, line in enumerate(items, start):
+            ws.cell(k, 1, line).font = F
+        return start + len(items)
+
+    # Predictive Performance – souhrn, upozorneni, dostatecnost dat, finance
+    ws = sheet("Predictive Performance")
+    if pf is None:
+        ws.cell(5, 1, missing).font = F
+    else:
+        ws.cell(5, 1, pf["note"]).font = F
+        end = table(ws, 7, ["Úroveň", "Upozornění", "Důvod"], [[a["level"], a["text"], a["reason"]] for a in pf["alerts"]],
+                    widths=[14, 60, 90], filt=False)
+        top = end + 3
+        ws.cell(top - 1, 1, "Data Sufficiency – zda je dat dost pro závěr (počet zápasů sám nezaručuje významnost)").font = FB
+        rows = [[SP[sp], part, x["level"], x["matches"], x["n"], x["days"], x["reason"], "; ".join(x["limits"]) or None]
+                for sp, s in pf["sufficiency"].items()
+                for part, x in (("Modely A–D proti trhu", s["model_comparison"]), ("Opportunity Ranking", s["ranking"]),
+                                ("CLV", s["clv"]))]
+        end = table(ws, top, ["Sport", "Část", "Stav", "Nezávislých zápasů", "Výběrů", "Období (dní)", "Zdůvodnění",
+                              "Omezení"], rows, filt=False)
+        top = end + 3
+        ws.cell(top - 1, 1, "Finanční výkonnost – všechny profily (jednotky a Kč ve zvláštních sloupcích, nikdy se nesčítají)").font = FB
+        end = table(ws, top, ["Skupina", "Typ", "Měna", "Záznamů", "Vyhodnoceno", "Výhry", "Prohry", "Vráceno", "Neplatné",
+                              "Obrat (j.)", "Zisk (j.)", "Yield (j.)", "Vklady (Kč)", "Zisk (Kč)", "ROI (Kč)",
+                              "CLV (ověřené)", "CLV n"], finance_rows(d),
+                    {10: "0", 11: UNITS, 12: PC, 13: '#,##0 "Kč"', 14: '+#,##0 "Kč";-#,##0 "Kč";0 "Kč"', 15: PC, 16: PC},
+                    [40, 26, 6, 8, 10, 7, 7, 8, 8, 9, 9, 9, 10, 10, 9, 10, 7], False)
+        fi = pf["finance"]
+        top = end + 3
+        ws.cell(top - 1, 1, "Profil 4 – virtuální sázky podle skupin (1 tip = 1 j.)").font = FB
+        rows = []
+        for sp, sd in fi["by_sport"].items():
+            for gname, key in (("celkem", None), ("rozhodnutí", "by_decision"), ("model nad trhem", "by_model"),
+                               ("soutěž", "by_league"), ("trh", "by_market"), ("rankingové pásmo", "by_band"),
+                               ("kurzové pásmo", "by_odds")):
+                items = {"vše": sd["all"]} if key is None else sd[key]
+                for k, v in items.items():
+                    rows.append([SP[sp], gname, k, v["matches"], v["n"], v["won"], v["half_won"], v["push"], v["half_lost"],
+                                 v["lost"], v["turnover"], v["profit"], v["yield"], ci(v["yield_ci95"], 0),
+                                 ci(v["yield_ci95"], 1), v["roi"], v["win_rate"], v["avg_odds"], v["yield_status"]])
+        end = table(ws, top, ["Sport", "Dělení", "Skupina", "Zápasů", "Sázek", "Výhry", "Půl výhry", "Vráceno", "Půl prohry",
+                              "Prohry", "Obrat (j.)", "Zisk (j.)", "Yield", "Yield 95% od", "Yield 95% do", "ROI (100 j.)",
+                              "Win rate", "Ø kurz", "Průkaznost"], rows,
+                    {11: "0", 12: UNITS, 13: PC, 14: PC, 15: PC, 16: PC, 17: PCT, 18: ODDS}, None)
+        end = lines(ws, end + 2, ["Vyřazeno z výsledků: " + ", ".join(f"{k} {v}" for k, v in fi["excluded"].items())]
+                    + [f"{k}: {v}" for k, v in fi["method"].items()])
+
+    # Ranking Performance
+    ws = sheet("Ranking Performance")
+    if pf is None:
+        ws.cell(5, 1, missing).font = F
+    else:
+        rp = pf["ranking"]
+        ws.cell(5, 1, rp["note"]).font = F
+        rows = []
+        for sp, sd in rp["sports"].items():
+            for b in sd["bands"]:
+                rows.append([SP[sp], b["band"], b["matches"], b["selections"], b["won"], b["half_won"], b["push"],
+                             b["half_lost"], b["lost"], b["win_rate"], b["avg_odds"], b["avg_p"], b["avg_p_market"],
+                             b["avg_ev"], b["avg_ev_conservative"], b["profit"], b["yield"], ci(b["yield_ci95"], 0),
+                             ci(b["yield_ci95"], 1), ci(b["yield_ci_bonferroni"], 0), ci(b["yield_ci_bonferroni"], 1),
+                             b["roi"], b["clv"], b["clv_n"], b["brier"], b["log_loss"], b["status"]])
+        end = table(ws, 7, ["Sport", "Pásmo", "Nezávislých zápasů", "Výběrů", "Výhry", "Půl výhry", "Push", "Půl prohry",
+                            "Prohry", "Win rate", "Ø kurz", "Ø p modelu", "Ø p trhu", "Ø EV", "Ø konz. EV", "Zisk (j.)",
+                            "Yield", "Yield 95% od", "Yield 95% do", "Bonferroni od", "Bonferroni do", "ROI (100 j.)",
+                            "CLV", "CLV n", "Brier", "Log Loss", "Stav"], rows,
+                    {10: PCT, 11: ODDS, 12: PCT, 13: PCT, 14: PC, 15: PC, 16: UNITS, 17: PC, 18: PC, 19: PC, 20: PC, 21: PC,
+                     22: PC, 23: PC, 25: DEC4, 26: DEC4}, None, False)
+        items = []
+        for sp, sd in rp["sports"].items():
+            items.append(f"{SP[sp]}: {sd['sufficiency']['level']} – {sd['sufficiency']['reason']}")
+            hl = sd["hi_minus_lo"]
+            items.append(f"  Yield ranking ≥ 60 − < 60: " + ("není k dispozici" if hl["diff"] is None else f"{hl['diff'] * 100:+.1f} %")
+                         + f" – {hl['status']}")
+            av = sd.get("added_value")
+            if av:
+                items.append(f"  Přidaná hodnota při stejném konzervativním EV: {av['stratified_status']}")
+                items.append(f"  Proti tržní pravděpodobnosti: {av['residual_status']}")
+                items.append("  Korelace rankingu: " + ", ".join(f"{k} {'není k dispozici' if v is None else f'{v:+.2f}'}"
+                                                            for k, v in av["correlations"].items()))
+                items.append(f"  {av['copies_note']}")
+        lines(ws, end + 2, items + ["Nejlepší historické pásmo není automaticky nejlepší budoucí strategie; váhy se neladí."])
+
+    # Model Comparison
+    ws = sheet("Model Comparison")
+    if pf is None:
+        ws.cell(5, 1, missing).font = F
+    else:
+        mc = pf["models"]
+        ws.cell(5, 1, mc["note"]).font = F
+        rows = []
+        for sp, sd in mc["sports"].items():
+            for k, m in sd["models"].items():
+                vm = m.get("vs_market") or {}
+                rows.append([SP[sp], "Trh (bez marže)" if k == "trh" else f"Model {k}", m["matches"], sd["rows"], m["brier"],
+                             ci(m.get("brier_ci95"), 0), ci(m.get("brier_ci95"), 1), m["log_loss"], ci(m.get("log_loss_ci95"), 0),
+                             ci(m.get("log_loss_ci95"), 1), m.get("ece"), m["mean_p"], m["rate"], m["calibration"]["status"],
+                             vm.get("diff"), vm.get("status"), sd["sufficiency"]["level"]])
+        end = table(ws, 7, ["Sport", "Model", "Nezávislých zápasů", "Výběrů", "Brier", "Brier 95% od", "Brier 95% do",
+                            "Log Loss", "LL 95% od", "LL 95% do", "ECE", "Ø odhad", "Skutečnost", "Kalibrace",
+                            "Log loss − trh", "Proti trhu", "Stav dat"], rows,
+                    {5: DEC4, 6: DEC4, 7: DEC4, 8: DEC4, 9: DEC4, 10: DEC4, 11: DEC4, 12: PCT, 13: PCT, 15: "+0.0000;-0.0000"},
+                    None, False)
+        top = end + 3
+        ws.cell(top - 1, 1, "Chronologické rozdělení (trénovací / validační / out-of-sample test) – log loss").font = FB
+        rows = [[SP[sp], p["part"], p["matches"], p["n"], xdt(p["from"]), xdt(p["to"]),
+                 *[p[k]["log_loss"] for k in ("A", "B", "C", "D", "trh")]] for sp, sd in mc["sports"].items() for p in sd["split"]]
+        end = table(ws, top, ["Sport", "Část", "Zápasů", "Výběrů", "Od", "Do", "A", "B", "C", "D", "Trh"], rows,
+                    {5: DT, 6: DT, 7: DEC4, 8: DEC4, 9: DEC4, 10: DEC4, 11: DEC4}, None, False)
+        top = end + 3
+        ws.cell(top - 1, 1, "Kalibrační pásma (reliability diagram) – odhad proti skutečnosti, interval z počtu zápasů").font = FB
+        rows = [[SP[sp], "Trh" if k == "trh" else k, b["bin"], b["matches"], b["n"], b["predicted"], b["actual"],
+                 b["ci95"][0], b["ci95"][1], "málo dat" if not b["enough"] else ("v intervalu" if b["ok"] else "mimo interval")]
+                for sp, sd in mc["sports"].items() for k, m in sd["models"].items() for b in m["bins"]]
+        end = table(ws, top, ["Sport", "Model", "Pásmo", "Zápasů", "Výběrů", "Odhad", "Skutečnost", "95% od", "95% do", "Stav"],
+                    rows, {6: PCT, 7: PCT, 8: PCT, 9: PCT}, None, False)
+        top = end + 3
+        ws.cell(top - 1, 1, "Diagnostika: favorit / outsider a rozdíl model C – trh").font = FB
+        rows = [[SP[sp], b["bin"], b["matches"], b["n"], b["p_c"], b["p_market"], b["actual"], b["bias_c"],
+                 ci(b["bias_c_ci95"], 0), ci(b["bias_c_ci95"], 1), b["ll_vs_market"], b["status"]]
+                for sp, sd in mc["sports"].items() for b in sd["favourite_outsider"] + sd["divergence"]]
+        end = table(ws, top, ["Sport", "Skupina", "Zápasů", "Výběrů", "Ø C", "Ø trh", "Skutečnost", "C − skutečnost",
+                              "95% od", "95% do", "LL C − trh", "Stav"], rows,
+                    {5: PCT, 6: PCT, 7: PCT, 8: PC, 9: PC, 10: PC, 11: "+0.0000;-0.0000"}, None, False)
+        items = [mc["reconstruction"]]
+        for sp, sd in mc["sports"].items():
+            tl = sd["timeline"]
+            items.append(f"{SP[sp]}: předpovědi {tl['predicted'][0]} – {tl['predicted'][1]}, výkopy {tl['kickoff'][0]} – "
+                         f"{tl['kickoff'][1]}, vyhodnoceno {tl['settled'][0]} – {tl['settled'][1]}; kurz vstupu po výkopu "
+                         f"{tl['odds_after_kickoff']}, výsledek před výkopem {tl['settled_before_kickoff']}.")
+        lines(ws, end + 2, items)
+
+    # CLV Performance
+    ws = sheet("CLV Performance")
+    if pf is None:
+        ws.cell(5, 1, missing).font = F
+    else:
+        cl = pf["clv"]
+        ws.cell(5, 1, cl["note"]).font = F
+        end = table(ws, 7, ["Druh srovnávacího kurzu", "Tipů", "Počítá se do CLV"],
+                    [[k, v, "ano" if k.startswith("skutečný závěrečný") else "ne"] for k, v in cl["classes"].items()],
+                    widths=[46, 8, 14], filt=False)
+        rows = []
+        for sp, sd in cl["by_sport"].items():
+            groups = [("celkem", {"vše": sd["overall"]})] + [(n, sd[k]) for n, k in (
+                ("rankingové pásmo", "by_band"), ("rozhodnutí", "by_decision"), ("model nad trhem", "by_model"),
+                ("trh", "by_market"), ("kancelář", "by_book"), ("zdroj závěrečného kurzu", "by_source"))]
+            for gname, items in groups:
+                for k, v in items.items():
+                    rows.append([SP[sp], gname, k, v["clv_n"], v["clv_matches"], v["clv"], v["clv_median"], v["clv_pos"],
+                                 ci(v["clv_ci95"], 0), ci(v["clv_ci95"], 1), v.get("clv_status")])
+        # profily hlavniho bota a tikety: CLV jen overene (vsechny skupiny exportu)
+        for grp in sorted({r.group for r in d.records}):
+            vals = [r.clv for r in d.records if r.group == grp and r.clv is not None]
+            if vals:
+                rows.append(["všechny", "profil / skupina", grp, len(vals), None, sum(vals) / len(vals),
+                             sorted(vals)[len(vals) // 2], sum(v > 1e-9 for v in vals) / len(vals), None, None, None])
+        top = end + 3
+        ws.cell(top - 1, 1, "CLV jen proti skutečnému závěrečnému kurzu").font = FB
+        end = table(ws, top, ["Sport", "Dělení", "Skupina", "Tipů s closing", "Zápasů", "Průměr CLV", "Medián CLV",
+                              "Kladné CLV", "95% od", "95% do", "Průkaznost"], rows,
+                    {6: PC, 7: PC, 8: PCT, 9: PC, 10: PC}, None)
+        top = end + 3
+        ws.cell(top - 1, 1, "Vývoj CLV po týdnech (Profil 4)").font = FB
+        end = table(ws, top, ["Týden", "Tipů", "Průměr CLV", "Kladné"], [[w["week"], w["n"], w["clv"], w["pos"]] for w in cl["series"]],
+                    {3: PC, 4: PCT}, None, False)
+        ch = cl.get("change_7d")
+        lines(ws, end + 2, [("Změna CLV (7 dní proti 28 dnům předtím): " + (
+            NA + " (potřeba aspoň 10 tipů v obou obdobích)" if ch is None else
+            f"{ch['recent'] * 100:+.1f} % proti {ch['older'] * 100:+.1f} % ({ch['n_recent']} / {ch['n_older']} tipů)"))])
+
+    # Settlement Integrity
+    ws = sheet("Settlement Integrity")
+    if pf is None:
+        ws.cell(5, 1, missing).font = F
+    else:
+        sa, now_run = pf.get("settlement") or {}, pf.get("audit_now")
+        ws.cell(5, 1, sa.get("note") or "Settlement Integrity není k dispozici (starší databáze).").font = F
+        rows = []
+        if now_run:
+            for g, v in now_run["groups"].items():
+                rows.append(["přepočet při exportu", g, v["checked"], v["SHODA"], v["INTEGRITY MISMATCH"], v["NEOVĚŘITELNÉ"]])
+        lr = sa.get("last_run")
+        if lr:
+            rows.append([f"poslední uložený audit {lr['run_at'][:16]}", "celkem", lr["checked"], lr["matched"], lr["mismatched"],
+                         lr["unverifiable"]])
+        lv = sa.get("live")
+        if lv:
+            rows.append(["záznamy při vyhodnocení (od Fáze 3.2)", "tipy", lv["checked"], lv["SHODA"], lv["INTEGRITY MISMATCH"],
+                         lv["NEOVĚŘITELNÉ"]])
+        end = table(ws, 7, ["Kontrola", "Skupina", "Zkontrolováno", "Shoda", "INTEGRITY MISMATCH", "Neověřitelné"], rows,
+                    widths=[40, 24, 13, 9, 18, 13], filt=False)
+        items = [f"Vyhodnocené tipy bez záznamu z doby vyhodnocení (před Fází 3.2): "
+                 f"{sa.get('settled_without_record', NA)} – ověřují se jen historickým auditem z uloženého skóre."]
+        for k, v in ((now_run or {}).get("unverifiable_reasons") or {}).items():
+            items.append(f"Neověřitelné: {k} ({v})")
+        end = lines(ws, end + 2, items)
+        mism = (now_run or {}).get("items", []) + (sa.get("live_mismatches") or [])
+        top = end + 3
+        ws.cell(top - 1, 1, f"Neshody ({len(mism)}) – výsledky se nepřepisují, jen se nevydávají za ověřené").font = FB
+        table(ws, top, ["Druh", "ID", "Zápas", "Trh", "Výběr", "Skóre", "Výsledek produkce", "Zisk produkce", "Důvod"],
+              [[m.get("kind", "tip"), m.get("id") or m.get("tip_id"), m.get("match") or m.get("fixture_id"), m["market"],
+                m["selection"], m.get("score") or m.get("normalized"), m.get("result"), m.get("profit"), m.get("reason")]
+               for m in mism], {8: UNITS}, None, False)
+
+
 def p4_archive_counts(path: Path | None) -> dict[str, int]:
     """Pocty zaznamu archivu Profilu 4 (jen cteni)."""
     if path is None or not Path(path).exists():
@@ -412,6 +633,66 @@ def p4_archive_counts(path: Path | None) -> dict[str, int]:
         return {}
     finally:
         con.close()
+
+
+class _ReadOnly:
+    """Store-like pristup jen pro cteni (export nikdy nezapisuje do databaze Profilu 4)."""
+
+    def __init__(self, con):
+        self.con = con
+
+    def query(self, sql, params=()):
+        return self.con.execute(sql, tuple(params)).fetchall()
+
+
+def _p4_perf(path: Path | None, now: datetime) -> dict | None:
+    """Faze 3.2: Predictive Performance + cerstvy nezavisly audit settlementu (persist=False – nic se nezapise)."""
+    if path is None or not Path(path).exists():
+        return None
+    from .profil4 import intelligence as IG
+    from .profil4 import performance as PF
+    from .profil4 import settleaudit as SA
+    from .profil4.config import P4
+
+    con = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        ro = _ReadOnly(con)
+        preds, tips = IG.load_rows(ro.query)
+        ranks = IG.load_rankings(ro.query)
+        summ = SA.summary(ro)
+        try:
+            fresh = SA.audit_history(ro, now, persist=False)
+        except sqlite3.DatabaseError:
+            fresh = None
+        out = PF.build(preds, tips, ranks, now, P4, summ)
+        out["audit_now"] = fresh
+        return out
+    except sqlite3.DatabaseError:
+        return None
+    finally:
+        con.close()
+
+
+def finance_rows(d: "Data") -> list[list]:
+    """Financni prehled vsech skupin: virtualni jednotky a skutecne Kc ve ZVLASTNICH sloupcich (nikdy se nesecitaji)."""
+    rows = []
+    order = {OFFICIAL: 0, WATCH: 1, NOBET: 2, TRACKED: 3, KOMBI: 4, PLACED: 5}
+    keyed = {}
+    for r in d.records:
+        if r.kind == PLACED:
+            key = (TICKETS + " – " + d.ticket_kinds.get(r.id, "ručně zadaný"), r.kind)
+        else:
+            key = (r.group, r.kind)
+        keyed.setdefault(key, []).append(r)
+    for (grp, kind), rs in sorted(keyed.items(), key=lambda kv: (order.get(kv[0][1], 9), kv[0][0])):
+        st = stats(rs)
+        real = kind == PLACED
+        rows.append([grp, kind, "Kč" if real else "j.", st["n"], st["settled"], st["wins"], st["losses"], st["push"],
+                     st["invalid"], None if real else float(st["staked"]), None if real else st["profit"],
+                     None if real else st["roi"], st.get("stake_sum") if real else None,
+                     st.get("profit_money") if real else None, st.get("roi_real") if real else None, st["clv"], st["clv_n"]])
+    return rows
 
 
 def collect(session, p4_path: Path | None = None, now: datetime | None = None) -> Data:
@@ -453,7 +734,12 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
                         None if res is None else (0.0 if res == "invalid" else r.get("profit")), None,
                         r["clv"] if verified else None, r.get("model_version") or MODEL_VERSION, f"p4-{r['id']}",
                         r["selection"]))
+    from .storage import COMBO
+
+    ticket_kinds = {}
     for t in session.query(Ticket).order_by(Ticket.id):
+        ticket_kinds[f"t-{t.id}"] = ("kombinovaný (AKU)" if t.market == COMBO else "z tipu bota" if t.tip_id
+                                     else "ručně zadaný")
         res = None if t.status == "open" else t.status if t.status in OUTCOME or t.status == "void" else "invalid"
         pl = t.profit_loss if res is not None else None
         recs.append(Rec(TICKETS, PLACED, _sport(t.league), t.league, t.match_name, t.match_day.isoformat(), t.market,
@@ -467,7 +753,8 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
     versions = sorted({r.model for r in recs if r.model} | {SETTINGS.model_version, MODEL_VERSION})
     recs.sort(key=lambda r: (r.group, r.kickoff or ""))
     created = now or utcnow()
-    return Data(created, recs, legs, bank, versions, dup, p4_eval, _p4_intel(p4_path, created))
+    return Data(created, recs, legs, bank, versions, dup, p4_eval, _p4_intel(p4_path, created),
+                perf=_p4_perf(p4_path, created), ticket_kinds=ticket_kinds)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -800,6 +1087,9 @@ def to_xlsx(d: Data) -> bytes:
 
     # 8–12 Profil 4 – Intelligence & Calibration (Faze 3)
     _intel_sheets(d, sheet, table, chart, F, FB)
+
+    # 16–20 Profil 4 – Predictive Validation & Settlement Integrity (Faze 3.2)
+    _perf_sheets(d, sheet, table, F, FB)
 
     # 7 Metodika
     ws = sheet("Metodika")

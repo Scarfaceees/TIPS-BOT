@@ -451,7 +451,9 @@ def settle(store, now: datetime, fetch=None) -> list[str]:
         for t in store.query("SELECT * FROM tips WHERE fixture_id=? AND result IS NULL", (fid,)):
             out = nhl_settle.grade(t["market"], t["selection"], g)
             if out is not None:
-                msgs.append(history.settle_tip(store, t, out, score, ko or parse_dt(t["kickoff"]), now))
+                msgs.append(history.settle_tip(store, t, out, score, ko or parse_dt(t["kickoff"]), now,
+                                               {"raw": {"game_id": g.get("id"), "final": list(g["final"]),
+                                                        "reg": list(g["reg"]), "end": g["end"]}}))
         for p in store.query("SELECT id, market, selection FROM predictions WHERE fixture_id=? AND result IS NULL", (fid,)):
             out = nhl_settle.grade(p["market"], p["selection"], g)
             if out is not None:

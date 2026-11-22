@@ -1113,6 +1113,67 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% for ch in ig.leakage.checks %}<div class="p4kv">{{ '✓' if ch.ok else '✗' }} {{ ch.name }}: <b>{{ ch.count }}</b> <span class="muted">– {{ ch.note }}</span></div>{% endfor %}
 <div class="muted">Z kalibrace vyřazeno: {{ ig.dropped['po_výkopu'] }} předpovědí po výkopu, {{ ig.dropped['opakované'] }} opakovaných skenů.</div></details>
 {% else %}<div class="card muted">Zatím nespočítáno – klikni na „Přepočítat“ nebo počkej na automat.</div>{% endif %}
+{% macro ppc(x, d=1) %}{{ '–' if x is none else ('%+.' ~ d ~ 'f %%')|format(x * 100) }}{% endmacro %}
+{% macro pci(c) %}{% if c %} <small>({{ '%+.1f'|format(c[0] * 100) }} až {{ '%+.1f'|format(c[1] * 100) }} %)</small>{% endif %}{% endmacro %}
+{% macro pf4(x) %}{{ '–' if x is none else '%.4f'|format(x) }}{% endmacro %}
+{% set pp = p4.perf %}<h2 id="p4perf">Predictive Performance</h2>
+<div class="card"><div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap"><div class="muted">Měří, zda modely A–D a Opportunity Ranking mají výhodu proti trhu – výsledek ji může potvrdit i vyvrátit. Jen uložená data (žádné API); modely, váhy, ranking, EV, settlement ani prahy se nemění. Nezávislá jednotka je zápas, fotbal a NHL zvlášť{% if pp %} · naposledy {{ pp.t[:16]|replace('T', ' ') }} UTC{% endif %}.</div>
+<div class="row" style="gap:6px;flex-wrap:wrap"><form method="post" action="{{ url_for('profil4_intel') }}" style="margin:0"><button class="ghost sm">Přepočítat</button></form>
+<form method="post" action="{{ url_for('profil4_settle_audit') }}" style="margin:0"><button class="ghost sm">Audit settlementu</button></form></div></div></div>
+{% if pp %}
+{% for a in pp.alerts %}<div class="p4kv"><span class="badge {{ 'bad' if a.level == 'chyba' else 'warn' if a.level == 'upozornění' else 'tipb' }}">{{ a.level }}</span> <b>{{ a.text }}</b> <span class="muted">– {{ a.reason }}</span></div>{% endfor %}
+<h3>E. Data Sufficiency</h3>
+<div class="p4mcards">{% for sp, s in pp.sufficiency.items() %}{% for part, lab in (('model_comparison', 'Modely A–D proti trhu'), ('ranking', 'Opportunity Ranking'), ('clv', 'CLV')) %}{% set x = s[part] %}<div class="p4mcard"><div class="p4mhead"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }} – {{ lab }}</b><small>{{ x.matches }} záp.</small></div>
+<div class="p4kv"><b>{{ x.level }}</b></div><div class="muted">{{ x.reason }}{% if x.limits %} Omezení: {{ x.limits|join('; ') }}.{% endif %}</div></div>{% endfor %}{% endfor %}</div>
+<h3>A. Model Comparison</h3>
+<div class="muted">{{ pp.models.note }}</div>
+{% for sp, sd in pp.models.sports.items() %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b> · {{ sd.matches }} zápasů / {{ sd.rows }} výběrů · {{ sd.sufficiency.level }} · časová kontrola {{ 'OK' if sd.timeline.ok else 'NEKONZISTENCE' }}</div>
+{% if sd.models %}<div class="p4mcards">{% for k, m in sd.models.items() %}<div class="p4mcard"><div class="p4mhead"><b>{{ 'Trh (bez marže)' if k == 'trh' else 'Model ' ~ k }}</b><small>{{ m.matches }} záp.</small></div>
+<div class="p4kv">Brier <b>{{ pf4(m.brier) }}</b> · log loss <b>{{ pf4(m.log_loss) }}</b></div>
+<div class="p4kv">ECE {{ '%.3f'|format(m.ece) if m.ece is not none else '–' }}{% if m.ece_note %} <small class="muted">({{ m.ece_note }})</small>{% endif %}</div>
+<div class="p4kv">Kalibrace: {{ m.calibration.status }}</div>
+{% if m.vs_market %}<div class="p4kv">Proti trhu: {{ '%+.4f'|format(m.vs_market.diff) }} – <b>{{ m.vs_market.status }}</b></div>{% endif %}</div>{% endfor %}</div>
+<details class="fold"><summary>Chronologické rozdělení ({{ sd.split_status }})</summary>{% for p in sd.split %}<div class="p4kv"><b>{{ p.part }}</b>: {{ p.matches }} záp. ({{ (p['from'] or '')[:10] }} – {{ (p.to or '')[:10] }}) · log loss {% for k in ('A', 'B', 'C', 'D', 'trh') %}{{ k }} {{ pf4(p[k].log_loss) }}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endfor %}
+<div class="muted">{{ sd.timeline.note }} Kurz vstupu po výkopu: {{ sd.timeline.odds_after_kickoff }}, výsledek před výkopem: {{ sd.timeline.settled_before_kickoff }}.</div></details>
+<details class="fold"><summary>Favorit / outsider a rozdíl model – trh</summary>{% for b in sd.favourite_outsider + sd.divergence %}<div class="p4kv"><b>{{ b.bin }}</b>: {{ b.matches }} záp. · C {{ '%.0f'|format(b.p_c * 100) }} %, trh {{ '%.0f'|format(b.p_market * 100) }} %, skutečnost {{ '%.0f'|format(b.actual * 100) }} % · {{ b.status }}</div>{% endfor %}</details>
+{% endif %}{% endfor %}
+<div class="muted">{{ pp.models.reconstruction }}</div>
+<h3>B. Opportunity Ranking Performance</h3>
+<div class="muted">{{ pp.ranking.note }}</div>
+{% for sp, sd in pp.ranking.sports.items() %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b> · {{ sd.sufficiency.level }} – {{ sd.sufficiency.reason }}</div>
+{% if sd.selections %}<div class="p4mcards">{% for b in sd.bands %}<div class="p4mcard"><div class="p4mhead"><b>Ranking {{ b.band }}</b><small>{{ b.matches }} záp. · {{ b.selections }} výb.</small></div>
+<div class="p4kv">Výhry {{ b.won }} (+{{ b.half_won }} půl) · prohry {{ b.lost }} (+{{ b.half_lost }} půl) · push {{ b.push }} · win rate {{ '%.0f %%'|format(b.win_rate * 100) if b.win_rate is not none else '–' }}</div>
+<div class="p4kv">Yield {{ ppc(b['yield']) }}{{ pci(b.yield_ci95) }} · ROI {{ ppc(b.roi) }} · zisk {{ '%+.2f'|format(b.profit) }} j.</div>
+<div class="p4kv">CLV {{ ppc(b.clv) }} ({{ b.clv_n }}) · Brier {{ pf4(b.brier) }} · log loss {{ pf4(b.log_loss) }}</div>
+<div class="p4kv">Ø kurz {{ '%.2f'|format(b.avg_odds) if b.avg_odds else '–' }} · Ø p modelu {{ '%.0f %%'|format(b.avg_p * 100) if b.avg_p is not none else '–' }} · Ø p trhu {{ '%.0f %%'|format(b.avg_p_market * 100) if b.avg_p_market is not none else '–' }} · Ø EV {{ ppc(b.avg_ev) }} · Ø konz. EV {{ ppc(b.avg_ev_conservative) }}</div>
+<div class="muted">{{ b.status }}</div></div>{% endfor %}</div>
+{% set av = sd.added_value %}{% if av %}<details class="fold"><summary>Přidává ranking informaci nad EV a trh?</summary>
+<div class="p4kv">Při stejném konzervativním EV: <b>{{ av.stratified_status }}</b></div><div class="p4kv">Proti tržní pravděpodobnosti: <b>{{ av.residual_status }}</b></div>
+<div class="p4kv">Korelace s rankingem: {% for k, v in av.correlations.items() %}{{ k }} {{ '%+.2f'|format(v) if v is not none else '–' }}{{ ' · ' if not loop.last }}{% endfor %}</div>
+<div class="muted">{{ av.copies_note }}. {{ av.note }}</div></details>{% endif %}{% endif %}{% endfor %}
+{% set cl = pp.clv %}<h3>C. CLV Monitor</h3>
+<div class="p4three"><div class="p4kv">Vyhodnoceno<br><b>{{ cl.settled }}</b> tipů</div><div class="p4kv">S platnou closing<br><b>{{ cl.valid }}</b>{% if cl.coverage is not none %} <small>({{ '%.0f'|format(cl.coverage * 100) }} %)</small>{% endif %}</div>
+{% for sp, sd in cl.by_sport.items() %}<div class="p4kv">{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}<br><b>{{ ppc(sd.overall.clv) }}</b> <small>({{ sd.overall.clv_n }})</small></div>{% endfor %}</div>
+<div class="muted">{{ cl.note }}</div>
+<details class="fold"><summary>Druh srovnávacího kurzu</summary>{% for k, v in cl.classes.items() %}<div class="p4kv">{{ k }}: <b>{{ v }}</b></div>{% endfor %}</details>
+{% for sp, sd in cl.by_sport.items() if sd.overall.clv_n %}<details class="fold"><summary>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}: medián {{ ppc(sd.overall.clv_median) }} · kladné {{ '%.0f'|format(sd.overall.clv_pos * 100) }} % · záporné {{ '%.0f'|format(sd.overall.clv_neg * 100) }} %{{ pci(sd.overall.clv_ci95) }}</summary>
+{% for title, key in (('Rankingová pásma', 'by_band'), ('Rozhodnutí', 'by_decision'), ('Modely nad trhem', 'by_model'), ('Trhy', 'by_market'), ('Kanceláře', 'by_book'), ('Zdroj závěrečného kurzu', 'by_source')) %}<div class="p4kv"><b>{{ title }}:</b> {% for k, v in sd[key].items() %}{{ k }} {{ ppc(v.clv) }} ({{ v.clv_n }}){{ ' · ' if not loop.last }}{% endfor %}</div>{% endfor %}</details>{% endfor %}
+{% if cl.series %}<details class="fold"><summary>Vývoj CLV po týdnech</summary>{% for w in cl.series %}<div class="p4kv">{{ w.week }}: {{ ppc(w.clv) }} · kladné {{ '%.0f'|format(w.pos * 100) }} % · {{ w.n }} tipů</div>{% endfor %}</details>{% endif %}
+{% set sa = pp.settlement or {} %}<h3>D. Settlement Integrity</h3>
+{% set lv = sa.live or {} %}{% set lr = sa.last_run %}
+<div class="p4three"><div class="p4kv">Ověřeno<br><b>{{ lr.checked if lr else 0 }}</b></div><div class="p4kv">Shoda<br><b>{{ lr.matched if lr else 0 }}</b></div><div class="p4kv">Neshoda<br><b class="{{ 'neg' if lr and lr.mismatched }}">{{ lr.mismatched if lr else 0 }}</b></div><div class="p4kv">Neověřitelné<br><b>{{ lr.unverifiable if lr else 0 }}</b></div></div>
+<div class="p4kv">Poslední historický audit: {{ lr.run_at[:16]|replace('T', ' ') ~ ' UTC' if lr else 'zatím neproběhl' }} · záznamy při vyhodnocení: {{ lv.checked or 0 }} (shoda {{ lv['SHODA'] or 0 }}, neshoda {{ lv['INTEGRITY MISMATCH'] or 0 }}, neověřitelné {{ lv['NEOVĚŘITELNÉ'] or 0 }}) · bez záznamu z doby vyhodnocení: {{ sa.settled_without_record if sa.settled_without_record is not none else '–' }}</div>
+<div class="muted">{{ sa.note }}</div>
+{% if sa.last_run_groups %}<details class="fold"><summary>Podle druhu a sportu</summary>{% for g, v in sa.last_run_groups.items() %}<div class="p4kv"><b>{{ g }}</b>: {{ v.checked }} · shoda {{ v['SHODA'] }} · neshoda {{ v['INTEGRITY MISMATCH'] }} · neověřitelné {{ v['NEOVĚŘITELNÉ'] }}</div>{% endfor %}
+{% for k, v in (sa.last_run_unverifiable or {}).items() %}<div class="muted">Neověřitelné: {{ k }} ({{ v }})</div>{% endfor %}</details>{% endif %}
+{% for it in (sa.last_run_items or []) + (sa.live_mismatches or []) %}<div class="p4kv"><span class="badge bad">INTEGRITY MISMATCH</span> {{ it.match or it.fixture_id }} · {{ it.market }} {{ it.selection }} – {{ it.reason }}</div>{% endfor %}
+{% set fi = pp.finance %}<h3>Finanční výkonnost Profilu 4 (virtuální jednotky)</h3>
+<div class="muted">{{ fi.currency }}. Vyřazeno: {% for k, v in fi.excluded.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}. Skutečné tikety v Kč jsou zvlášť (Export → list Predictive Performance).</div>
+{% for sp, sd in fi.by_sport.items() if sd.all.n %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b>: {{ sd.all.n }} sázek / {{ sd.all.matches }} záp. · zisk {{ '%+.2f'|format(sd.all.profit) }} j. · yield {{ ppc(sd.all['yield']) }}{{ pci(sd.all.yield_ci95) }} · ROI {{ ppc(sd.all.roi) }} · {{ sd.all.yield_status }}</div>
+<details class="fold"><summary>Podle rozhodnutí, modelu, soutěže, trhu a rankingu</summary>{% for title, key in (('Rozhodnutí', 'by_decision'), ('Model nad trhem', 'by_model'), ('Soutěž', 'by_league'), ('Trh', 'by_market'), ('Ranking', 'by_band'), ('Kurz', 'by_odds')) %}<div class="p4kv"><b>{{ title }}:</b> {% for k, v in sd[key].items() %}{{ k }} {{ v.n }}× {{ ppc(v['yield']) }}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endfor %}</details>{% endfor %}
+<details class="fold"><summary>Metodika výpočtu</summary>{% for k, v in fi.method.items() %}<div class="p4kv"><b>{{ k }}</b>: {{ v }}</div>{% endfor %}</details>
+<div class="muted">{{ pp.note }}</div>
+{% else %}<div class="card muted">Zatím nespočítáno – klikni na „Přepočítat“ nebo počkej na automat (po vyhodnocení zápasů, jinak jednou denně).</div>{% endif %}
 {% if p4.report %}<details class="fold card"><summary>Poslední textový výstup (ke zkopírování)</summary><pre class="p4pre">{{ p4.report }}</pre></details>{% endif %}
 <h2 id="p4nhl">NHL</h2>
 {% set n = p4.nhl %}{% if n %}<div class="card"><div class="muted">Automat rozebere každých 6 hodin (a ráno) všechny zápasy NHL na 48 h ze zahraničních kurzů, které právě stáhl – kredity navíc nespotřebuje. Modely: A model bota (xG, brankáři, únava), B trh (Pinnacle / medián bez marže), C smíšený, D konzervativní. Stejná kontrolní vrstva a pravidla jako u fotbalu; vyhodnocení z NHL API.</div>
@@ -1745,6 +1806,7 @@ def create_app(database_url: str | None = None) -> Flask:
                         "detail": details.get(fid) or _p4_archived_detail(store, fid), "cached": set(details), "tips": _p4_tips(store),
                         "eval": json.loads(store.get("web_p4_eval", "") or "null"),
                         "intel": json.loads(store.get("web_p4_intel", "") or "null"),
+                        "perf": json.loads(store.get("web_p4_perf", "") or "null"),
                         "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
                 store.close()
@@ -1926,12 +1988,36 @@ def create_app(database_url: str | None = None) -> Flask:
             store, _ = build(database_url)
             try:
                 intelligence.store_intel(store, p4_now())
+                from .profil4 import performance
+
+                performance.store_performance(store, p4_now())
             finally:
                 store.close()
-            flash("Intelligence & Calibration přepočítáno z uložených dat (bez API).")
+            flash("Intelligence & Calibration a Predictive Performance přepočítáno z uložených dat (bez API).")
         except Exception as e:  # noqa: BLE001
             flash(f"Chyba: {e}")
         return redirect(url_for("index", tab="profil4", _anchor="p4intel"))
+
+    @app.post("/profil4/settlement-audit")
+    def profil4_settle_audit():
+        """Historicky audit settlementu: nezavisle overi vsechna vyhodnoceni, nic neprepise ani neopravi."""
+        from .profil4 import performance, settleaudit
+        from .profil4.cli import build
+        from .profil4.store import utcnow as p4_now
+
+        try:
+            store, _ = build(database_url)
+            try:
+                run = settleaudit.audit_history(store, p4_now())
+                performance.store_performance(store, p4_now(), audit_daily=False)
+            finally:
+                store.close()
+            t = run["total"]
+            flash(f"Audit settlementu: zkontrolováno {t['checked']}, shoda {t['SHODA']}, neshoda {t['INTEGRITY MISMATCH']}, "
+                  f"neověřitelné {t['NEOVĚŘITELNÉ']} (nic se nepřepsalo).")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Chyba: {e}")
+        return redirect(url_for("index", tab="profil4", _anchor="p4perf"))
 
     @app.post("/profil4/evaluate")
     def profil4_eval():

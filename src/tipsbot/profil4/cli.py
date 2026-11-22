@@ -10,6 +10,8 @@ from pathlib import Path
 from .config import P4, Profil4Config
 
 
+PERF_SECTIONS = ("performance", "ranking-performance", "model-comparison", "clv", "settlement-integrity")
+
 def add_parser(sub) -> None:
     p = sub.add_parser("profil4", help="Profil 4 – Hybridní expert (API-Football, modely A–D, hledání příležitostí)")
     s = p.add_subparsers(dest="p4cmd")
@@ -44,9 +46,12 @@ def add_parser(sub) -> None:
     s.add_parser("evaluate", help="Brier, log loss, ROI, yield, CLV po modelech, trzích, soutěžích…")
     it = s.add_parser("intel", help="Intelligence & Calibration: A–D na společném vzorku, integrita, ranking (bez API)")
     it.add_argument("section", nargs="?", default="all",
-                    choices=["all", "integrity", "ranking", "calibration", "data-quality", "portfolio", "errors"],
+                    choices=["all", "integrity", "ranking", "calibration", "data-quality", "portfolio", "errors",
+                             "performance", "ranking-performance", "model-comparison", "clv", "settlement-integrity"],
                     help="jen jedna část přehledu (výchozí: vše)")
     it.add_argument("--out", help="uloží analytický report (JSON) do souboru; historii nemění")
+    it.add_argument("--audit-history", action="store_true",
+                    help="settlement-integrity: znovu nezávisle ověří všechna uložená vyhodnocení (nic nepřepíše)")
     b = s.add_parser("backtest", help="walk-forward backtest modelu A na výsledcích z API")
     b.add_argument("--league", type=int, required=True, help="id soutěže v API-Football (39 = Premier League)")
     b.add_argument("--season", type=int, required=True, help="testovací sezóna (rok začátku, např. 2025)")
@@ -177,8 +182,16 @@ def run(args, cfg: Profil4Config = P4) -> int:
         elif cmd == "intel":
             from . import intelligence
 
-            out = intelligence.store_intel(store, now)
-            print(intelligence.format_text(out, args.section))
+            if args.section in PERF_SECTIONS:  # Faze 3.2: Predictive Performance a Settlement Integrity
+                from . import performance, settleaudit
+
+                if args.audit_history:
+                    settleaudit.audit_history(store, now)
+                out = performance.store_performance(store, now, audit_daily=not args.audit_history)
+                print(performance.format_text(out, args.section))
+            else:
+                out = intelligence.store_intel(store, now)
+                print(intelligence.format_text(out, args.section))
             if args.out:
                 Path(args.out).write_text(json.dumps(out, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
                 print(f"Report uložen: {args.out}")

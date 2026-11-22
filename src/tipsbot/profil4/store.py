@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS rankings (
     decision TEXT, integrity TEXT, valid INTEGER NOT NULL, detail TEXT
 );
 CREATE INDEX IF NOT EXISTS rankings_key ON rankings(fixture_id, market, selection);
+CREATE TABLE IF NOT EXISTS settlement_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, tip_id INTEGER UNIQUE, fixture_id INTEGER NOT NULL, sport TEXT, market TEXT,
+    selection TEXT, line REAL, odds REAL, raw_result TEXT, normalized TEXT, result_fetched_at TEXT, source TEXT,
+    method TEXT, algo_version TEXT, result TEXT, profit REAL, units TEXT, settled_at TEXT, check_result TEXT,
+    check_profit REAL, check_version TEXT, status TEXT NOT NULL, reason TEXT
+);
+CREATE TABLE IF NOT EXISTS settlement_audit_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, run_at TEXT NOT NULL, check_version TEXT, checked INTEGER, matched INTEGER,
+    mismatched INTEGER, unverifiable INTEGER, detail TEXT
+);
 """
 
 # sloupce pridane pozdeji (ALTER TABLE u existujicich databazi)

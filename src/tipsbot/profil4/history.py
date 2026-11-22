@@ -297,8 +297,12 @@ def outcome_value(result: str) -> float | None:
     return {mathcore.WON: 1.0, mathcore.HALF_WON: 1.0, mathcore.LOST: 0.0, mathcore.HALF_LOST: 0.0}.get(result)
 
 
-def settle_tip(store: Store, t, out: str, score: str, kickoff: datetime, now: datetime) -> str:
-    """Zapise vysledek tipu vcetne zaviraciho kurzu a CLV (fotbal i NHL)."""
+def settle_tip(store: Store, t, out: str, score: str, kickoff: datetime, now: datetime,
+               evidence: dict | None = None) -> str:
+    """Zapise vysledek tipu vcetne zaviraciho kurzu a CLV (fotbal i NHL).
+
+    `evidence` (Faze 3.2) = puvodni data vysledku, zdroj a metoda pro auditni zaznam Settlement Integrity;
+    vysledek ani zisk neovlivnuje."""
     profit = mathcore.unit_profit(out, t["odds"])
     cl = _closing(store, t["fixture_id"], t["bookmaker"], t["market"], t["selection"], kickoff, parse_dt(t["odds_time"]))
     clv_any = _clv(t["odds"], cl)
@@ -309,6 +313,9 @@ def settle_tip(store: Store, t, out: str, score: str, kickoff: datetime, now: da
                   "WHERE id=?",
                   (out, score, profit, cl["odds"], cl["fair"], clv, status, iso(cl["time"]), cl["kind"],
                    cl["reason"], clv_any if cl["kind"] in (CK_LAST, CK_STALE) else None, iso(now), t["id"]))
+    from . import settleaudit
+
+    settleaudit.safe_record(store, t, out, profit, score, evidence, now)
     return f"{t['match']} {score}: {t['label']} @ {t['odds']:.2f} – {mathcore.SETTLE_CZ[out]} ({profit:+.2f} j.)"
 
 
@@ -328,8 +335,13 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
     msgs = []
     for fx in got.data or []:
         if fx.status in VOID_STATUSES:
+            from . import settleaudit
+
             for t in store.query("SELECT * FROM tips WHERE fixture_id=? AND result IS NULL", (fx.id,)):
                 store.execute("UPDATE tips SET result=?, profit=0, settled_at=? WHERE id=?", (mathcore.VOID, iso(now), t["id"]))
+                settleaudit.safe_record(store, t, mathcore.VOID, 0.0, None,
+                                        {"raw": {"fixture_id": fx.id, "status": fx.status, "void_status": fx.status},
+                                         "method": "zrušený / odložený zápas -> neplatná sázka"}, now)
             store.execute("UPDATE forecasts SET result='void' WHERE fixture_id=? AND result IS NULL", (fx.id,))
             store.execute("UPDATE predictions SET result=?, settled_at=? WHERE fixture_id=? AND result IS NULL",
                           (mathcore.VOID, iso(now), fx.id))
@@ -338,6 +350,7 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
         if not fx.finished:
             continue
         score = f"{fx.ft_home}:{fx.ft_away}"
+        evidence = {"raw": {"fixture_id": fx.id, "status": fx.status, "ft": [fx.ft_home, fx.ft_away]}}
         res1x2 = "1" if fx.ft_home > fx.ft_away else "X" if fx.ft_home == fx.ft_away else "2"
         store.execute("UPDATE forecasts SET result=?, score=? WHERE fixture_id=? AND result IS NULL", (res1x2, score, fx.id))
         for t in store.query("SELECT * FROM tips WHERE fixture_id=? AND result IS NULL", (fx.id,)):
@@ -346,7 +359,7 @@ def settle(store: Store, provider: DataProvider, now: datetime) -> list[str]:
             except ValueError as e:
                 msgs.append(f"{fx.name} {t['label']}: nelze vyhodnotit ({e})")
                 continue
-            msgs.append(settle_tip(store, t, out, score, fx.kickoff, now))
+            msgs.append(settle_tip(store, t, out, score, fx.kickoff, now, evidence))
         for p in store.query("SELECT id, market, selection FROM predictions WHERE fixture_id=? AND result IS NULL", (fx.id,)):
             try:
                 out = mathcore.settle(p["market"], p["selection"], fx.ft_home, fx.ft_away)
@@ -379,7 +392,7 @@ BOOT_REPS = 2000
 MIN_MATCHES_CI = 30  # pod tim se o prukaznosti nerozhoduje vubec (percentilovy bootstrap by byl nespolehlivy)
 
 
-def cluster_ci(clusters: dict, reps: int = BOOT_REPS, seed: int = 7) -> tuple[float, float, float]:
+def cluster_ci(clusters: dict, reps: int = BOOT_REPS, seed: int = 7, level: float = 0.95) -> tuple[float, float, float]:
     """Pomer souctu (Σ citatel / Σ jmenovatel) a 95% interval z bootstrapu po ZAPASECH.
 
     Vice tipu nebo predikci z jednoho zapasu neni nezavislych: vysledek zapasu je spolecny. Prevzorkovavaji se
@@ -395,7 +408,8 @@ def cluster_ci(clusters: dict, reps: int = BOOT_REPS, seed: int = 7) -> tuple[fl
     idx = np.random.default_rng(seed).integers(0, k, (reps, k))
     d = den[idx].sum(1)
     ratios = num[idx].sum(1)[d > 0] / d[d > 0]
-    return point, float(np.percentile(ratios, 2.5)), float(np.percentile(ratios, 97.5))
+    tail = (1 - level) / 2 * 100  # level < 0.95 jen pro Bonferroniho korekci vice srovnani (vyssi level)
+    return point, float(np.percentile(ratios, tail)), float(np.percentile(ratios, 100 - tail))
 
 
 def verdict(lo: float, hi: float, matches: int, pos: str = "průkazně kladné", neg: str = "průkazně záporné") -> str:

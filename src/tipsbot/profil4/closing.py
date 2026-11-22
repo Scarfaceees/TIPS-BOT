@@ -165,7 +165,7 @@ def tick(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> li
     finally:
         store.close()
     if not fixtures and not settle:
-        return []
+        return perf_daily(now, cfg)
     if build is None:
         from .cli import build
     st, prov = build()
@@ -191,9 +191,38 @@ def tick(now: datetime | None = None, cfg: Profil4Config = P4, build=None) -> li
                 intelligence.store_intel(st, now)  # jen ulozena data, zadne API
             except Exception as e:  # noqa: BLE001
                 notes.append(f"Intelligence & Calibration: chyba ({type(e).__name__})")
+            notes += refresh_performance(st, now)
     finally:
         st.close()
     return notes
+
+
+PERF_EVERY = timedelta(hours=24)  # denni aktualizace Predictive Performance i ve dnech bez vyhodnoceni
+
+
+def refresh_performance(st, now: datetime) -> list[str]:
+    """Faze 3.2: Predictive Performance + denni historicky audit settlementu (jen ulozena data, zadne API).
+    Upozorneni se jen zobrazi – modely ani parametry se nikdy nemeni."""
+    try:
+        from . import performance
+
+        out = performance.store_performance(st, now)
+        st.set("auto_perf_at", iso(now))
+        bad = [a["text"] for a in out["alerts"] if a["level"] != "ok"]
+        return [f"Predictive Performance – upozornění: {t}" for t in bad]
+    except Exception as e:  # noqa: BLE001 - mereni nesmi zastavit sledovani kurzu
+        return [f"Predictive Performance: chyba ({type(e).__name__})"]
+
+
+def perf_daily(now: datetime, cfg: Profil4Config = P4) -> list[str]:
+    st = open_store(cfg)
+    try:
+        last = parse_dt(st.get("auto_perf_at") or None)
+        if last is not None and now - last < PERF_EVERY:
+            return []
+        return refresh_performance(st, now)
+    finally:
+        st.close()
 
 
 MORNING_MAX_REQUESTS = 500  # strop pozadavku ranniho skenu (denni kvota API-Football je 7 500; rezervy plati dal)

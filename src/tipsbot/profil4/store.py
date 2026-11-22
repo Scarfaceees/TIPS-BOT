@@ -59,6 +59,11 @@ CREATE TABLE IF NOT EXISTS watchlist (
     created TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, note TEXT
 );
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS archive (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, key TEXT NOT NULL, t TEXT NOT NULL,
+    digest TEXT NOT NULL, data BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_archive_kind_key ON archive(kind, key);
 CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL, match TEXT, league_id INTEGER, league TEXT,
     kickoff TEXT, market TEXT NOT NULL, selection TEXT NOT NULL, market_type TEXT NOT NULL, model TEXT NOT NULL,
@@ -139,6 +144,31 @@ class Store:
         with self._lock:
             return list(self.conn.execute(sql, tuple(params)))
 
+    # --- trvaly archiv (archive.py) -----------------------------------------
+    ARCHIVED = {"web_last_view": "p4_scan", "web_last_nhl_view": "p4_nhl"}  # prehledy, ktere se jinak prepisuji
+
+    def archive(self, kind: str, key: str, text: str, when: datetime | None = None) -> bool:
+        from ..archive import pack
+
+        blob, digest = pack(text)
+        last = self.query("SELECT digest FROM archive WHERE kind=? AND key=? ORDER BY id DESC LIMIT 1", (kind, key))
+        if last and last[0]["digest"] == digest:
+            return False
+        self.execute("INSERT INTO archive(kind, key, t, digest, data) VALUES(?,?,?,?,?)",
+                     (kind, key, iso(when or utcnow()), digest, blob))
+        return True
+
+    def archived(self, kind: str, key: str | None = None) -> list[tuple[str, str, str]]:
+        from ..archive import unpack
+
+        sql, par = "SELECT key, t, data FROM archive WHERE kind=?", [kind]
+        if key is not None:
+            sql, par = sql + " AND key=?", par + [key]
+        return [(r["key"], r["t"], unpack(r["data"])) for r in self.query(sql + " ORDER BY id", par)]
+
+    def archive_counts(self) -> dict[str, int]:
+        return {r["kind"]: r["n"] for r in self.query("SELECT kind, COUNT(*) AS n FROM archive GROUP BY kind")}
+
     def get(self, key: str, default: str = "") -> str:
         rows = self.query("SELECT value FROM kv WHERE key=?", (key,))
         return rows[0]["value"] if rows else default
@@ -146,6 +176,8 @@ class Store:
     def set(self, key: str, value: str) -> None:
         self.execute("INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                      (key, value))
+        if key in self.ARCHIVED and value and value != "null":
+            self.archive(self.ARCHIVED[key], key, value)
 
     def get_json(self, key: str, default: Any = None) -> Any:
         raw = self.get(key, "")

@@ -157,6 +157,9 @@ def _save_analysis(ledger, league: str, ev, info: dict, now: datetime) -> None:
             if datetime.fromisoformat(v["kickoff"]) > now - timedelta(days=2)}  # odehrane se po 2 dnech mazou
     data[ev.match_id] = {**info, "league": league, "name": ev.name, "kickoff": ev.kickoff.isoformat(), "t": now.isoformat()}
     ledger._set(ANALYSES_KEY, json.dumps(data, ensure_ascii=False))
+    # panel drzi rozbory jen 2 dny po zapase, archiv navzdy (bez casu rozboru, at se stejny rozbor neuklada znovu)
+    keep = {k: v for k, v in data[ev.match_id].items() if k != "t"}
+    ledger.archive("p3", ev.match_id, json.dumps(keep, ensure_ascii=False, default=str), now)
 
 
 def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime, ledger=None) -> Pick | None:

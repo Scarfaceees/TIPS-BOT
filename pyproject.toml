@@ -7,7 +7,7 @@ name = "tipsbot"
 version = "0.1.0"
 description = "Value-betting poradce pro NHL a evropsky fotbal (bez automatickeho podani sazky)"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pandas", "scipy", "SQLAlchemy", "requests", "flask", "tzdata"]
+dependencies = ["numpy", "pandas", "scipy", "SQLAlchemy", "requests", "flask", "tzdata", "openpyxl", "matplotlib"]
 
 [project.optional-dependencies]
 dev = ["pytest"]

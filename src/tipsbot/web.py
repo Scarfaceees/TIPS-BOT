@@ -21,7 +21,8 @@ def _local(dt: datetime) -> str:
     return dt.replace(tzinfo=timezone.utc).astimezone(_TZ).strftime("%d.%m. %H:%M")
 
 
-from flask import Flask, flash, get_flashed_messages, jsonify, redirect, render_template_string, request, url_for
+from flask import (Flask, flash, get_flashed_messages, jsonify, redirect, render_template_string, request, send_file,
+                   url_for)
 from sqlalchemy import select
 
 from . import analysis, auto, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
@@ -32,7 +33,7 @@ from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, Tip, make_session_fac
 TABS = (("prehled", "Přehled", "⚽", "Přehled"), ("tikety", "Moje tikety", "🎫", "Tikety"),
         ("sledovani", "Sledování", "📈", "Sledování"), ("overeni", "Ověření modelu", "🔬", "Ověření"),
         ("profil2", "Ruční rozbor", "✍️", "Rozbor"), ("profil4", "Profil 4 – Expert", "🧠", "Expert"), ("kalkulacka", "Kalkulačka", "🧮", "Kalkulačka"),
-        ("nastaveni", "Nastavení", "⚙️", "Nastavení"))
+        ("export", "Export výsledků", "📤", "Export"), ("nastaveni", "Nastavení", "⚙️", "Nastavení"))
 MAIN_TABS = 4
 P2_FORM_KEY = "profil2_form"  # posledni vyplneny formular rucniho rozboru (aby po prepoctu zustal vyplneny)
 TAB_ALIASES = {"sazka": "tikety", "historie": "tikety"}  # stare odkazy (historie je soucasti tiketu)
@@ -701,6 +702,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 
 {% elif tab == 'sledovani' %}
 {{ page_head('Bez peněz', 'Sledování modelu', 'Každý profil si sám vybírá sázky (1 jednotka, bez peněz) a bot je po zápase vyhodnotí. Tak se ukáže, který přístup by vydělával.') }}
+<div style="margin:-4px 0 10px"><a class="secondary-link" href="{{ url_for('index', tab='export') }}">📤 Export výsledků (Excel, CSV, PDF)</a></div>
 <div class="profbar">{% for pr in profiles %}{% set st = prof_stats[pr.key] %}
 <a class="prof{{ ' on' if pr.key == prof.key }}{{ ' off' if not pr.active }}" href="{{ url_for('index', tab='sledovani', profile=pr.key) }}">
 <b>{{ pr.name }}</b>{% if not pr.active %} <span class="badge warn">nenastaven</span>{% endif %}<small>{{ pr.about }}</small>
@@ -1112,6 +1114,28 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
 <div class="muted">Zdarma 100 požadavků/den, registrace na api-football.com.</div>
 <form class="row" method="post" action="{{ url_for('set_football_key') }}"><label>Klíč<input name="key" type="password" autocomplete="off" required></label><button>Uložit klíč</button></form></details></section>
 </div>
+{% elif tab == 'export' %}
+{{ page_head('Výsledky', 'Export výsledků', 'Aktuální výsledky všech profilů přímo z databáze – Excel, CSV nebo PDF.') }}
+<div class="row" style="gap:10px;flex-wrap:wrap;margin-bottom:12px">
+<a class="primary-link" href="{{ url_for('export_file', fmt='xlsx') }}">📊 Excel (XLSX)</a>
+<a class="secondary-link" href="{{ url_for('export_file', fmt='csv') }}">CSV všech tipů</a>
+<a class="secondary-link" href="{{ url_for('export_file', fmt='pdf') }}">PDF report</a></div>
+{% if ex.error %}<div class="card neg">Export se nepodařil: {{ ex.error }}</div>{% else %}
+<div class="card"><div class="muted">{% for l in ex.meta %}{{ l }}<br>{% endfor %}</div>
+<div class="muted" style="margin-top:6px">Excel: souhrn s grafy, všechny tipy, kombi tikety a nohy, kurzová pásma, soutěže a sporty, vývoj bankrollu, metodika. Soubor se vytvoří při každém kliknutí znovu z aktuálních dat.</div></div>
+<h2>Souhrn</h2>
+{% if ex.rows %}<div class="tablewrap"><table class="mkt"><tr><th>Profil</th><th class="num">Tipů</th><th class="num">Vyhodn.</th><th class="num">Čeká</th><th class="num">V / P / vr. / nepl.</th><th class="num">Úspěšnost</th><th class="num">Zisk (j.)</th><th class="num">ROI na 1 j.</th><th class="num">Prům. kurz</th><th class="num">Brier</th><th class="num">CLV</th></tr>
+{% for r in ex.rows %}<tr><td><b>{{ r[0] }}</b><div class="muted">{{ r[1] }}</div></td><td class="num">{{ r[2] }}</td><td class="num">{{ r[3] }}</td><td class="num">{{ r[4] }}</td><td class="num">{{ r[5] }} / {{ r[6] }} / {{ r[7] }} / {{ r[8] }}</td>
+<td class="num">{{ ('%.0f %%'|format(r[9] * 100)) if r[9] is not none else '–' }}</td><td class="num {{ 'pos' if r[10] >= 0 else 'neg' }}">{{ '%+.2f'|format(r[10]) }}</td>
+<td class="num">{{ ('%+.1f %%'|format(r[11] * 100)) if r[11] is not none else '–' }}</td><td class="num">{{ ('%.2f'|format(r[12])) if r[12] is not none else '–' }}</td>
+<td class="num">{{ ('%.3f'|format(r[13])) if r[13] is not none else '–' }}</td><td class="num">{{ ('%+.1f %% (%d)'|format(r[15] * 100, r[16])) if r[15] is not none else '–' }}</td></tr>{% endfor %}</table></div>
+{% else %}<div class="card muted">Zatím žádné tipy – export i tak funguje (prázdné listy s metodikou).</div>{% endif %}
+{% set m = ex.money %}<div class="card"><b>Moje tikety – skutečné peníze:</b> vsazeno {{ '%.0f'|format(m.stake_sum or 0) }} {{ cur }} · výsledek {{ '%+.0f'|format(m.profit_money or 0) }} {{ cur }} · skutečné ROI {{ ('%+.1f %%'|format(m.roi_real * 100)) if m.get('roi_real') is not none else '–' }} · průměrné ROI na tiket {{ ('%+.1f %%'|format(m.roi_avg * 100)) if m.get('roi_avg') is not none else '–' }}</div>
+<div class="muted">ROI na 1 j. = zisk / vsazené vyhodnocené tipy; čekající, vrácené a neplatné se nepočítají. Profily se nesčítají – stejný zápas může být ve více profilech.</div>
+<h2>Archiv rozborů</h2><div class="card muted">Bot si trvale ukládá každou změnu rozborů a skenů (nic se nemaže):
+{% set an = {'scan': 'skeny Přehledu', 'p3': 'rozbory Profilu 3', 'p4_scan': 'skeny Profilu 4', 'p4_nhl': 'skeny Profilu 4 NHL', 'p4_detail': 'rozbory zápasů Profilu 4'} %}
+{% for k, n in ex.archive|dictsort %}{{ an.get(k, k) }} {{ n }}{{ ' · ' if not loop.last }}{% else %}zatím nic (plní se od teď při každém skenu){% endfor %}</div>
+{% endif %}
 {% endif %}
 </div></main>
 </div></div>
@@ -1488,6 +1512,7 @@ def create_app(database_url: str | None = None) -> Flask:
             p2f=type("F", (), {k: "" for k in ("match", "day", "league", "book", "lam_h", "lam_a", "ctx_h", "ctx_a", "odds", "use_czech", "use_foreign")} | (p2form or {})),
             p2st=type("P", (), paper.stats([p for p in all_picks if p.profile == "profil2"])),
             p4=_p4_view(led) if tab == "profil4" else {},
+            ex=_export_view(session) if tab == "export" else None,
             quota=_quota_view(led) if tab == "prehled" else None,
             goalies=_goalie_view(led) if tab == "nastaveni" else None,
             mq=json.loads(led._get("model_quality", "") or "null") if tab == "overeni" else None,
@@ -1554,7 +1579,7 @@ def create_app(database_url: str | None = None) -> Flask:
                 fid = request.args.get("p4fid", "")
                 return {"status": st, "key": bool(key), "budget": b, "run_limit": P4.budget.max_per_run, "report": store.get("web_last_report", ""),
                         "view": last if last and last.get("kind") == "scan" else None,
-                        "detail": details.get(fid), "cached": set(details), "tips": _p4_tips(store),
+                        "detail": details.get(fid) or _p4_archived_detail(store, fid), "cached": set(details), "tips": _p4_tips(store),
                         "eval": json.loads(store.get("web_p4_eval", "") or "null"),
                         "nhl": json.loads(store.get(p4nhl.VIEW_KEY, "") or "null"), "nhl_report": store.get(p4nhl.REPORT_KEY, "")}
             finally:
@@ -1562,6 +1587,44 @@ def create_app(database_url: str | None = None) -> Flask:
         except Exception as e:  # noqa: BLE001 - panel nesmi spadnout kvuli Profilu 4
             return {"status": f"Profil 4 není dostupný: {e}", "error": True, "report": "", "view": None, "detail": None,
                     "cached": set(), "tips": None, "nhl": None, "nhl_report": ""}
+
+    def _export_data(session):
+        from . import export
+        from .profil4.config import P4
+
+        return export.collect(session, P4.db_path, utcnow())
+
+    def _export_view(session) -> dict:
+        from . import export
+
+        try:
+            d = _export_data(session)
+            arch = Ledger(session).archive_counts()
+            from .profil4.config import P4
+
+            arch |= export.p4_archive_counts(P4.db_path)
+            return {"meta": export.meta_lines(d), "head": export.SUMMARY_HEAD, "rows": export._summary_rows(d),
+                    "money": export.stats([r for r in d.records if r.group == export.TICKETS]), "archive": arch}
+        except Exception as e:  # noqa: BLE001 - panel nesmi spadnout kvuli exportu
+            return {"error": str(e)}
+
+    @app.get("/export/<fmt>")
+    def export_file(fmt: str):
+        from . import export
+
+        kinds = {"xlsx": (export.to_xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                 "csv": (export.to_csv, "text/csv"), "pdf": (export.to_pdf, "application/pdf")}
+        if fmt not in kinds:
+            return redirect(url_for("index", tab="export"))
+        with factory() as session:  # jen cteni: nic se necommituje
+            d = _export_data(session)
+            fn, mime = kinds[fmt]
+            body = fn(d)
+            session.rollback()
+        import io as _io
+
+        name = f"tipsbot-vysledky-{d.created:%Y-%m-%d-%H%M}.{fmt}"
+        return send_file(_io.BytesIO(body), mimetype=mime, as_attachment=True, download_name=name)
 
     P4_DETAILS = "web_p4_details"  # rozbory jednotlivych zapasu {fixture_id: karty}; prehled skenu zustava zvlast
 
@@ -1572,10 +1635,16 @@ def create_app(database_url: str | None = None) -> Flask:
             details.setdefault(str(last.get("fixture_id")), last)
         return details
 
+    def _p4_archived_detail(store, fid: str) -> dict | None:
+        """Starsi rozbor, ktery uz vypadl z poslednich 30 (archiv se nemaze)."""
+        got = store.archived("p4_detail", fid) if fid else []
+        return json.loads(got[-1][2]) if got else None
+
     def _p4_save_detail(store, data: dict) -> None:
         details = _p4_details(store)
         details.pop(str(data.get("fixture_id")), None)
         details[str(data.get("fixture_id"))] = data
+        store.archive("p4_detail", str(data.get("fixture_id")), json.dumps(data, ensure_ascii=False, default=str))
         store.set(P4_DETAILS, json.dumps(dict(list(details.items())[-30:]), ensure_ascii=False, default=str))
 
     def _p4_tips(store) -> dict:

@@ -414,7 +414,7 @@ def scan_league(
                 v.absences.append(f"Úprava modelu z kontextu: góly domácích ×{sh:.3f}, hostů ×{sa:.3f}")
             views.append(v)
     views.sort(key=lambda v: v.kickoff)
-    ledger.set_analysis(league, analysis.dumps(views))
+    ledger.set_analysis(league, analysis.dumps(views), now)
 
     # vsechny oficialni tipy teto souteze (i zrusene a vyprsele, i ty starsi nez Sledovani) do Sledovani, at se
     # vyhodnoti skutecna uspesnost; uz sledovane mirror_tips preskoci

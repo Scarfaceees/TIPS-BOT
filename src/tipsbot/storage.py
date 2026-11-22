@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     create_engine,
     func,
@@ -102,6 +103,19 @@ class State(Base):
 
     key: Mapped[str] = mapped_column(String, primary_key=True)
     value: Mapped[str] = mapped_column(String)
+
+
+class ArchiveEntry(Base):
+    """Trvaly archiv rozboru a skenu (archive.py): jen pridavani, nic se nemaze."""
+
+    __tablename__ = "archive"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String, index=True)
+    key: Mapped[str] = mapped_column(String, index=True)
+    t: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    digest: Mapped[str] = mapped_column(String)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 def make_session_factory(database_url: str | None = None) -> sessionmaker[Session]:
@@ -255,8 +269,35 @@ class Ledger:
     def set_next_kickoff(self, league: str, when: datetime) -> None:
         self._set(f"next_kickoff:{league}", when.isoformat())
 
-    def set_analysis(self, league: str, raw: str) -> None:
+    def set_analysis(self, league: str, raw: str, when: datetime | None = None) -> None:
         self._set(f"analysis:{league}", raw)
+        if raw != "[]":
+            self.archive("scan", league, raw, when)
+
+    # --- trvaly archiv (archive.py) ---------------------------------------
+    def archive(self, kind: str, key: str, text: str, when: datetime | None = None) -> bool:
+        """Ulozi verzi rozboru/skenu, pokud se od posledni verze stejneho klice zmenila. Vraci, zda ulozil."""
+        from . import archive
+
+        blob, digest = archive.pack(text)
+        last = self.s.scalars(select(ArchiveEntry.digest).where(ArchiveEntry.kind == kind, ArchiveEntry.key == key)
+                              .order_by(ArchiveEntry.id.desc()).limit(1)).first()
+        if last == digest:
+            return False
+        self.s.add(ArchiveEntry(kind=kind, key=key, t=when or utcnow(), digest=digest, data=blob))
+        return True
+
+    def archived(self, kind: str, key: str | None = None) -> list[tuple[str, datetime, str]]:
+        """Vsechny verze (klic, cas, text) od nejstarsi."""
+        from . import archive
+
+        q = select(ArchiveEntry).where(ArchiveEntry.kind == kind)
+        if key is not None:
+            q = q.where(ArchiveEntry.key == key)
+        return [(a.key, a.t, archive.unpack(a.data)) for a in self.s.scalars(q.order_by(ArchiveEntry.id))]
+
+    def archive_counts(self) -> dict[str, int]:
+        return dict(self.s.execute(select(ArchiveEntry.kind, func.count()).group_by(ArchiveEntry.kind)).all())
 
     def analysis(self, league: str) -> str:
         return self._get(f"analysis:{league}", "[]")

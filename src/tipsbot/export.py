@@ -69,6 +69,7 @@ class Rec:
     clv: float | None = None
     model: str = ""
     id: str = ""
+    code: str = ""  # interni kod vyberu (home/away/over/1/X/2…) – pro kontrolu protichudnych vyberu
 
     @property
     def outcome(self) -> str:
@@ -136,8 +137,10 @@ def _p4_intel(path: Path | None, now: datetime) -> dict | None:
         con.close()
     clean, _ = IG.clean_predictions(preds)
     common = {sp: IG.common_sample([r for r in clean if IG.sport_of(r.get("league")) == sp]) for sp in (IG.FOOTBALL, IG.HOCKEY)}
-    return {"summary": IG.build(preds, tips, now, P4, ranks), "common": common, "tips": IG.tip_rows_unique(tips),
-            "rankings": ranks}
+    uniq = IG.tip_rows_unique(tips)
+    return {"summary": IG.build(preds, tips, now, P4, ranks), "common": common, "tips": uniq,
+            "tips_all": tips, "unique_ids": {t["id"] for t in uniq}, "rankings": ranks,
+            "integrity_all": IG.integrity_summary(ranks, now, limit=None)}
 
 
 def xdt(v):
@@ -226,7 +229,8 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
     # Kvalita dat
     ws = sheet("Kvalita dat")
     q_rows = []
-    for t in tips:
+    uniq_ids = set() if note else ig.get("unique_ids", set())
+    for t in ([] if note else ig.get("tips_all", tips)):
         intel = json.loads(t["intel"]) if t.get("intel") else {}
         qd = intel.get("quality") or {}
         det, grp = qd.get("details") or {}, qd.get("groups") or {}
@@ -243,13 +247,16 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
                        ("ověřena" if cs else "nelze spárovat" if cs is None else "chybí"),
                        src.get("model_data"), src.get("lineups"), src.get("injuries"), len(avail) if src else None,
                        len(src) if src else None, ", ".join(missing), grp.get("kvalita kurzu"), grp.get("sportovní data"),
-                       grp.get("úplnost zdrojů"), qd.get("score"), "; ".join(qd.get("uncertain", [])), origin])
+                       grp.get("úplnost zdrojů"), qd.get("score"), "; ".join(qd.get("uncertain", [])), origin,
+                       t.get("id"), xdt(t.get("predicted_at")),
+                       "ano" if t.get("id") in uniq_ids else "ne – opakovaný záznam výběru (do ROI se nepočítá)"])
     table(ws, 6, ["Zápas", "Výběr", "Stáří kurzu (min)", "Poslední aktualizace u zdroje", "Čas stažení", "Stav kurzu",
                   "Zdroj kurzu", "Kancelář", "Kanceláří", "Protistrana", "Statistiky", "Sestavy", "Absence",
                   "Dostupných zdrojů", "Zdrojů celkem", "Chybějící zdroje", "Kvalita kurzu (0–100)",
-                  "Sportovní data (0–100)", "Úplnost zdrojů (0–100)", "Kvalita dat (0–100)", "Nejistota", "Původ hodnot"],
-          q_rows, {3: "0", 4: DT, 5: DT, 17: "0", 18: "0", 19: "0", 20: "0"},
-          [34, 24, 9, 17, 17, 12, 9, 12, 9, 12, 12, 17, 12, 9, 9, 28, 9, 9, 9, 9, 40, 40])
+                  "Sportovní data (0–100)", "Úplnost zdrojů (0–100)", "Kvalita dat (0–100)", "Nejistota", "Původ hodnot",
+                  "ID tipu", "Uloženo (UTC)", "Počítá se do výsledků"],
+          q_rows, {3: "0", 4: DT, 5: DT, 17: "0", 18: "0", 19: "0", 20: "0", 24: DT},
+          [34, 24, 9, 17, 17, 12, 9, 12, 9, 12, 12, 17, 12, 9, 9, 28, 9, 9, 9, 9, 40, 40, 7, 16, 22])
     ws.cell(5, 1, "Prázdná buňka = hodnota nebyla uložena (ne nula). Časy v UTC. Chybějící data = nejistota, "
                   "ne negativní sportovní informace.").font = F
 
@@ -288,7 +295,7 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
                 {4: DT, 7: ODDS, 8: "+0.0%;-0.0%", 9: "+0.0%;-0.0%", 14: DT},
                 [7, 9, 34, 16, 10, 24, 7, 8, 9, 9, 9, 22, 26, 16, 18, 100])
     ws.cell(5, 1, "Ranking = pořadí zajímavosti, NE pravděpodobnost výhry. BEST AVAILABLE a WATCH nejsou doporučení k sázce. "
-                  "Jen platné předzápasové příležitosti (aktuální kurz, nezávislá kontrola bez chyby). Váhy experimentální.").font = F
+                  "Jen platné předzápasové příležitosti (aktuální kurz, nezávislá kontrola bez chyby, ne NO BET). Váhy experimentální.").font = F
     if not note:
         from .profil4 import intelligence as IG
 
@@ -306,7 +313,7 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
 
     # Market Integrity
     ws = sheet("Market Integrity")
-    ints = [] if note else (ig["summary"].get("integrity") or {}).get("items", [])
+    ints = [] if note else (ig.get("integrity_all") or {}).get("items", [])  # vsechny, ne jen nahled panelu
     table(ws, 6, ["Zápas", "Výkop (UTC)", "Trh", "Výběr", "Kancelář", "Kurz", "Tržní medián", "Férový kurz trhu",
                   "Odchylka od mediánu", "Kanceláří", "Protistrana", "Stáří (min)", "Nezávislý přepočet", "Integrita",
                   "Rozhodnutí", "Důvod"],
@@ -367,10 +374,13 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
     prow = []
     for r in sorted(pend, key=lambda r: (r.kickoff or "", r.match, r.group)):
         same = per_match[(r.group, r.match)]
-        mk = {}
-        for x in same:
-            mk.setdefault(x.market, set()).add(x.selection)
-        corr = ("PROTICHŮDNÉ výběry stejného trhu" if len(mk.get(r.market, ())) > 1 else
+        from .profil4 import intelligence as IG
+
+        opp = any(x is not r and ((x.market == r.market and (x.code or x.selection) != (r.code or r.selection)) or
+                                  (r.sport == "fotbal" and r.code and x.code
+                                   and IG.never_both_win(r.market, r.code, x.market, x.code)))
+                  for x in same)
+        corr = ("PROTICHŮDNÉ výběry stejného zápasu (nemohou vyhrát oba)" if opp else
                 f"korelované – {len(same)} výběry stejného zápasu" if len(same) > 1 else "jediný výběr zápasu")
         real = r.kind == PLACED
         prow.append([r.match, xdt(r.kickoff), r.group, r.sport, r.league, r.market, safe_text(r.selection), r.odds, corr,
@@ -441,7 +451,8 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
                         r.get("kickoff") or "", r["market"], (r.get("label") or r["selection"]).replace("±-0", "±0"),
                         r.get("odds"), r.get("bookmaker") or "", probs.get("C"), res, r.get("score") or "", 1.0,
                         None if res is None else (0.0 if res == "invalid" else r.get("profit")), None,
-                        r["clv"] if verified else None, r.get("model_version") or MODEL_VERSION, f"p4-{r['id']}"))
+                        r["clv"] if verified else None, r.get("model_version") or MODEL_VERSION, f"p4-{r['id']}",
+                        r["selection"]))
     for t in session.query(Ticket).order_by(Ticket.id):
         res = None if t.status == "open" else t.status if t.status in OUTCOME or t.status == "void" else "invalid"
         pl = t.profit_loss if res is not None else None

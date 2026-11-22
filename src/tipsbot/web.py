@@ -1050,6 +1050,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% set mi = ig.integrity or {} %}<h3>Market Integrity</h3>
 <div class="muted">Ověření kurzu, trhu, výběru, linie a nezávislý přepočet EV u nadcházejících výběrů (poslední výpočet). Neshoda výpočtu = NO BET; neověřitelný trh nemůže být APPROVED.</div>
 {% if mi.total %}<div class="row" style="gap:6px;flex-wrap:wrap;margin:6px 0">{% for k, v in mi.counts.items() %}<span class="badge {{ 'tipb' if k == 'OVĚŘENO' else 'bad' if 'NO BET' in k or 'PODEZ' in k else 'warn' }}">{{ k }}: {{ v }}</span>{% endfor %}</div>
+<div class="muted">Výběrů: {{ mi.total }}{% if mi['items']|length < mi.total %} (v panelu prvních {{ mi['items']|length }} – podezřelé a neověřené první; všechny jsou v Excelu, list Market Integrity){% endif %}.</div>
 <details class="fold"><summary>Neověřené a podezřelé kurzy ({{ mi['items']|rejectattr('verdict', 'equalto', 'OVĚŘENO')|list|length }})</summary><div class="p4mcards">
 {% for it in mi['items'] if it.verdict != 'OVĚŘENO' %}{% if loop.index <= 30 %}<div class="p4mcard"><div class="p4mhead"><b>{{ it.label }}</b><small>{{ it.book }} {{ '%.2f'|format(it.odds) }}</small></div>
 <div class="p4kv">{{ it.match }} · {{ (it.kickoff or '')[:16]|replace('T', ' ') }}</div>

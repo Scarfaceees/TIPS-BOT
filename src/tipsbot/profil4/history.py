@@ -88,11 +88,14 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
     return n
 
 
+RANK_STEP = 3.0  # nejmensi zmena rankingu (body), ktera sama o sobe zaklada novy zaznam
+
+
 def record_rankings(store: Store, an: MatchAnalysis) -> int:
     """Opportunity Ranking VSECH predzapasovych kandidatu analyzy (nejen ulozenych tipu) do tabulky `rankings`.
 
-    Novy radek jen pri zmene (kancelar, kurz, ranking, kvalita dat nebo rozhodnuti) – opakovany sken bez zmeny
-    nic nepridava. `valid` = aktualni kurz a nezavisla kontrola bez tvrde chyby. Historicke radky se nemeni."""
+    Novy radek jen pri zmene kancelare, kurzu, kvality dat nebo rozhodnuti, nebo kdyz se ranking zmeni aspon
+    o RANK_STEP bodu – opakovany sken bez zmeny nic nepridava. `valid` = aktualni kurz a nezavisla kontrola bez tvrde chyby. Historicke radky se nemeni."""
     fx = an.fixture
     if an.created >= fx.kickoff:
         return 0
@@ -106,9 +109,13 @@ def record_rankings(store: Store, an: MatchAnalysis) -> int:
         valid = int(c.quote_status == O.CURRENT and c.validation is not None and not c.validation[0])
         last = store.query("SELECT bookmaker, odds, rank, quality, decision FROM rankings WHERE fixture_id=? AND market=? "
                            "AND selection=? ORDER BY id DESC LIMIT 1", (fx.id, c.market, c.selection))
-        now_vals = (c.quote.bookmaker, c.odds, rk["score"], qd.get("score"), c.decision)
-        if last and tuple(last[0]) == now_vals:
-            continue
+        if last:
+            lb, lo, lr, lq, ld = tuple(last[0])
+            # ranking obsahuje aktualnost kurzu, ktera s casem plynule klesa – samotne starnuti kurzu (zmena o par
+            # bodu) neni zmena prilezitosti a novy radek nezaklada (zjisteno v ostrem provozu 22.11.2026)
+            if ((lb, lo, lq, ld) == (c.quote.bookmaker, c.odds, qd.get("score"), c.decision)
+                    and lr is not None and abs(rk["score"] - lr) < RANK_STEP):
+                continue
         oi = intel.get("odds") or {}
         detail = {"reasons": rk.get("parts", []), "quality": {k: qd.get(k) for k in ("score", "groups", "details", "parts",
                                                                                          "uncertain")},

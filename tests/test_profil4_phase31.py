@@ -240,6 +240,7 @@ def test_ranked_opportunities_only_valid_prematch_and_rank_does_not_decide():
     opp = IG.opportunities_ranked(rows, an.created)
     valid = {(r["market"], r["selection"]) for r in rows if r["valid"]}
     assert opp and all((o["market"], o["selection"]) in valid for o in opp)
+    assert all(o["decision"] != D.NO_BET for o in opp)  # regrese 22.11.2026: NO BET (kurz 6.73 mimo pasmo) byl 1.
     assert [o["rank"] for o in opp] == sorted((o["rank"] for o in opp), reverse=True)
     assert IG.opportunities_ranked(rows, an.fixture.kickoff + timedelta(minutes=1)) == []  # zapas zacal
     by = {c.key: c for c in an.candidates}
@@ -330,7 +331,14 @@ def test_portfolio_flags_correlated_and_opposite_selections():
     pf = IG.portfolio(rows, now)
     assert pf["pending"] == 4 and pf["pending_matches"] == 2
     corr = pf["correlated"]
-    assert len(corr) == 1 and corr[0]["tips"] == 3 and corr[0]["opposite"] == ["1X2"]
+    assert len(corr) == 1 and corr[0]["tips"] == 3 and corr[0]["opposite"] == ["1X2:1 × 1X2:2"]
+    # protichudne i napric trhy (ostry pripad Atalanta – Inter: 1X2 hoste a AH 0 domaci); NO BET neni pozice
+    rows2 = [{**_tip_row(5, ko, selection="2"), "id": 10}, {**_tip_row(5, ko, market="AH_0.0", selection="home"), "id": 11},
+             {**_tip_row(5, ko, selection="1", decision="NO BET"), "id": 12}]
+    pf2 = IG.portfolio(rows2, now)
+    assert pf2["pending"] == 2 and pf2["pending_nobet"] == 1
+    assert pf2["correlated"][0]["opposite"] == ["1X2:2 × AH_0.0:home"]
+    assert IG.never_both_win("OU_2.5", "over", "BTTS", "yes") is False and IG.never_both_win("1X2", "1", "DNB", "away")
     assert "virtuální" in pf["note"].lower()
 
 
@@ -411,3 +419,75 @@ def test_cli_sections_and_report(tmp_path, monkeypatch):
     assert "KVALITA DAT" in IG.format_text(rep, "data-quality") and "ZNÁMÉ A OPRAVENÉ" in IG.format_text(rep, "errors")
     with pytest.raises(SystemExit):
         p.parse_args(["profil4", "intel", "neexistuje"])
+
+
+def test_odds_ageing_alone_does_not_create_ranking_rows():
+    """Regrese z ostreho provozu 22.11.2026: opakovany sken se stejnymi kurzy pridal 17 radku jen proto, ze
+    ranking klesl o 1 bod starnutim kurzu. Zmena o mene nez RANK_STEP bodu novy radek nezaklada."""
+    an, store = _analysis()
+    store.execute("DELETE FROM rankings")
+    history.record_rankings(store, an)
+    n = len(store.query("SELECT 1 FROM rankings"))
+    for c in an.candidates:
+        if c.intel.get("rank"):
+            c.intel["rank"]["score"] -= 1.0
+    assert history.record_rankings(store, replace(an, created=an.created + timedelta(minutes=2))) == 0
+    c = next(c for c in an.candidates if c.intel.get("rank"))
+    c.intel["rank"]["score"] -= history.RANK_STEP
+    assert history.record_rankings(store, replace(an, created=an.created + timedelta(minutes=4))) == 1
+    c.decision = D.WATCH if c.decision != D.WATCH else D.NO_BET  # zmena rozhodnuti vzdy novy radek
+    assert history.record_rankings(store, replace(an, created=an.created + timedelta(minutes=6))) == 1
+    assert len(store.query("SELECT 1 FROM rankings")) == n + 2
+
+
+def test_quality_sheet_shows_every_stored_tip_and_integrity_sheet_is_not_truncated(tmp_path):
+    """Regrese z ostreho provozu 22.11.2026: novy tip 214 (s kvalitou dat) byl opakovanym zaznamem vyberu
+    tipu 211 (bez kvality) a list Kvalita dat ukazal jen 211; Market Integrity byl orizly na 60 radku."""
+    from openpyxl import load_workbook
+
+    from tipsbot import export
+    from tipsbot.storage import make_session_factory
+
+    an, store = _analysis()
+    p4 = tmp_path / "p4.db"
+    disk = Store(p4)
+    ko = an.fixture.kickoff
+    _insert_tip(disk, {**_tip_row(an.fixture.id, ko), "match": an.fixture.name})
+    intel = {"quality": {"score": 95.0, "groups": {IG.Q_ODDS: 96.0}, "uncertain": [], "parts": [], "details": {"books": 5}}}
+    _insert_tip(disk, {**_tip_row(an.fixture.id, ko, intel, odds=2.05), "match": an.fixture.name})
+    history.record_rankings(disk, an)
+    n_latest = len(IG._latest_rank(IG.load_rankings(disk.query), only_valid=False))
+    disk.close()
+    with make_session_factory(f"sqlite:///{tmp_path / 'm.db'}")() as s:
+        d = export.collect(s, p4, now=an.created)
+    wb = load_workbook(io.BytesIO(export.to_xlsx(d)))
+    ws = wb["Kvalita dat"]
+    head = [c.value for c in ws[6]]
+    rows = [dict(zip(head, r)) for r in ws.iter_rows(min_row=7, values_only=True) if r[0]]
+    assert len(rows) == 2
+    assert rows[0]["Počítá se do výsledků"] == "ano" and rows[0]["Kvalita dat (0–100)"] is None
+    assert rows[1]["Kvalita dat (0–100)"] == 95 and rows[1]["Počítá se do výsledků"].startswith("ne")
+    mi = [r for r in wb["Market Integrity"].iter_rows(min_row=7, values_only=True) if r[0]]
+    assert n_latest > 0 and len(mi) == n_latest
+    ranks, _ = _rank_rows(80)  # 160 vyberu, zapasy v budoucnu => vsechny nadchazejici
+    now = datetime(2026, 11, 30, tzinfo=UTC)
+    assert IG.integrity_summary(ranks, now)["total"] == 160 and len(IG.integrity_summary(ranks, now)["items"]) == 60
+    assert len(IG.integrity_summary(ranks, now, limit=None)["items"]) == 160  # export bere vse
+
+
+def test_export_with_naive_utc_now_from_main_database(tmp_path):
+    """Regrese z ostreho provozu 22.11.2026: panel predava utcnow() bez pasma a export padal (HTTP 500)."""
+    from tipsbot import export
+    from tipsbot.storage import make_session_factory
+
+    an, _ = _analysis()
+    disk = Store(tmp_path / "p4.db")
+    history.record_rankings(disk, an)
+    _insert_tip(disk, _tip_row(an.fixture.id, an.fixture.kickoff))
+    disk.close()
+    naive = an.created.astimezone(UTC).replace(tzinfo=None)
+    with make_session_factory(f"sqlite:///{tmp_path / 'm.db'}")() as s:
+        d = export.collect(s, tmp_path / "p4.db", now=naive)
+    assert export.to_xlsx(d)[:2] == b"PK"
+    assert d.intel["integrity_all"]["total"] > 0 and IG.portfolio([], naive)["pending"] == 0
+    assert IG.opportunities_ranked(IG.load_rankings(Store(tmp_path / "p4.db").query), naive)

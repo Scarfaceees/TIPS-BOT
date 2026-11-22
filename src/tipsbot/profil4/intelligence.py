@@ -743,12 +743,12 @@ def _latest_rank(rank_rows: list[dict], only_valid: bool = True) -> dict[tuple, 
 
 def opportunities_ranked(rank_rows: list[dict], now: datetime, limit: int = 30) -> list[dict]:
     """Aktualni poradi z tabulky rankings: posledni vypocet kazdeho vyberu, zapas jeste nezacal, jen platne
-    (aktualni kurz, nezavisla kontrola bez tvrde chyby). Ranking NENI pravdepodobnost vyhry."""
-    out = []
+    (aktualni kurz, nezavisla kontrola bez tvrde chyby) a ne NO BET. Ranking NENI pravdepodobnost vyhry."""
+    now, out = _aware(now), []
     for r in _latest_rank(rank_rows).values():
         ko = parse_dt(r.get("kickoff"))
-        if ko is None or ko <= now:
-            continue
+        if ko is None or ko <= now or r.get("decision") == "NO BET":
+            continue  # NO BET neni prilezitost (napr. kurz mimo pasmo) – zustava jen v tabulce a ve validaci
         d = json.loads(r["detail"]) if r.get("detail") else {}
         q = d.get("quality") or {}
         out.append({"match": r["match"], "league": r.get("league"), "kickoff": r.get("kickoff"), "label": r.get("label"),
@@ -762,6 +762,13 @@ def opportunities_ranked(rank_rows: list[dict], now: datetime, limit: int = 30) 
                     "flags": (d.get("odds") or {}).get("flags", [])})
     out.sort(key=lambda o: (-(o["rank"] or 0), o["kickoff"] or ""))
     return out[:limit]
+
+
+def _aware(now: datetime) -> datetime:
+    """Hlavni databaze pocita v UTC bez pasma, Profil 4 s pasmem – srovnani musi byt vzdy s pasmem."""
+    from datetime import timezone
+
+    return now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now
 
 
 def _nn(x):
@@ -880,9 +887,9 @@ def ranking_validation(rank_rows: list[dict], pred_rows: list[dict], tip_rows: l
                     f"Závěr až od {cfg.intel.min_matches_verdict} nezávislých zápasů."}
 
 
-def integrity_summary(rank_rows: list[dict], now: datetime, limit: int = 60) -> dict:
-    """Ovřene / neoverene / podezrele kurzy z posledniho vypoctu kazdeho nadchazejiciho vyberu."""
-    items = []
+def integrity_summary(rank_rows: list[dict], now: datetime, limit: int | None = 60) -> dict:
+    """Overene / neoverene / podezrele kurzy z posledniho vypoctu kazdeho nadchazejiciho vyberu."""
+    now, items = _aware(now), []
     for r in _latest_rank(rank_rows, only_valid=False).values():
         ko = parse_dt(r.get("kickoff"))
         if ko is None or ko <= now:
@@ -901,7 +908,23 @@ def integrity_summary(rank_rows: list[dict], now: datetime, limit: int = 60) -> 
         counts[it["verdict"]] += 1
     order = {INT_FAIL: 0, INT_SUSPECT: 1, INT_NONE: 2, INT_PARTIAL: 3, INT_OK: 4}
     items.sort(key=lambda i: (order.get(i["verdict"], 5), -(i["ev"] or 0)))
-    return {"counts": dict(counts), "items": items[:limit], "total": len(items)}
+    return {"counts": dict(counts), "items": items if limit is None else items[:limit], "total": len(items)}
+
+
+def never_both_win(m1: str, s1: str, m2: str, s2: str) -> bool | None:
+    """Protichudne vybery: neexistuje skore, pri kterem by oba vyhraly (aspon zcasti). Nezavisly settlement
+    integrity.outcome na skore 0–10; None = trh nelze overit (napr. NHL)."""
+    from . import integrity as IN
+
+    try:
+        for h in range(11):
+            for a in range(11):
+                w1 = any(r == "win" for _, r in IN.outcome(m1, s1, h, a))
+                if w1 and any(r == "win" for _, r in IN.outcome(m2, s2, h, a)):
+                    return False
+    except (ValueError, KeyError):
+        return None
+    return True
 
 
 def portfolio(tip_rows: list[dict], now: datetime) -> dict:
@@ -910,8 +933,12 @@ def portfolio(tip_rows: list[dict], now: datetime) -> dict:
     Vice tipu z jednoho zapasu je korelovanych (spolecny vysledek) – nikdy se nepocitaji jako nezavisle sazky."""
     from .history import unique_bets
 
+    now = _aware(now)
     tips = unique_bets(tip_rows)[0]
-    pend = [t for t in tips if not t.get("result") and (parse_dt(t.get("kickoff")) or now) > now]
+    # NO BET neni pozice (ulozeny jen jako kategorie / pro historii) – stejne jako v Excelu (Portfolio Risk)
+    nobet = [t for t in tips if not t.get("result") and t.get("decision") == "NO BET"]
+    pend = [t for t in tips if not t.get("result") and (parse_dt(t.get("kickoff")) or now) > now
+            and t.get("decision") != "NO BET"]
     settled = [t for t in tips if t.get("result") and t["result"] != mathcore.VOID]
 
     def count(rows, fn):
@@ -927,16 +954,20 @@ def portfolio(tip_rows: list[dict], now: datetime) -> dict:
     for (_, m), ts in by_match.items():
         if len(ts) < 2:
             continue
-        per = defaultdict(set)
-        for t in ts:
-            per[t["market"]].add(t["selection"])
-        opposite = sorted(k for k, v in per.items() if len(v) > 1)
+        opposite = []
+        for i in range(len(ts)):
+            for j in range(i + 1, len(ts)):
+                a, b = ts[i], ts[j]
+                same = a["market"] == b["market"] and a["selection"] != b["selection"]
+                if same or (sport_of(a.get("league")) == FOOTBALL
+                            and never_both_win(a["market"], a["selection"], b["market"], b["selection"])):
+                    opposite.append(f"{a['market']}:{a['selection']} × {b['market']}:{b['selection']}")
         corr.append({"match": m, "tips": len(ts), "markets": [f"{t['market']}:{t['selection']}" for t in ts],
                      "opposite": opposite,
                      "note": ("PROTICHŮDNÉ výběry stejného trhu (" + ", ".join(opposite) + ") – " if opposite else "")
                              + "stejný zápas – výsledky korelované, ne nezávislé sázky"})
     profit = sum(t.get("profit") or 0.0 for t in settled)
-    return {"pending": len(pend), "settled": len(settled), "pending_units": float(len(pend)),
+    return {"pending": len(pend), "pending_nobet": len(nobet), "settled": len(settled), "pending_units": float(len(pend)),
             "pending_matches": len(by_match), "profit_units": profit,
             "by_match": [(m, n) for (_, m), n in count(pend, lambda t: (t["fixture_id"], t["match"]))][:15],
             "by_league": count(pend, lambda t: t.get("league") or "?"),
@@ -944,7 +975,8 @@ def portfolio(tip_rows: list[dict], now: datetime) -> dict:
             "by_band": count(pend, lambda t: odds_band(t["odds"])),
             "by_decision": count(pend, lambda t: t.get("decision") or "?"),
             "correlated": corr,
-            "note": "Virtuální jednotkové tipy (bez peněz). Skutečné tikety a jejich Kč jsou zvlášť (Export / Sledování)."}
+            "note": "Virtuální jednotkové tipy APPROVED/WATCH/BEST AVAILABLE (bez peněz, NO BET se nepočítá). "
+                    "Skutečné tikety a jejich Kč jsou zvlášť (Export / Sledování)."}
 
 
 def build(pred_rows: list[dict], tip_rows: list[dict], now: datetime, cfg, rank_rows: list[dict] | None = None) -> dict:

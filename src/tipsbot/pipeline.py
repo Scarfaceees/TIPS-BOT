@@ -442,6 +442,12 @@ def scan_league(
         kombi.record_current(ledger, now)
     except Exception as e:  # noqa: BLE001 - sledovani kombi nesmi shodit sken
         log.warning("sledovani kombi tiketu selhalo: %s", e)
+    try:  # ke kazdemu vyberu ve Sledovani rozbor: proc ho profil vybral + rozbor zapasu
+        from . import pickinfo
+
+        pickinfo.enrich(ledger, views, now)
+    except Exception as e:  # noqa: BLE001 - rozbor nesmi shodit sken
+        log.warning("rozbor vyberu ve Sledovani selhal: %s", e)
 
     if provider.unmatched:
         report.notes.append("tymy bez modelu (jen trh): " + ", ".join(sorted(provider.unmatched)))

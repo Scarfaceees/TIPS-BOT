@@ -112,6 +112,7 @@ class Pick:
     profile: str = DEFAULT
     detail: str = ""  # rozbor vyberu (Profil 3: ocekavane goly, simulace, scenare)
     legs: list = field(default_factory=list)  # kombi tiket: nohy s vlastnim vysledkem (kombi.py)
+    info: list = field(default_factory=list)  # rozbor vyberu a zapasu [{"title", "lines"}] (pickinfo.py)
 
     @property
     def ev(self) -> float | None:

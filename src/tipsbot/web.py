@@ -25,7 +25,7 @@ from flask import (Flask, flash, get_flashed_messages, jsonify, redirect, render
                    url_for)
 from sqlalchemy import select
 
-from . import analysis, auto, backtest, combo, czechodds, detail, devig, kombi, metrics, paper, profile2, risk, secondopinion
+from . import analysis, auto, backtest, combo, czechodds, detail, devig, kombi, metrics, pickinfo, paper, profile2, risk, secondopinion
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, TicketLeg, Tip, make_session_factory, utcnow
 
@@ -514,17 +514,18 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 </div>
 <div style="margin-top:10px"><div class="legend"><span class="badge tipb">TIP</span> ověřená hodnota, vsadit &nbsp; <span class="badge tipb">CÍL</span> sázet jen při kurzu od uvedené hranice &nbsp; <span class="badge">VÝHODNÉ</span> kurz je výhodný, ale tip nevznikl &nbsp; <span class="badge bad">NEVÝHODNÉ</span> nesázet</div><div class="legend" style="margin-top:6px"><b>Šance</b> – jak pravděpodobné to podle modelu je · <b>Kurz bez marže</b> – kurz, který by odpovídal skutečné šanci (sázkovka si k němu bere marži) · <b>Sázet od</b> – nejnižší kurz, při kterém se sázka ještě vyplatí · <b>Čekaný zisk</b> – kolik průměrně vyděláš na 100 Kč vsazených, když model sedí (+10 % = +10 Kč) · <b>Lepší než závěrečný kurz</b> – jestli jsi vzal vyšší kurz, než jaký byl těsně před zápasem (dlouhodobě v plusu = sázíš chytře)</div></div></details>
 
+{% macro crozbor(c) %}{% if c.legs|selectattr('info')|list %}<details class="fold"><summary>rozbor</summary>{% for lg in c.legs if lg.info %}<div class="boxes">{% for sec in lg.info %}<div class="box"><h4>{{ sec.title }}</h4><ul>{% for l in sec.lines %}<li>{{ l }}</li>{% endfor %}</ul></div>{% endfor %}</div>{% endfor %}</details>{% endif %}{% endmacro %}
 <h2>Doporučený tiket <span class="muted" style="font-weight:400">(ze zahraničních kurzů)</span></h2>
 {% for c in combos[:1] %}<div class="card"><div class="tip"><div>
   <div class="title">{{ c.legs|length }}× kombinace <span class="badge tipb">nejlepší</span></div>
   {% for lg in c.legs %}<div class="pick">{{ loop.index }}. <b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">({{ lg.row.best_book }}, výkop {{ lg.local }})</span></div>{% endfor %}
   <div class="kv"><span>Šance tiketu <b>{{ '%.1f'|format(c.prob * 100) }} %</b></span><span title="kurz, který odpovídá skutečné šanci – bez marže, kterou si bere sázková kancelář">Kurz bez marže <b>{{ '%.2f'|format(c.fair_odds) }}</b></span><span title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk <b>{{ '%+.1f'|format(c.ev_pct) }} %</b></span></div></div>
   <div class="big">{{ '%.2f'|format(c.odds) }}<small>celkový kurz · vklad {{ '%.0f'|format(c.stake) }} {{ cur }}</small></div></div>
-  <div class="muted" style="margin-top:6px">Sázet jen, pokud kancelář dá celkový kurz alespoň <b>{{ '%.2f'|format(c.min_odds) }}</b>. Každá sázka je z jiného zápasu.</div></div>
+  <div class="muted" style="margin-top:6px">Sázet jen, pokud kancelář dá celkový kurz alespoň <b>{{ '%.2f'|format(c.min_odds) }}</b>. Každá sázka je z jiného zápasu.</div>{{ crozbor(c) }}</div>
 {% else %}<div class="card muted">Zatím není z čeho tiket složit – potřebuju aspoň dvě příležitosti s hodnotou z různých zápasů.</div>{% endfor %}
 {% if combos|length > 1 %}<details class="fold card"><summary>Další kombinace ({{ combos|length - 1 }})</summary>
 <div class="tablewrap"><table class="combot"><tr><th>Sázky</th><th class="num">Kurz</th><th class="num">Šance</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th class="num">Min. kurz</th><th class="num">Vklad</th></tr>
-{% for c in combos[1:] %}<tr><td>{% for lg in c.legs %}<div><b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">{{ lg.local }}</span></div>{% endfor %}</td>
+{% for c in combos[1:] %}<tr><td>{% for lg in c.legs %}<div><b>{{ lg.row.label }}</b> – {{ lg.match }} @ {{ '%.2f'|format(lg.row.best_odds) }} <span class="muted">{{ lg.local }}</span></div>{% endfor %}{{ crozbor(c) }}</td>
 <td class="num" data-l="kurz"><b>{{ '%.2f'|format(c.odds) }}</b></td><td class="num" data-l="šance">{{ '%.1f'|format(c.prob * 100) }} %</td><td class="num" data-l="zisk">{{ '%+.1f'|format(c.ev_pct) }} %</td><td class="num" data-l="min. kurz">{{ '%.2f'|format(c.min_odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(c.stake) }}</td></tr>{% endfor %}
 </table></div></details>{% endif %}
 </aside><div class="colmain dashboard-main-column">
@@ -1664,9 +1665,13 @@ def create_app(database_url: str | None = None) -> Flask:
         combos = [c for c in combo.best_combos(views, bank, expo)
                   if not any(lg.row.status == "model" and getattr(lg.row, "cz", None) and lg.row.cz[0] < lg.row.min_odds
                              for lg in c.legs)]
+        by_name = {v.name: v for v in views}
         for c in combos:
             for lg in c.legs:
                 object.__setattr__(lg, "local", local.get(lg.match, ""))
+                v, r = by_name.get(lg.match), lg.row  # rozbor nohy jako ve Sledovani (pickinfo)
+                object.__setattr__(lg, "info", pickinfo.build(r.market, r.selection, r.best_odds, r.best_book, r.p_final,
+                                                              v, f"{lg.match}: ") if v else [])
         partners = {v.name: combo.partner_for(v.name, views, bank, expo) for v in views if v.name in {t.match_name for t in open_tips}}
         for pc in partners.values():
             for lg in (pc.legs if pc else ()):

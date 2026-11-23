@@ -83,3 +83,26 @@ def test_kombi_legs_get_analysis_and_panel_shows_it(tmp_path):
     for prof in ("zaklad", "kombi"):
         html = c.get(f"/?tab=sledovani&profile={prof}").get_data(as_text=True)
         assert "<summary>rozbor</summary>" in html and "Proč tento výběr" in html and "Očekávané góly" in html
+
+
+def test_overview_combo_has_analysis(tmp_path):
+    from tipsbot.web import create_app
+
+    ko = (utcnow() + timedelta(days=1)).replace(microsecond=0).isoformat()
+    views = []
+    for name, odds, p in (("Arsenal - Chelsea", 1.6, 0.70), ("Leeds - Fulham", 1.7, 0.66)):
+        r = Row("1X2", "1", f"Výhra {name.split(' - ')[0]}", p, p, p, 1 / p, odds, "pinnacle", (p * odds - 1) * 100, "tip")
+        v = MatchView(name, "ENG1", name, ko, True, [r], 0, "TIP")
+        v.sections = [{"title": "Očekávané skóre (model)", "lines": [f"Očekávané góly {name}"]}]
+        views.append(v)
+    url = f"sqlite:///{tmp_path / 'o.db'}"
+    with make_session_factory(url)() as s:
+        led = Ledger(s)
+        led.deposit(10000)
+        led.set_analysis("ENG1", analysis.dumps(views), utcnow())
+        s.commit()
+    html = create_app(url).test_client().get("/?tab=prehled").get_data(as_text=True)
+    start = html.index("Doporučený tiket")
+    part = html[start:html.index("dashboard-main-column", start)]
+    assert "<summary>rozbor</summary>" in part and "Arsenal - Chelsea: Proč tento výběr" in part
+    assert "Leeds - Fulham: Očekávané skóre (model)" in part and "Očekávané góly Leeds - Fulham" in part

@@ -390,7 +390,16 @@ def settle(ledger, results: pd.DataFrame) -> list[str]:
     return notes
 
 
+def counted(picks: list[Pick]) -> list[Pick]:
+    """Vybery, ktere jdou do statistik: kombi tiket s uz zapocitanou sazkou se nepocita (kombi.overlaps)."""
+    from . import kombi
+
+    skip = kombi.overlaps(picks)
+    return [p for p in picks if p.id not in skip]
+
+
 def stats(picks: list[Pick]) -> dict:
+    picks = counted(picks)
     done = [p for p in picks if p.result is not None]
     out = {"open": len(picks) - len(done), "settled": len(done), "profit": 0.0, "roi": None, "hit": None,
            "avg_odds": None, "avg_ev": None, "by_market": {}}

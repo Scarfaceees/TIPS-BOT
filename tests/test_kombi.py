@@ -75,3 +75,40 @@ def test_kombi_profile_in_panel(tmp_path):
         s.commit()
     html = create_app(url).test_client().get("/?tab=sledovani&profile=kombi").get_data(as_text=True)
     assert "Kombi tikety" in html and "1 Arsenal - Chelsea" in html and "Leeds - Fulham" in html
+
+
+def test_same_bet_in_several_combos_counts_once_in_statistics(tmp_path):
+    """23.11.2026: 33 kombi tiketu stalo na 12 sazkach (rohy Werder - HSV v 9 tiketech) -> kazda sazka jen jednou."""
+    from tipsbot.storage import utcnow
+    from tipsbot.web import create_app
+
+    now = utcnow()
+    ko = (now + timedelta(days=1)).isoformat()
+    url = f"sqlite:///{tmp_path / 'k.db'}"
+    with make_session_factory(url)() as s:
+        led = Ledger(s)
+        views = [_view("Arsenal - Chelsea", 1.6, 0.70, ko=ko), _view("Leeds - Fulham", 1.7, 0.66, ko=ko),
+                 _view("Spurs - Wolves", 1.65, 0.68, ko=ko)]
+        combos = combo.best_combos(views, 10000)
+        kombi.record(led, combos, now, {v.name: v.league for v in views})
+        ks = [p for p in paper.load(led) if p.profile == "kombi"]
+        skip = kombi.overlaps(ks)
+        counted = [p for p in ks if p.id not in skip]
+        keys = [kombi._leg_key(x) for p in counted for x in p.legs]
+        assert len(ks) >= 2 and skip and len(keys) == len(set(keys))  # zadna sazka dvakrat
+        assert counted[0] is ks[0]  # doporuceny (prvni) tiket se pocita vzdy
+        assert paper.stats(ks)["open"] == len(counted)
+        s.commit()
+    html = create_app(url).test_client().get("/?tab=sledovani&profile=kombi").get_data(as_text=True)
+    assert "nezapočítán – sázka už je v tiketu" in html
+
+
+def test_overlaps_is_stable_and_ignores_other_profiles():
+    def pk(pid, legs, profile="kombi"):
+        return paper.Pick(id=pid, league="KOMBI", match_id=pid, name=pid, day="2026-11-22", kickoff="2026-11-22T15:00",
+                          market="KOMBI", selection="", odds=2.0, book="", p_model=None, source="model", created="",
+                          profile=profile, legs=[{"name": n, "day": "2026-11-22", "market": "OU_2.5", "selection": "under"}
+                                                 for n in legs])
+
+    a, b, c, d = pk("A", ["X - Y", "Z - W"]), pk("B", ["X - Y", "Q - R"]), pk("C", ["Q - R", "S - T"]), pk("D", ["Q - R"], "tipy")
+    assert kombi.overlaps([a, b, c, d]) == {"B": "A"}  # C se pocita: B nezapocitan, Q - R je volna

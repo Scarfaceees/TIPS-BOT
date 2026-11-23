@@ -10,6 +10,7 @@ Metodika (podrobne na listu Metodika):
 - ROI na 1 j. = zisk v jednotkach / pocet vyhodnocenych sazek s vkladem (vyhry + prohry), kazdy tip 1 j.
 - Skutecne tikety navic: skutecne ROI = zisk v Kc / souctem vkladu v Kc a prumerne ROI na tiket (prumer zisk/vklad).
 - Jeden vyber jednoho zapasu se v ramci profilu pocita jen jednou (opakovane ulozeny tip = duplicita).
+- Kombi tiket, jehoz nektera sazka uz je v drive navrzenem (zapocitanem) kombi tiketu, se nepocita (kombi.overlaps).
 - CLV jen ze skutecne overenych zaviracich kurzu (Profil 4 „závěrečný kurz…“, tikety se zapsanym zaviracim kurzem).
 """
 
@@ -24,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from . import paper
+from . import kombi, paper
 from .storage import BankrollEntry, Ledger, Ticket, utcnow
 
 WIN, LOSS, PUSH, INVALID, PENDING = "výhra", "prohra", "vráceno", "neplatné", "čeká"
@@ -704,9 +705,11 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
     led = Ledger(session)
     names = {p.key: p.name for p in paper.PROFILES}
     recs, legs, seen, dup = [], [], set(), 0
-    for p in paper.load(led):
+    picks = paper.load(led)
+    kombi_skip = kombi.overlaps(picks)
+    for p in picks:
         key = (p.profile, p.match_id, p.market, p.selection)
-        if key in seen:  # stejny vyber stejneho zapasu v jednom profilu = jedna sazka
+        if key in seen or p.id in kombi_skip:  # stejna sazka = jedna (i kombi tiket s uz zapocitanou sazkou)
             dup += 1
             continue
         seen.add(key)

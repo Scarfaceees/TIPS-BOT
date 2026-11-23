@@ -7,6 +7,11 @@ Vraceni vkladu nohy = kurz 1, pul vyhra / pul prohra = polovina (jako u kancelar
 
 Pred vykopem prvni nohy se kurz tiketu aktualizuje podle posledniho navrhu; tiket, ktery bot prestal navrhovat,
 se jen oznaci (vyhodnoti se stejne – statistika nesmi byt vylepsena vynechanim stazenych navrhu).
+
+Statistika (23.11.2026): kazda sazka (zapas + trh + vyber) se pocita jen jednou. Tiket, ktery obsahuje sazku uz
+zapocitanou v drive navrzenem tiketu, se vyhodnoti a zobrazi, ale do statistik se nepocita (`overlaps`) – jinak by
+jedna sazka ve 9 kombinacich vazila devetkrat. Poradi = poradi zapisu (prvni navrh, v kole doporuceny tiket prvni),
+takze pozdejsi navrhy uz zapocitane tikety nemeni.
 """
 
 from __future__ import annotations
@@ -149,6 +154,27 @@ def settle_nhl(ledger, games: list[dict]) -> list[str]:
         return None if out is None else (f"{g['final'][0]}:{g['final'][1]}" + ("" if g["end"] == "REG" else f" ({g['end']})"), out)
 
     return _settle(ledger, grade_leg)
+
+
+def _leg_key(x: dict) -> tuple:
+    return x["name"], x["day"], x["market"], x["selection"]
+
+
+def overlaps(picks) -> dict[str, str]:
+    """{id kombi tiketu: nazev drivejsiho tiketu} pro tikety, jejichz nektera sazka uz je v zapocitanem tiketu."""
+    used: dict[tuple, str] = {}
+    out = {}
+    for p in picks:
+        if p.profile != PROFILE or not p.legs:
+            continue
+        keys = [_leg_key(x) for x in p.legs]
+        hit = next((used[k] for k in keys if k in used), None)
+        if hit is not None:
+            out[p.id] = hit
+            continue
+        for k in keys:
+            used[k] = p.name
+    return out
 
 
 def open_legs(ledger) -> list[dict]:

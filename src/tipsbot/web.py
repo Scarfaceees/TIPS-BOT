@@ -25,7 +25,7 @@ from flask import (Flask, flash, get_flashed_messages, jsonify, redirect, render
                    url_for)
 from sqlalchemy import select
 
-from . import analysis, auto, backtest, combo, czechodds, detail, devig, metrics, paper, profile2, risk, secondopinion
+from . import analysis, auto, backtest, combo, czechodds, detail, devig, kombi, metrics, paper, profile2, risk, secondopinion
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, TicketLeg, Tip, make_session_factory, utcnow
 
@@ -753,7 +753,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <h2>Čeká na výsledek ({{ paper_open|length }})</h2>
 <div class="card sec-warn tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th class="num">Model</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th></th></tr>
 {% macro pname(p) %}{% if p.legs %}{% for x in p.legs %}<div><b>{{ x.label }}</b> – {{ x.name }} @ {{ '%.2f'|format(x.odds) }}{% if x.result %} <span class="res {{ 'won' if x.result in ('won', 'half_won') else 'lost' if x.result in ('lost', 'half_lost') else '' }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(x.result, x.result) }}</span> <span class="muted">{{ x.score }}</span>{% endif %}</div>{% endfor %}{% else %}{{ p.name }}{% endif %}{% endmacro %}
-{% for p in paper_open %}<tr><td>{{ pname(p) }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% for f in p.flags %}<div><span class="badge warn">{{ f }}</span></div>{% endfor %}{% if p.detail %}<details class="fold"><summary>rozbor</summary><div class="muted">{{ p.detail }}</div></details>{% endif %}</td><td><b>{{ p.market|bet(p.selection, p.name) }}</b><div class="muted">{{ p.book }}</div></td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td>
+{% for p in paper_open %}<tr><td>{{ pname(p) }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}{% for f in p.flags %}<div><span class="badge warn">{{ f }}</span></div>{% endfor %}{% if p.detail %}<details class="fold"><summary>rozbor</summary><div class="muted">{{ p.detail }}</div></details>{% endif %}</td><td><b>{{ p.market|bet(p.selection, p.name) }}</b><div class="muted">{{ p.book }}</div></td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td>
 <td class="num" data-l="šance">{{ '%.0f %%'|format(p.p_model * 100) if p.p_model else '–' }}</td><td class="num">{% if p.ev is not none %}<span class="edge {{ 'hi' if p.ev > 0.15 }}">{{ '%+.1f %%'|format(p.ev * 100) }}</span>{% else %}–{% endif %}</td>
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('paper_result', pick_id=p.id) }}" class="row" style="margin:4px 0"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}">
 <select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button class="sm">Zapsat</button></form>
@@ -774,7 +774,7 @@ Trhy: {{ a.markets|join(', ') }}. V pásmu kurzů posouzeno {{ a.checked }} sáz
 {% endif %}
 <details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }})</summary>
 <div class="tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
-{% for p in paper_done %}<tr class="r-{{ p.result }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div></td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
+{% for p in paper_done %}<tr class="r-{{ p.result }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}</td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
 <td class="num {{ 'pos' if p.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p.profit) }}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div></details>
 </div></div>
@@ -1625,7 +1625,8 @@ def create_app(database_url: str | None = None) -> Flask:
         prof = paper.profile(request.values.get("profile"))
         picks = [p for p in all_picks if p.profile == prof.key]
         p2 = profile2.load(led)
-        done_picks = sorted((p for p in picks if p.result is not None), key=lambda p: p.kickoff)
+        kombi_skip = kombi.overlaps(all_picks)
+        done_picks = sorted((p for p in picks if p.result is not None and p.id not in kombi_skip), key=lambda p: p.kickoff)
         settled = list(session.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN).order_by(Ticket.settled_at.desc()).limit(200)))
         s = led.summary()
         s["test_mode"] = led.test_mode()
@@ -1728,6 +1729,7 @@ def create_app(database_url: str | None = None) -> Flask:
             prof_stats={pr.key: paper.stats([p for p in all_picks if p.profile == pr.key]) for pr in paper.PROFILES},
             rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
             prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
+            kombi_skip=kombi_skip,
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),

@@ -110,14 +110,16 @@ def _settle(ledger, grade_leg) -> list[str]:
     picks = paper.load(ledger)
     notes, changed = [], False
     for p in picks:
-        if p.profile != PROFILE or p.result is not None:
+        if p.profile != PROFILE:
             continue
-        for x in p.legs:
+        for x in p.legs:  # i nohy uz prohraneho tiketu: vysledek zapasu se propise, tiket se nemeni
             if x["result"] is None:
                 got = grade_leg(x)
                 if got is not None:
                     x["score"], x["result"] = got
                     changed = True
+        if p.result is not None:
+            continue
         msg = _close(p)
         if msg:
             notes.append(msg)
@@ -178,8 +180,8 @@ def overlaps(picks) -> dict[str, str]:
 
 
 def open_legs(ledger) -> list[dict]:
-    """Nohy otevrenych kombi tiketu bez vysledku (pro stazeni vysledku)."""
-    return [x for p in paper.load(ledger) if p.profile == PROFILE and p.result is None for x in p.legs if x["result"] is None]
+    """Nohy kombi tiketu bez vysledku, i u uz uzavrenych tiketu (pro stazeni vysledku)."""
+    return [x for p in paper.load(ledger) if p.profile == PROFILE for x in p.legs if x["result"] is None]
 
 
 def record_current(ledger, now: datetime) -> int:

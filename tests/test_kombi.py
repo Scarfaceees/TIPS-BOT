@@ -112,3 +112,18 @@ def test_overlaps_is_stable_and_ignores_other_profiles():
 
     a, b, c, d = pk("A", ["X - Y", "Z - W"]), pk("B", ["X - Y", "Q - R"]), pk("C", ["Q - R", "S - T"]), pk("D", ["Q - R"], "tipy")
     assert kombi.overlaps([a, b, c, d]) == {"B": "A"}  # C se pocita: B nezapocitan, Q - R je volna
+
+
+def test_lost_combo_still_gets_results_of_other_legs():
+    """23.11.2026: u prohraneho kombi tiketu se ostatni zapasy nevyhodnotily (⏳ navzdy)."""
+    led = Ledger(make_session_factory("sqlite://")())
+    views = [_view("Arsenal - Chelsea", 1.6, 0.70), _view("Leeds - Fulham", 1.7, 0.66, ko="2026-11-20T19:00:00")]
+    kombi.record(led, combo.best_combos(views, 10000), NOW, {v.name: v.league for v in views})
+    d = date(2026, 11, 20)
+    kombi.settle(led, _results([(d, "Arsenal", "Chelsea", 0, 1)]))
+    (k,) = [p for p in paper.load(led) if p.profile == "kombi"]
+    assert k.result == "lost" and kombi.open_legs(led)
+    kombi.settle(led, _results([(d, "Leeds", "Fulham", 2, 0)]))
+    (k,) = [p for p in paper.load(led) if p.profile == "kombi"]
+    assert [x["result"] for x in k.legs] == ["lost", "won"] and k.result == "lost" and k.profit == -1
+    assert kombi.open_legs(led) == []

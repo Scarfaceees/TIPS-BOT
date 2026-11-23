@@ -480,9 +480,9 @@ class Ledger:
         return list(self.s.scalars(select(TicketLeg).where(TicketLeg.ticket_id == ticket_id).order_by(TicketLeg.id)))
 
     def open_legs(self) -> list[TicketLeg]:
-        """Nevyhodnocene nohy otevrenych tiketu AKU."""
-        return list(self.s.scalars(select(TicketLeg).join(Ticket, Ticket.id == TicketLeg.ticket_id).where(
-            TicketLeg.status == TICKET_OPEN, Ticket.status == TICKET_OPEN).order_by(TicketLeg.match_day)))
+        """Nevyhodnocene nohy tiketu AKU – i uz prohranych tiketu (23.11.2026: vysledek kazdeho zapasu se propise
+        i do prohraneho tiketu; vysledek uzavreneho tiketu se tim nemeni, viz _close_combo)."""
+        return list(self.s.scalars(select(TicketLeg).where(TicketLeg.status == TICKET_OPEN).order_by(TicketLeg.match_day)))
 
     def settle_leg(self, leg_id: int, result: str, score: str = "") -> Ticket | None:
         """Vysledek jedne nohy; kdyz tim je tiket AKU rozhodnuty, vyhodnoti se cely (vraci ho)."""

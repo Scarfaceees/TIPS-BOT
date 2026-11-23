@@ -49,7 +49,11 @@ def test_combo_lost_as_soon_as_one_leg_loses(led):
         _leg("Paris FC - Angers", "OU_2.5", "under", 2.00), _leg("Lorient - Rennes", "OU_3.5", "under", 1.27)])
     settle_open_tickets(led, _df([("Paris FC", "Angers", 2, 1)]))
     assert t.status == "lost" and t.profit_loss == -25 and led.bankroll() == 975
-    assert led.open_legs() == []  # druha noha uz neni potreba
+    # 23.11.2026: druha noha se vyhodnoti i u prohraneho tiketu, tiket ani bankroll se tim nemeni
+    assert [x.match_name for x in led.open_legs()] == ["Lorient - Rennes"]
+    settle_open_tickets(led, _df([("Lorient", "Rennes", 1, 1)]))
+    assert [x.status for x in led.ticket_legs(t.id)] == ["lost", "won"] and led.ticket_legs(t.id)[1].score == "1:1"
+    assert t.status == "lost" and t.profit_loss == -25 and led.bankroll() == 975 and led.open_legs() == []
 
 
 def test_combo_void_and_push_leg(led):

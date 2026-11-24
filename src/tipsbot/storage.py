@@ -123,6 +123,47 @@ class State(Base):
     value: Mapped[str] = mapped_column(String)
 
 
+class P5Candidate(Base):
+    """Profil 5 – Market Value, stinovy rezim (profil5.py). Nova tabulka (Faze 3.2.1), vznika sama pri startu;
+    stavajici tabulky se nemeni. Kandidat se zapise pri prvnim zjisteni a jeho vstupy se uz nemeni – pozdejsi skeny
+    dopisuji jen zaviraci cenu (CLV) a po zapase vysledek. Odmitnute nabidky se zapisuji s duvody (status=rejected)."""
+
+    __tablename__ = "p5_candidates"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    created: Mapped[datetime] = mapped_column(DateTime, index=True)
+    algo: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, index=True)  # candidate | rejected
+    league: Mapped[str] = mapped_column(String, default="")
+    sport: Mapped[str] = mapped_column(String, default="")
+    match_id: Mapped[str] = mapped_column(String, index=True)
+    match: Mapped[str] = mapped_column(String, default="")
+    kickoff: Mapped[datetime] = mapped_column(DateTime, index=True)
+    market: Mapped[str] = mapped_column(String)
+    selection: Mapped[str] = mapped_column(String)
+    book: Mapped[str] = mapped_column(String)
+    odds: Mapped[float] = mapped_column(Float)
+    p_ref: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fair_odds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    edge: Mapped[float | None] = mapped_column(Float, nullable=True)  # EV proti trhu = kurz × p_ref − 1
+    dev_median: Mapped[float | None] = mapped_column(Float, nullable=True)  # kurz / median ostatnich − 1
+    n_ref: Mapped[int] = mapped_column(Integer, default=0)
+    age_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    best_odds: Mapped[float | None] = mapped_column(Float, nullable=True)  # line shopping: nejlepsi kurz trhu
+    best_book: Mapped[str] = mapped_column(String, default="")
+    median_odds: Mapped[float | None] = mapped_column(Float, nullable=True)  # median vsech kancelari
+    data: Mapped[str] = mapped_column(String, default="{}")  # JSON: snapshot, zahrnute/vynechane kancelare, integrita
+    reasons: Mapped[str] = mapped_column(String, default="[]")
+    closing_p: Mapped[float | None] = mapped_column(Float, nullable=True)
+    closing_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    closing_kind: Mapped[str] = mapped_column(String, default="")
+    clv: Mapped[float | None] = mapped_column(Float, nullable=True)
+    result: Mapped[str | None] = mapped_column(String, nullable=True)
+    score: Mapped[str] = mapped_column(String, default="")
+    profit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ArchiveEntry(Base):
     """Trvaly archiv rozboru a skenu (archive.py): jen pridavani, nic se nemaze."""
 

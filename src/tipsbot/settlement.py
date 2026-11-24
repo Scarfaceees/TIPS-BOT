@@ -318,6 +318,16 @@ def fresh_results(ledger, now, get=None) -> tuple[pd.DataFrame, list[str]]:
     return df, notes
 
 
+def settle_p5(ledger, results) -> list[str]:
+    """Stinovy Profil 5 (profil5.py): chyba experimentu nesmi zastavit vyhodnoceni ostatnich profilu."""
+    try:
+        from . import profil5
+
+        return profil5.settle(ledger, results)
+    except Exception as e:  # noqa: BLE001
+        return [f"Profil 5 (shadow): vyhodnocení selhalo ({e})"]
+
+
 def settle_fresh(ledger, now) -> list[str]:
     """Jen cerstve vysledky z API-Football (bez stahovani CSV): automat to vola i kazdych 15 min mezi pruchody.
     Dotaz jde jen, kdyz neco ceka na vysledek (1 pozadavek na den zapasu)."""
@@ -326,6 +336,7 @@ def settle_fresh(ledger, now) -> list[str]:
     fresh, notes = fresh_results(ledger, now)
     if len(fresh):
         notes += settle_open_tickets(ledger, fresh) + paper.settle(ledger, fresh) + kombi.settle(ledger, fresh)
+        notes += settle_p5(ledger, fresh)
     return notes
 
 
@@ -356,6 +367,7 @@ def settle_everything(ledger) -> list[str]:
     except Exception as e:  # noqa: BLE001 - bez nich se vyhodnoti aspon kluby
         print(f"Vysledky reprezentaci nejsou k dispozici: {e}", file=sys.stderr)
     done = notes + settle_open_tickets(ledger, results) + paper.settle(ledger, results) + kombi.settle(ledger, results)
+    done += settle_p5(ledger, results)
     return done if any("->" in n for n in done) else done + [nothing_to_settle(ledger, intl_last)]
 
 
@@ -387,6 +399,7 @@ def settle_with_score(ledger, match_name: str, day: date, hg: int, ag: int) -> l
     pairs = {(home, away), (_en(home), _en(away))}  # tiket muze byt cesky, sledovany vyber anglicky
     df = pd.DataFrame([{"date": day, "home": h, "away": a, "home_goals": hg, "away_goals": ag} for h, a in pairs])
     notes = settle_open_tickets(ledger, df) + paper.settle(ledger, df)
+    settle_p5(ledger, df)  # stinovy Profil 5: vysledek se zapise, do hlaseni se nepocita
     if not notes:
         raise ValueError(f"U zápasu {match_name} ({day:%d.%m.%Y}) není nic otevřeného.")
     return notes

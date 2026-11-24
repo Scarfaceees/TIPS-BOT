@@ -108,10 +108,11 @@ def settle_paper(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
             and now - timedelta(days=10) < _utc(p.kickoff) < now - timedelta(hours=3, minutes=30)]
     legs = [x for x in kombi.open_legs(ledger) if x["league"] == "NHL"
             and now - timedelta(days=10) < _utc(x["kickoff"]) < now - timedelta(hours=3, minutes=30)]
-    if not todo and not legs:
+    p5 = _p5_open_nhl(ledger, now)
+    if not todo and not legs and not p5:
         return []
     # herni den NHL je americke datum: zapas v 01:00 UTC patri k predchozimu dni
-    days = sorted({(_utc(k) - timedelta(hours=d)).date() for k in [p.kickoff for p in todo] + [x["kickoff"] for x in legs]
+    days = sorted({(_utc(k) - timedelta(hours=d)).date() for k in [p.kickoff for p in todo] + [x["kickoff"] for x in legs] + p5
                    for d in (0, 12)})
     games, notes = [], []
     for d in days:
@@ -132,7 +133,28 @@ def settle_paper(ledger, now: datetime, fetch=fetch_scores) -> list[str]:
         notes.append(f"Sledovaný výběr NHL {p.name} {p.score}: {p.market} {p.selection} @ {p.odds:.2f} -> {res}")
     if any(p.result is not None for p in todo):
         paper.save(ledger, picks)
+    if p5:
+        try:  # stinovy Profil 5: vysledek se zapise, do hlaseni se nepocita
+            from . import profil5
+
+            profil5.settle_nhl(ledger, games, find_game, grade)
+        except Exception as e:  # noqa: BLE001
+            notes.append(f"Profil 5 (shadow) NHL: vyhodnocení selhalo ({e})")
     return notes + (kombi.settle_nhl(ledger, games) if legs else [])
+
+
+def _p5_open_nhl(ledger, now: datetime) -> list[str]:
+    """Vykopy otevrenych NHL kandidatu Profilu 5 (stejne okno jako sledovane vybery)."""
+    try:
+        from sqlalchemy import select
+
+        from .storage import P5Candidate
+
+        q = select(P5Candidate.kickoff).where(P5Candidate.result.is_(None), P5Candidate.sport == "NHL")
+        return [k.isoformat() for k in ledger.s.scalars(q)
+                if now - timedelta(days=10) < k < now - timedelta(hours=3, minutes=30)]
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def is_nhl_match(name: str) -> bool:

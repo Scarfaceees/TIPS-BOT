@@ -480,6 +480,10 @@ def bet_stats(rows: list[dict], bankroll_units: float = 100.0) -> dict:
             "significant": status.startswith("průkazně")}
 
 
+def sport_of(league: str | None) -> str:
+    return "NHL" if "NHL" in (league or "").upper() else "fotbal"
+
+
 def evaluate(store: Store) -> dict:
     out: dict = {"models": {}, "groups": {}}
     fc = store.query("SELECT * FROM forecasts WHERE result IN ('1','X','2')")
@@ -497,7 +501,10 @@ def evaluate(store: Store) -> dict:
             "kurzové pásmo": lambda r: odds_band(r["odds"]),
             "kategorie": lambda r: (r["category"] or "bez kategorie").split(" · ")[0],
             "kancelář": lambda r: r["bookmaker"], "rozhodnutí": lambda r: r["decision"],
-            "měsíc": lambda r: (r["kickoff"] or "")[:7], "verze": lambda r: f"{r['model_version']}/{r['config_hash']}"}
+            "měsíc": lambda r: (r["kickoff"] or "")[:7], "verze": lambda r: f"{r['model_version']}/{r['config_hash']}",
+            # Faze 3.2.1: fotbal a NHL zvlast, i v kazdem rozhodnuti (celek nesmi zakryt rozdil sportu)
+            "sport": lambda r: sport_of(r.get("league")),
+            "sport · rozhodnutí": lambda r: f"{sport_of(r.get('league'))} · {r['decision']}"}
     for gname, fn in keys.items():
         groups: dict[str, list] = defaultdict(list)
         for r in tips:

@@ -33,16 +33,73 @@ def _naive(ko: str) -> datetime:
     return d.replace(tzinfo=None) if d.tzinfo else d
 
 
-def _legs(c) -> list[dict]:
+SRC_TARGET = "cíl – minimální kurz (neověřeno u kanceláře)"
+SRC_API = "kurzové API – nejvyšší nabídka při návrhu"
+VERIFIED, CHANGED, HYPO, IMPOSSIBLE = ("ověřené ceny", "ověřené ceny – kurz se změnil", "hypotetický (cílový kurz)",
+                                       "nelze sestavit za uvedený kurz")
+
+
+def _legs(c, now: datetime | None = None) -> list[dict]:
+    """Nohy tiketu. Od Faze 3.2.1 i evidence ceny: cilovy kurz (hypoteticky), skutecne nabizeny kurz z kurzu
+    kancelari v dobe navrhu, kancelar, cas overeni a zdroj ceny. Konstrukce tiketu se nemeni."""
     out = []
     for lg in c.legs:
         r = lg.row
         ko = _naive(lg.kickoff)
+        target = r.best_book.startswith("cíl")
+        offers = [(str(b), float(o)) for b, o in (r.offers or []) if o]
+        real = max(offers, key=lambda x: x[1]) if offers else None
         out.append({"name": lg.match, "league": "", "kickoff": ko.isoformat(),
                     "day": ko.date().isoformat(), "market": r.market, "selection": r.selection, "label": r.label,
                     "odds": round(r.best_odds, 2), "book": r.best_book, "p": round(r.p_final, 4),
-                    "target": r.best_book.startswith("cíl"), "result": None, "score": ""})
+                    "target": target, "result": None, "score": "",
+                    "target_odds": round(r.best_odds, 2) if target else None,
+                    "verified_odds": round(real[1], 2) if real else None, "verified_book": real[0] if real else "",
+                    "verified_at": now.isoformat(timespec="minutes") if now and real else "",
+                    "available": (real[1] >= r.best_odds - 1e-9) if real else (False if target else None),
+                    "price_source": SRC_TARGET if target else SRC_API})
     return sorted(out, key=lambda x: (x["kickoff"], x["name"]))
+
+
+def leg_price(x: dict) -> str:
+    """Stav ceny nohy. Starsi nohy (pred Fazi 3.2.1) nemaji overeni: necilova noha = kurz kancelare z kurzoveho API
+    v dobe navrhu, cilova = jen minimalni kurz."""
+    if x.get("target"):
+        if x.get("verified_odds") is not None and x["verified_odds"] >= x["odds"] - 1e-9:
+            return VERIFIED
+        return IMPOSSIBLE if x.get("verified_odds") is not None else HYPO
+    if x.get("available") is False:
+        return IMPOSSIBLE
+    return CHANGED if x.get("first_odds") not in (None, x["odds"]) else VERIFIED
+
+
+def price_class(p) -> str | None:
+    """Trida tiketu podle cen nohou: hypoteticky > nelze sestavit > zmena kurzu > overene ceny."""
+    if not p.legs:
+        return None
+    states = {leg_price(x) for x in p.legs}
+    for st in (HYPO, IMPOSSIBLE, CHANGED):
+        if st in states:
+            return st
+    return VERIFIED
+
+
+def verification(picks) -> dict:
+    """Statistika kombi tiketu oddelene podle overeni cen (zapocitane tikety, kazda sazka jednou).
+    Hypoteticke a overene vysledky se NIKDY nescitaji do jednoho ROI."""
+    mine = paper.counted([p for p in picks if p.profile == PROFILE])
+    out = {"all": paper.stats(mine), "classes": {}, "tickets": len(mine)}
+    for cls in (VERIFIED, CHANGED, IMPOSSIBLE, HYPO):
+        out["classes"][cls] = paper.stats([p for p in mine if price_class(p) == cls])
+    real = [p for p in mine if price_class(p) in (VERIFIED, CHANGED)]
+    out["verified"] = paper.stats(real)
+    out["hypothetical"] = paper.stats([p for p in mine if price_class(p) in (HYPO, IMPOSSIBLE)])
+    out["fully_verified"] = len(real)
+    out["with_unverified_leg"] = len(mine) - len(real)
+    legs = [_leg_key(x) for p in mine for x in p.legs]
+    out["legs"], out["unique_legs"] = len(legs), len(set(legs))
+    out["unique_matches"] = len({(x["name"], x["day"]) for p in mine for x in p.legs})
+    return out
 
 
 def _id(legs: list[dict]) -> str:
@@ -60,7 +117,7 @@ def record(ledger, combos, now: datetime, leagues: dict[str, str] | None = None)
     mine = {p.id: p for p in picks if p.profile == PROFILE}
     seen, n = set(), 0
     for rank, c in enumerate(combos):
-        legs = _legs(c)
+        legs = _legs(c, now)
         for x in legs:
             x["league"] = x["league"] or (leagues or {}).get(x["name"], "")
         pid = _id(legs)
@@ -72,9 +129,14 @@ def record(ledger, combos, now: datetime, leagues: dict[str, str] | None = None)
         old = mine.get(pid)
         if old is not None:
             if old.result is None:
+                prev = {_leg_key(x): x for x in old.legs}
+                for x in legs:  # prvni kurz nohy zustava (zmena kurzu pred vykopem = jina cena nez pri navrhu)
+                    x["first_odds"] = prev.get(_leg_key(x), {}).get("first_odds", prev.get(_leg_key(x), {}).get("odds", x["odds"]))
                 old.legs, old.odds, old.p_model, old.detail = legs, round(c.odds, 2), round(c.prob, 4), _detail(legs)
                 old.flags = sorted(set(flags) | ({"doporučený tiket (nejlepší)"} & set(old.flags)))
             continue
+        for x in legs:
+            x["first_odds"] = x["odds"]
         picks.append(paper.Pick(
             id=pid, league=MARKET, match_id=pid, name=" + ".join(x["name"] for x in legs), day=legs[0]["day"],
             kickoff=first, market=MARKET, selection=f"{len(legs)} sázky", odds=round(c.odds, 2), book="kombinace",

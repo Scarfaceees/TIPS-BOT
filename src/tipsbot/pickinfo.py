@@ -81,6 +81,52 @@ def build(market: str, selection: str, odds: float, book: str, p: float | None, 
     return [{"title": prefix + s["title"], "lines": list(s["lines"])} for s in secs]
 
 
+def _pc(x) -> str:
+    return "–" if x is None else f"{x * 100:.0f} %"
+
+
+def extra(p) -> list[dict]:
+    """Sekce z ulozenych dat vyberu (Faze 3.2.1): spolecna kontrola kurzu, scenare Profilu 2, mereni Profilu 3."""
+    out = []
+    it = getattr(p, "integrity", None) or {}
+    if it:
+        lines = [f"Stav: {it.get('status')} (kontrola {it.get('version', '')} {it.get('t', '')}, výběr nemění)."]
+        lines.append(f"Platnost trhu: {it.get('validity', '–')} · čerstvost: {it.get('freshness', '–')}"
+                     + (f" ({it['age_min']} min)" if it.get("age_min") is not None else "")
+                     + f" · protistrana: {it.get('counterside', '–')} · dostupnost: {it.get('availability', '–')}"
+                     + f" · potvrzení: {it.get('confirmation', '–')}.")
+        if it.get("ref_fair"):
+            lines.append(f"Férový kurz z {it.get('ref_n')} nezávislých kanceláří bez hodnocené: {it['ref_fair']:.2f}"
+                         + (f", EV proti trhu {it['edge'] * 100:+.1f} %" if it.get("edge") is not None else "")
+                         + (f", odchylka od mediánu {it['dev_median'] * 100:+.1f} %" if it.get("dev_median") is not None else "") + ".")
+        lines += list(it.get("reasons") or [])
+        out.append({"title": "Kontrola kurzu (společná pro všechny profily)", "lines": lines})
+    meta = getattr(p, "meta", None) or {}
+    if meta.get("p2"):
+        m = meta["p2"]
+        lines = [f"{m.get('title', '')}: doporučeno, protože EV je kladné ve scénáři modelu i kompromisu (rozhodují A a B, "
+                 f"C trh je jen kontrola). Simulace {m.get('sims')}× (seed {m.get('seed')}) jen pro zobrazení – šance a EV "
+                 "jsou přesné ze skórové matice."]
+        for s in m.get("scenarios", []):
+            sp = s.get("split", {})
+            rng = s.get("p_range") or []
+            lines.append(f"{s['name']} ({s['lam_h']:.2f}:{s['lam_a']:.2f}{'' if s.get('decides') else ', jen kontrola'}): "
+                         f"EV {s['ev'] * 100:+.1f} % · výhra {_pc(sp.get('win'))}, půl výhra {_pc(sp.get('half_win'))}, "
+                         f"vráceno {_pc(sp.get('push'))}, půl prohra {_pc(sp.get('half_loss'))}, prohra {_pc(sp.get('loss'))}"
+                         + (f" · šance na výhru při chybě odhadu gólů {_pc(rng[0])}–{_pc(rng[1])}" if len(rng) == 2 else ""))
+        out.append({"title": "Profil 2 – scénáře", "lines": lines})
+    if meta.get("p3_lobo"):
+        lb = meta["p3_lobo"]
+        lines = [f"EV podle Profilu 3 (scénář trh, góly fitované i z tohoto kurzu): {lb['ev_own'] * 100:+.1f} %."]
+        if lb.get("status") == "OK" and lb.get("ev_lobo") is not None:
+            lines.append(f"Bez hodnoceného trhu (góly z {lb.get('fit_markets')} jiných trhů, {lb['lam']:.2f}:{lb['mu']:.2f}): "
+                         f"EV {lb['ev_lobo'] * 100:+.1f} % – jen paralelní měření kruhovosti, výběr se nemění.")
+        else:
+            lines.append(f"Měření bez hodnoceného trhu: NEOVĚŘENO ({lb.get('why', '')}).")
+        out.append({"title": "Profil 3 – nezávislost tržního odhadu (LOBO)", "lines": lines})
+    return out
+
+
 def enrich(ledger, views: list, now: datetime, only_missing: bool = False) -> int:
     """Doplni / obnovi rozbor vyberu ze Sledovani z rozboru zapasu `views`. Po vykopu se rozbor nemeni
     (jen chybejici se doplni). Vraci pocet zmenenych vyberu."""

@@ -163,6 +163,7 @@ class SimPick:
     loss: float
     detail: str
     flags: list[str]
+    scen: dict | None = None  # Faze 3.2.1: EV a sance kazdeho scenare, vahy, λ, simulace (uklada se k vyberu)
 
     @property
     def p_equiv(self) -> float:
@@ -222,7 +223,14 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
                                                      else f"žádný z {info['checked']} kurzů v pásmu {cfg.min_odds:.2f}–{cfg.max_odds:.2f} nesplnil pravidla"))
         return None, info
     pick = best[1]
-    evs = {k: evaluate(pick.market, pick.selection, pick.odds, m)["ev"] for k, m in sc.items()}
+    full = {k: evaluate(pick.market, pick.selection, pick.odds, m) for k, m in sc.items()}
+    evs = {k: v["ev"] for k, v in full.items()}
+    lams = scenarios(lam, mu, model, cfg)
+    pick.scen = {"lam": round(lam, 3), "mu": round(mu, 3), "fit_err": round(err, 4), "fit_markets": n_mk,
+                 "weights": dict(cfg.weights), "sims": cfg.sims, "seed": zlib.crc32(match_id.encode()),
+                 "scenarios": {k: {"lam": round(lams[k][0], 3), "mu": round(lams[k][1], 3),
+                                   **{x: round(v[x], 4) for x in ("ev", "win", "push", "loss")}} for k, v in full.items()},
+                 "score": round(pick.score, 4), "worst_ev": round(pick.worst_ev, 4)}
     pick.detail = (
         f"Trh čeká {lam:.2f} : {mu:.2f} gólu ({n_mk} trhů). Simulace {cfg.sims}×: "
         + ", ".join(f"{s_} {p * 100:.0f} %" for s_, p in info["top"])
@@ -238,6 +246,45 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
         pick.flags.append("kurzy kanceláří si odporují, ověř zadání")
     info["verdict"] = f"sázka {pick.market} {pick.selection} @ {pick.odds:.2f}" + (f" ({', '.join(pick.flags)})" if pick.flags else "")
     return pick, info
+
+
+def lobo_market(match_id: str, model: dict | None, entries: list, pick: SimPick, cfg: SimConfig = DEFAULT) -> dict:
+    """Experiment Faze 3.2.1 (jen paralelni mereni, vyber Profilu 3 se nemeni): ocekavane goly se fitujou BEZ trhu
+    hodnoceneho vyberu (jeho vlastni kurz tedy referenci neovlivni) a EV vyberu se prepocita proti tomuto
+    nezavislemu odhadu. Kdyz je `ev_lobo` systematicky nizsi nez `ev_own`, kladne EV scenare „trh“ vznikalo jen
+    z toho, ze se kurz porovnaval sam se sebou (kruhovost)."""
+    rest = [e for e in entries if e.market != pick.market]
+    prior = None
+    if model and model.get("lambda_home") and model.get("lambda_away"):
+        prior = (float(model["lambda_home"]), float(model["lambda_away"]))
+    fit = fit_lambdas(rest, prior, cfg) if rest else None
+    out = {"ev_own": round(pick.ev, 4), "markets_used": sorted({e.market for e in rest})}
+    if fit is None or fit[3] < 2:
+        return {**out, "status": "NEOVĚŘENO", "why": "bez hodnoceného trhu nezbývají aspoň 2 trhy pro odhad gólů"}
+    lam, mu, err, n_mk = fit
+    ev = evaluate(pick.market, pick.selection, pick.odds, score_matrix(lam, mu, RHO, MAX_GOALS))
+    return {**out, "status": "OK", "lam": round(lam, 3), "mu": round(mu, 3), "fit_err": round(err, 4),
+            "fit_markets": n_mk, "ev_lobo": round(ev["ev"], 4) if ev else None,
+            "loss_lobo": round(ev["loss"], 4) if ev else None}
+
+
+def sim_stability(lam: float, mu: float, ns: tuple[int, ...] = (1000, 10000), seeds: int = 30) -> list[dict]:
+    """Numericka stabilita simulace: rozptyl podilu nejcastejsiho skore mezi seedy pro ruzny pocet simulaci.
+    Sance a EV Profilu 3 se pocitaji presne ze skorove matice – simulace ovlivnuje jen zobrazene nejcastejsi
+    vysledky, ne vyber ani poradi kandidatu."""
+    m = score_matrix(lam, mu, RHO, MAX_GOALS)
+    i, j = np.unravel_index(int(np.argmax(m)), m.shape)
+    exact = float(m[i, j] / m.sum())
+    out = []
+    for n in ns:
+        shares = []
+        for s in range(seeds):
+            top = dict(simulate(lam, mu, n, s))
+            shares.append(top.get(f"{i}:{j}", 0.0))
+        shares = np.array(shares)
+        out.append({"sims": n, "score": f"{i}:{j}", "exact": round(exact, 4), "mean": round(float(shares.mean()), 4),
+                    "sd": round(float(shares.std(ddof=1)), 4), "max_err": round(float(np.abs(shares - exact).max()), 4)})
+    return out
 
 
 def best_pick(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> SimPick | None:

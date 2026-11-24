@@ -71,6 +71,8 @@ class Rec:
     model: str = ""
     id: str = ""
     code: str = ""  # interni kod vyberu (home/away/over/1/X/2…) – pro kontrolu protichudnych vyberu
+    integrity: str = ""  # stav spolecne Market Integrity (Sledovani, od Faze 3.2.1); "" = bez kontroly
+    method: str = ""  # metodika (rohy/karty: "jen model" / "25/75")
 
     @property
     def outcome(self) -> str:
@@ -101,6 +103,9 @@ class Data:
     notes: list[str] = field(default_factory=list)
     perf: dict | None = None  # Faze 3.2: Predictive Performance Profilu 4 (jen cteni)
     ticket_kinds: dict = field(default_factory=dict)  # id zaznamu tiketu -> AKU / z tipu bota / rucne zadany
+    picks: list = field(default_factory=list)  # Sledovani (paper.Pick) – pro listy Faze 3.2.1
+    p5: dict | None = None  # Profil 5 – report (profil5.report)
+    p5_cands: list = field(default_factory=list)  # Profil 5 – kandidati i odmitnute nabidky
 
 
 def _sport(league: str) -> str:
@@ -407,6 +412,210 @@ def _intel_sheets(d, sheet, table, chart, F, FB) -> None:
                     [[k, v, v / len(pend)] for k, v in sorted(cnt.items(), key=lambda kv: -kv[1])], {3: PCT}, filt=False)
 
 
+def _note(ws, row: int, text: str, F) -> None:
+    from openpyxl.styles import Alignment
+
+    c = ws.cell(row, 1, text)
+    c.font, c.alignment = F, Alignment(wrap_text=False)
+
+
+def _phase321_sheets(d, sheet, table, F, FB) -> None:
+    """Faze 3.2.1 – nove listy. Prazdna hodnota zustava prazdna (nikdy se neprevadi na 0)."""
+    import json as _json
+
+    from . import kombi, marketsim, strategy
+
+    YF, CIF = "+0.0%;-0.0%;0.0%", "+0.0%;-0.0%;0.0%"
+    ci = lambda r: (r["yield_ci"][0], r["yield_ci"][1]) if r.get("yield_ci") else (None, None)  # noqa: E731
+
+    # Strategy Comparison
+    ws = sheet("Strategy Comparison")
+    _note(ws, 5, "Každý profil celkem a zvlášť fotbal / NHL. Yield = zisk / sázky s výsledkem výhra nebo prohra; interval "
+                 "a spolehlivost z bootstrapu po zápasech (pod 30 zápasy MÁLO DAT). Jednotky a Kč se nesčítají. Historické "
+                 "výsledky papírových strategií nejsou důkazem dlouhodobé výnosnosti.", F)
+    rows = strategy.comparison(d)
+    table(ws, 7, ["Strategie", "Sport", "Typ", "Výběrů", "Nezávislých zápasů", "Vyhodnoceno", "Výhry", "Prohry",
+                  "Vráceno (PUSH)", "Neplatné", "Yield", "Yield 95% od", "Yield 95% do", "Spolehlivost", "Win rate",
+                  "Zisk (j.)", "Brier", "Log Loss", "Predikcí (Brier)", "CLV (ověřené)", "CLV (n)", "Kontrola kurzů",
+                  "Metodika"],
+          [[r["group"], r["sport"], r["kind"], r["picks"], r["matches"], r["settled"], r["wins"], r["losses"], r["push"],
+            r["invalid"], r["yield"], *ci(r), r["reliability"], r["hit"], r["profit"], r["brier"], r["logloss"],
+            r["calib_n"], r["clv"], r["clv_n"], r["integrity"], r["method"]] for r in rows],
+          {11: YF, 12: CIF, 13: CIF, 15: "0.0%", 16: "+0.00;-0.00;0.00", 17: "0.0000", 18: "0.0000", 20: YF},
+          [34, 9, 20, 7, 9, 9, 6, 6, 8, 8, 8, 9, 9, 26, 8, 8, 8, 8, 8, 9, 6, 26, 70])
+    if d.p5 is not None:
+        top = 9 + len(rows)
+        ws.cell(top, 1, "Profil 5 proti ostatním – jen stejné zápasy (párování podle data a názvů týmů, přibližné)").font = FB
+        vs = strategy.p5_versus(d, [c for c in d.p5_cands if c.status == "candidate"])
+        table(ws, top + 1, ["Strategie", "Společných zápasů", "Stejný trh a výběr", "Yield strategie (tyto zápasy)",
+                            "CLV strategie", "Yield Profilu 5 (tyto zápasy)", "CLV Profilu 5 (poslední pozorovaný)",
+                            "Ø EV Profilu 5 proti trhu"],
+              [[v["group"], v["common_matches"], v["same_market"], v["other_yield"], v["other_clv"], v["p5_yield"],
+                v["p5_clv"], v["p5_avg_edge"]] for v in vs], {4: YF, 5: YF, 6: YF, 7: YF, 8: YF}, filt=False)
+
+    # Market Integrity – All Profiles
+    ws = sheet("Market Integrity – All Profiles")
+    picks = [p for p in d.picks if not p.legs]
+    checked = [p for p in picks if p.integrity]
+    bad = strategy.integrity_consistency(picks)
+    _note(ws, 5, f"Společná kontrola kurzu (marketcheck {MC_VERSION()}, prahy Profilu 4). Zkontrolováno {len(checked)} z "
+                 f"{len(picks)} výběrů; starší výběry jsou bez kontroly (NEOVĚŘENO, nic se zpětně nedopočítává). "
+                 f"Neshody stejné nabídky mezi profily: {len(bad)}. Kontrola nemění výběr, EV ani výsledky.", F)
+    from collections import Counter as _C
+
+    summ = _C((strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks)
+    end = table(ws, 7, ["Profil", "Stav kontroly", "Výběrů"], [[a, b, n] for (a, b), n in sorted(summ.items())],
+                widths=[30, 22, 8], filt=False)
+    it_rows = []
+    for p in sorted(checked, key=lambda p: p.kickoff, reverse=True):
+        it = p.integrity
+        it_rows.append([strategy_name(p), p.name, p.kickoff[:16].replace("T", " "), p.market, p.selection, p.book, p.odds,
+                        it.get("status"), it.get("validity"), it.get("freshness"), it.get("age_min"), it.get("counterside"),
+                        it.get("availability"), it.get("confirmation"), it.get("reference"), it.get("ref_n"),
+                        it.get("ref_fair"), it.get("edge"), it.get("dev_median"), "; ".join(it.get("reasons") or [])])
+    table(ws, end + 3, ["Profil", "Zápas", "Výkop (UTC)", "Trh", "Výběr", "Kancelář", "Kurz", "Stav", "Platnost",
+                        "Čerstvost", "Stáří (min)", "Protistrana", "Dostupnost", "Potvrzení", "Reference",
+                        "Nezávislých kanceláří", "Férový kurz (bez hodnocené)", "EV proti trhu", "Odchylka od mediánu",
+                        "Důvody"], it_rows, {7: "0.00", 17: "0.00", 18: YF, 19: YF},
+          [24, 34, 16, 10, 8, 18, 6, 18, 10, 10, 8, 10, 10, 12, 10, 8, 9, 9, 9, 60])
+
+    # Profile 5 Market Value
+    ws = sheet("Profile 5 Market Value")
+    rep = d.p5 or {}
+    allc = d.p5_cands
+    _note(ws, 5, "SHADOW MODE – experiment: žádné tipy, vklady ani vliv na jiné profily. Referenční pravděpodobnost = medián "
+                 "de-vig (mocninná metoda) nezávislých skupin kanceláří BEZ hodnocené kanceláře a její skupiny; minimálně "
+                 f"{_p5cfg().min_ref_books} skupiny; EV proti trhu ≥ {_p5cfg().min_edge:.0%}; kandidát musí projít kontrolou kurzu.", F)
+    info = [("Algoritmus", rep.get("algo")), ("Kandidátů", rep.get("candidates")), ("Odmítnutých nabídek", rep.get("rejected"))]
+    info += [(f"Důvod odmítnutí: {k}", v) for k, v in (rep.get("reasons") or {}).items()]
+    end = table(ws, 7, ["Položka", "Hodnota"], [list(x) for x in info], widths=[50, 14], filt=False)
+    ctab = []
+    for c in allc:
+        dd = _json.loads(c.data or "{}")
+        ctab.append([c.id, c.status, c.created.strftime("%Y-%m-%d %H:%M"), c.algo, c.sport, c.league, c.match,
+                     c.kickoff.strftime("%Y-%m-%d %H:%M"), c.market, c.selection, c.book, c.odds, c.p_ref, c.fair_odds,
+                     c.edge, c.dev_median, c.n_ref, ", ".join(dd.get("included", [])),
+                     "; ".join(f"{b}: {w}" for b, w in (dd.get("excluded") or {}).items()), c.age_min,
+                     (dd.get("integrity") or {}).get("status"), "; ".join(_json.loads(c.reasons or "[]")),
+                     c.closing_kind or None, c.clv, RESULT_CZ.get(c.result, c.result), c.score or None, c.profit])
+    table(ws, end + 3, ["ID", "Stav", "Vypočteno (UTC)", "Verze", "Sport", "Soutěž", "Zápas", "Výkop (UTC)", "Trh", "Výběr",
+                        "Kancelář", "Kurz", "P trhu (bez marže)", "Férový kurz", "EV proti trhu", "Odchylka od mediánu",
+                        "Nezávislých skupin", "Zahrnuté kanceláře", "Vynechané kanceláře (důvod)", "Stáří kurzu (min)",
+                        "Kontrola kurzu", "Důvody odmítnutí", "Závěrečná cena", "CLV", "Výsledek", "Skóre", "Zisk (j.)"],
+          ctab, {12: "0.00", 13: "0.0%", 14: "0.00", 15: YF, 16: YF, 24: YF, 27: "+0.00;-0.00;0.00"},
+          [16, 10, 16, 8, 7, 8, 32, 16, 9, 7, 14, 6, 8, 8, 8, 8, 8, 40, 50, 8, 14, 50, 18, 8, 10, 8, 8])
+
+    # Profile 5 Line Shopping
+    ws = sheet("Profile 5 Line Shopping")
+    ls = rep.get("line_shopping") or {}
+    _note(ws, 5, "Line Shopping se měří ZVLÁŠŤ od Market Value: stejné výběry Profilu 5 za kurz hodnocené kanceláře, za medián "
+                 "všech kanceláří a za nejlepší kurz trhu. Výhody se nesčítají – rozdíl řádků ukazuje, kolik dělá výběr kanceláře.", F)
+    srows = []
+    for lab, key in (("za kurz hodnocené kanceláře (Market Value)", "at_book"), ("za medián kanceláří", "at_median"),
+                     ("za nejlepší kurz trhu (Line Shopping)", "at_best")):
+        pf = ls.get(key) or {}
+        srows.append([lab, pf.get("staked"), pf.get("matches"), pf.get("profit"), pf.get("yield")])
+    end = table(ws, 7, ["Cena", "Sázek s výsledkem", "Zápasů", "Zisk (j.)", "Yield"], srows, {4: "+0.00;-0.00;0.00", 5: YF},
+                [44, 10, 8, 9, 9], False)
+    ws.cell(end + 1, 1, f"Průměrný rozdíl nejlepší kurz / medián: "
+                        f"{'' if ls.get('avg_gain') is None else f'{ls['avg_gain'] * 100:+.1f} %'}").font = F
+    table(ws, end + 3, ["Zápas", "Trh", "Výběr", "Kancelář", "Kurz kanceláře", "Medián kanceláří", "Nejlepší kurz",
+                        "Nejlepší kancelář", "Nejlepší / medián", "Výsledek"],
+          [[c.match, c.market, c.selection, c.book, c.odds, c.median_odds, c.best_odds, c.best_book,
+            (c.best_odds / c.median_odds - 1) if c.best_odds and c.median_odds else None, RESULT_CZ.get(c.result, c.result)]
+           for c in allc if c.status == "candidate"], {5: "0.00", 6: "0.00", 7: "0.00", 9: YF}, [32, 9, 7, 14, 8, 8, 8, 14, 9, 10])
+
+    # Corners / Cards Performance
+    for title, grp in (("Corners Performance", "Rohy"), ("Cards Performance", "Karty")):
+        ws = sheet(title)
+        recs = [r for r in d.records if r.group == grp]
+        _note(ws, 5, f"{grp}: samostatná strategie (stínový režim, 1 j.). Metodika „jen model“ (do 21.11.2026 22:09 UTC) a "
+                     "„25/75“ (25 % model + 75 % trh) zvlášť – stará metodika se do nové nepočítá. Malý vzorek = jen orientace.", F)
+        prow = [strategy.row(f"{grp} – celkem", "celkem", recs)] if recs else []
+        for m in ("jen model", "25/75"):
+            sub = [r for r in recs if r.method == m]
+            if sub:
+                prow.append(strategy.row(f"{grp} – {m}", "celkem", sub))
+        end = table(ws, 7, ["Strategie", "Výběrů", "Nezávislých zápasů", "Výhry", "Prohry", "Vráceno", "Yield", "95% od",
+                            "95% do", "Spolehlivost", "Brier", "Log Loss", "CLV", "Kontrola kurzů"],
+                    [[r["group"], r["picks"], r["matches"], r["wins"], r["losses"], r["push"], r["yield"], *ci(r),
+                      r["reliability"], r["brier"], r["logloss"], r["clv"], r["integrity"]] for r in prow],
+                    {7: YF, 8: YF, 9: YF, 11: "0.0000", 12: "0.0000", 13: YF}, [26, 7, 9, 6, 6, 7, 8, 8, 8, 24, 8, 8, 8, 24], False)
+        if not recs:
+            ws.cell(end + 1, 1, "Zatím žádné výběry.").font = F
+        table(ws, end + 3, ["Zápas", "Výkop", "Trh", "Výběr", "Kurz", "Šance", "Metodika", "Výsledek", "Skóre", "Zisk (j.)"],
+              [[r.match, r.kickoff[:16].replace("T", " "), r.market, r.selection, r.odds, r.p, r.method,
+                RESULT_CZ.get(r.result, r.result), r.score, r.profit_units] for r in recs],
+              {5: "0.00", 6: "0.0%", 10: "+0.00;-0.00;0.00"}, [34, 16, 10, 7, 6, 7, 10, 10, 18, 8])
+
+    # Combo Odds Verification
+    ws = sheet("Combo Odds Verification")
+    v = kombi.verification(d.picks)
+    _note(ws, 5, "Cílová noha = jen minimální kurz („ověř u kanceláře“), ne nabídka kanceláře. Hypotetické a ověřené výsledky se "
+                 "nesčítají. Započítané tikety (každá sázka jednou); stejné nohy a zápasy se v tiketech opakují.", F)
+    srows = [["všechny započítané tikety (hypotetické ROI)", v["tickets"], v["all"]["settled"], v["all"]["profit"], v["all"]["roi"]]]
+    for cls, st in v["classes"].items():
+        srows.append([cls, st["open"] + st["settled"], st["settled"], st["profit"] if st["settled"] else None, st["roi"]])
+    srows.append(["ROI jen z tiketů s ověřenými cenami", v["fully_verified"], v["verified"]["settled"],
+                  v["verified"]["profit"] if v["verified"]["settled"] else None, v["verified"]["roi"]])
+    end = table(ws, 7, ["Skupina", "Tiketů", "Vyhodnoceno", "Zisk (j.)", "ROI na 1 j."], srows,
+                {4: "+0.00;-0.00;0.00", 5: YF}, [44, 8, 10, 9, 10], False)
+    ws.cell(end + 1, 1, f"Tiketů s alespoň jednou neověřenou nohou: {v['with_unverified_leg']}; plně ověřených: "
+                        f"{v['fully_verified']}; nohou {v['legs']}, z toho unikátních {v['unique_legs']}, "
+                        f"unikátních zápasů {v['unique_matches']}.").font = F
+    lrows = []
+    for p in d.picks:
+        if p.profile != kombi.PROFILE:
+            continue
+        for x in p.legs:
+            lrows.append([p.name, x["name"], x["label"], x["odds"], x.get("target_odds"), x.get("verified_odds"),
+                          x.get("verified_book") or None, x.get("verified_at") or None,
+                          {True: "ano", False: "ne"}.get(x.get("available")), x.get("price_source") or
+                          (kombi.SRC_TARGET if x.get("target") else kombi.SRC_API + " (starší záznam)"),
+                          kombi.leg_price(x), kombi.price_class(p), RESULT_CZ.get(x["result"], x["result"])])
+    table(ws, end + 3, ["Tiket", "Noha", "Volba", "Kurz v tiketu", "Cílový kurz", "Ověřený kurz", "Kancelář", "Čas ověření",
+                        "Dostupný", "Zdroj ceny", "Stav ceny nohy", "Třída tiketu", "Výsledek nohy"], lrows,
+          {4: "0.00", 5: "0.00", 6: "0.00"}, [44, 30, 26, 8, 8, 8, 14, 16, 8, 36, 24, 24, 10])
+
+    # Profile 3 LOBO + stabilita simulace
+    ws = sheet("Profile 3 LOBO")
+    _note(ws, 5, "Paralelní měření (výběr Profilu 3 se nemění): EV výběru podle Profilu 3 (scénář trh, góly fitované i z "
+                 "hodnoceného kurzu) proti EV z gólů fitovaných BEZ hodnoceného trhu a proti férové ceně kanceláří bez "
+                 "hodnocené kanceláře. Starší výběry (před 24.11.2026) měření nemají.", F)
+    p3 = [p for p in d.picks if p.profile == "profil3" and p.meta.get("p3_lobo")]
+    end = table(ws, 7, ["Zápas", "Trh", "Výběr", "Kurz", "Kancelář", "EV Profil 3 (trh)", "EV bez hodnoceného trhu",
+                        "Stav LOBO", "EV proti kancelářím (bez hodnocené)", "Výsledek"],
+                [[p.name, p.market, p.selection, p.odds, p.book, p.meta["p3_lobo"].get("ev_own"),
+                  p.meta["p3_lobo"].get("ev_lobo"), p.meta["p3_lobo"].get("status"), (p.integrity or {}).get("edge"),
+                  RESULT_CZ.get(p.result, p.result)] for p in p3], {4: "0.00", 6: YF, 7: YF, 9: YF},
+                [34, 9, 7, 6, 26, 10, 10, 12, 12, 10], False)
+    if not p3:
+        ws.cell(end + 1, 1, "Zatím žádný výběr s měřením (objeví se po dalších skenech).").font = F
+    st = marketsim.sim_stability(1.45, 1.15)
+    table(ws, end + 4, ["Simulací", "Skóre", "Přesná šance", "Průměr přes 30 seedů", "Směrodatná odchylka", "Max. chyba"],
+          [[x["sims"], x["score"], x["exact"], x["mean"], x["sd"], x["max_err"]] for x in st],
+          {3: "0.0%", 4: "0.0%", 5: "0.00%", 6: "0.00%"}, filt=False)
+    ws.cell(end + 3, 1, "Stabilita simulace (λ 1,45 : 1,15). Šance a EV Profilů 2 a 3 se počítají přesně ze skórové matice – "
+                        "simulace mění jen zobrazené nejčastější výsledky, ne výběr ani pořadí.").font = FB
+
+
+def MC_VERSION() -> str:
+    from .marketcheck import VERSION
+
+    return VERSION
+
+
+def _p5cfg():
+    from .profil5 import DEFAULT
+
+    return DEFAULT
+
+
+def strategy_name(p) -> str:
+    names = {x.key: x.name for x in paper.PROFILES}
+    return names.get(paper.group_key(p), p.profile)
+
+
 def _perf_sheets(d, sheet, table, F, FB) -> None:
     pf = d.perf
     missing = "Data Profilu 4 nejsou k dispozici – prázdné buňky znamenají chybějící data, ne nulu."
@@ -696,8 +905,9 @@ def finance_rows(d: "Data") -> list[list]:
     return rows
 
 
-def collect(session, p4_path: Path | None = None, now: datetime | None = None) -> Data:
-    """Nacte vse z databaze (jen cteni) do jednotne tabulky zaznamu."""
+def collect(session, p4_path: Path | None = None, now: datetime | None = None, light: bool = False) -> Data:
+    """Nacte vse z databaze (jen cteni) do jednotne tabulky zaznamu. `light` = bez listu Profilu 4 Faze 3/3.2
+    (rychle srovnani strategii v panelu)."""
     from .config import SETTINGS
     from .profil4 import history
     from .profil4.config import MODEL_VERSION
@@ -705,6 +915,7 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
     led = Ledger(session)
     names = {p.key: p.name for p in paper.PROFILES}
     recs, legs, seen, dup = [], [], set(), 0
+    from .kombi import HYPO, IMPOSSIBLE, price_class
     picks = paper.load(led)
     kombi_skip = kombi.overlaps(picks)
     for p in picks:
@@ -715,9 +926,15 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
         seen.add(key)
         kind = OFFICIAL if p.profile == "tipy" else KOMBI if p.profile == "kombi" else TRACKED
         sport = "kombi" if p.legs else _sport(p.league)
-        recs.append(Rec(names.get(p.profile, p.profile), kind, sport, p.league, p.name, p.kickoff, p.market,
+        gk = paper.group_key(p)  # rohy a karty zvlast (i vybery puvodniho spolecneho profilu)
+        group = names.get(gk, p.profile)
+        if p.profile == "kombi":  # hypoteticke a overene ceny se nikdy nescitaji
+            group += " – hypotetické (cílový kurz)" if price_class(p) in (HYPO, IMPOSSIBLE) else " – ověřené ceny"
+        recs.append(Rec(group, kind, sport, p.league, p.name, p.kickoff, p.market,
                         p.selection, p.odds, p.book, p.p_model, p.result, p.score, 1.0,
-                        None if p.result is None else p.profit, None, None, SETTINGS.model_version, p.id))
+                        None if p.result is None else p.profit, None, None, SETTINGS.model_version, p.id,
+                        integrity=(p.integrity or {}).get("status", ""),
+                        method=paper.props_method(p) if gk in ("rohy", "karty") else ""))
         for x in p.legs:
             legs.append({"ticket": p.name, "ticket_odds": p.odds, "ticket_result": RESULT_CZ.get(p.result, p.result),
                          "ticket_profit": p.profit, **x})
@@ -756,8 +973,15 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None) -
     versions = sorted({r.model for r in recs if r.model} | {SETTINGS.model_version, MODEL_VERSION})
     recs.sort(key=lambda r: (r.group, r.kickoff or ""))
     created = now or utcnow()
-    return Data(created, recs, legs, bank, versions, dup, p4_eval, _p4_intel(p4_path, created),
-                perf=_p4_perf(p4_path, created), ticket_kinds=ticket_kinds)
+    p5, p5_cands = None, []
+    try:  # Profil 5 – stinovy rezim (vlastni tabulka, jen cteni)
+        from . import profil5
+
+        p5, p5_cands = profil5.report(session), profil5.rows(session, None)
+    except Exception:  # noqa: BLE001 - starsi databaze bez tabulky
+        pass
+    return Data(created, recs, legs, bank, versions, dup, p4_eval, None if light else _p4_intel(p4_path, created),
+                perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5, p5_cands=p5_cands)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -873,6 +1097,26 @@ METHOD = [
                            "bootstrap po zápasech. Váhy se neladí; závěr až od 100 zápasů, jinak MÁLO DAT."),
     ("Portfolio Risk", "Oficiální tipy, sledované výběry, skutečné tikety a kombi zvlášť; virtuální jednotky a Kč se nesčítají. "
                        "Více výběrů jednoho zápasu = korelované, ne nezávislé sázky."),
+    ("Yield / ROI (od 3.2.1)", "Všude stejně: zisk v jednotkách / počet sázek s výsledkem výhra nebo prohra (včetně půl). "
+                               "Vráceno (PUSH) a neplatné (INVALID) se do jmenovatele nepočítají a nejsou totéž. "
+                               "Profil 4 v panelu uvádí yield stejně; jeho „ROI“ = zisk / 100 j. kapitálu."),
+    ("Nezávislé zápasy", "Výběry jednoho zápasu nejsou nezávislé. Intervaly a stav spolehlivosti jsou z bootstrapu po "
+                         "ZÁPASECH; pod 30 zápasy MÁLO DAT. Počet výběrů ≠ počet zápasů ≠ počet předpovědí."),
+    ("Strategy Comparison", "Každý profil celkem a zvlášť fotbal / NHL: výběry, nezávislé zápasy, výsledky, yield s 95% "
+                            "intervalem, Brier, Log Loss, CLV (jen ověřené), stav kontroly kurzů a spolehlivost."),
+    ("Market Integrity – All Profiles", "Společná kontrola kurzu (marketcheck.py, prahy Profilu 4) u každého výběru "
+                                        "Sledování od 24.11.2026: platnost, čerstvost, protistrana, dostupnost, "
+                                        "potvrzení, reference bez hodnocené kanceláře. Starší výběry = bez kontroly "
+                                        "(NEOVĚŘENO, nic se zpětně nedopočítává). Kontrola výběr nemění."),
+    ("Profil 5", "Market Value, stínový režim: kurz kanceláře proti férové ceně ostatních kanceláří (hodnocená "
+                 "kancelář a její skupina vynechány, de-vig mocninnou metodou, medián skupin, aspoň 3 nezávislé). "
+                 "Kandidát musí projít kontrolou kurzu. Line Shopping (nejlepší kurz vs medián) zvlášť, nesčítá se."),
+    ("Rohy a karty", "Od 24.11.2026 dva samostatné profily (Rohy, Karty). Výběry původního profilu „Rohy a karty“ se "
+                     "počítají podle trhu. Metodika: „jen model“ (do 21.11.2026 22:09 UTC) a „25/75“ (25 % model + "
+                     "75 % trh) se vykazují zvlášť – stará metodika se do nové nepočítá."),
+    ("Kombi – ověření kurzů", "Hypotetický tiket = aspoň jedna noha jen s cílovým (minimálním) kurzem; ověřené ceny = "
+                              "všechny nohy s kurzem kanceláře z kurzového API v době návrhu. Hypotetické a ověřené "
+                              "výsledky se nikdy nesčítají do jednoho ROI."),
 ]
 
 
@@ -1093,6 +1337,9 @@ def to_xlsx(d: Data) -> bytes:
 
     # 16–20 Profil 4 – Predictive Validation & Settlement Integrity (Faze 3.2)
     _perf_sheets(d, sheet, table, F, FB)
+
+    # 21–27 Faze 3.2.1 – srovnani strategii, spolecna integrita, Profil 5, rohy a karty, kombi kurzy
+    _phase321_sheets(d, sheet, table, F, FB)
 
     # 7 Metodika
     ws = sheet("Metodika")

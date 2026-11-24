@@ -16,7 +16,10 @@ NOW = datetime(2026, 11, 22, 12, 0)
 SHEETS = ["Souhrn", "Všechny tipy", "Kombi tikety", "Kurzová pásma", "Soutěže a sporty", "Vývoj bankrollu",
           "Kalibrace modelů", "EV analýza", "Kvalita dat", "Analýza chyb", "Opportunity Ranking", "Market Integrity",
           "Ranking Validation", "Portfolio Risk", "Predictive Performance", "Ranking Performance", "Model Comparison",
-          "CLV Performance", "Settlement Integrity", "Metodika"]
+          "CLV Performance", "Settlement Integrity",
+          # Faze 3.2.1 (uzivatel pozadal o nove listy; puvodnich 20 zustava ve stejnem poradi)
+          "Strategy Comparison", "Market Integrity – All Profiles", "Profile 5 Market Value", "Profile 5 Line Shopping",
+          "Corners Performance", "Cards Performance", "Combo Odds Verification", "Profile 3 LOBO", "Metodika"]
 
 
 def _pick(pid, result, odds, profile="zaklad", p=0.6, match=None, market="1X2", sel="1"):

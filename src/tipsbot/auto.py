@@ -90,6 +90,9 @@ def settle_from_scores(ledger: Ledger, now: datetime, settings: Settings = SETTI
         if cached and left is not None:
             ledger.set_odds_cache(lg, cached[0], cached[1], left)  # aktualni stav kreditu
         got = settle_open_tickets(ledger, df) + paper.settle(ledger, df)
+        from .settlement import settle_p5
+
+        settle_p5(ledger, df)  # stinovy Profil 5, do hlaseni se nepocita
         notes += got or [f"výsledky {lg} z kurzového API: zatím nic k vyhodnocení"]
     return notes
 

@@ -86,6 +86,9 @@ def _parser() -> argparse.ArgumentParser:
     from .profil4.cli import add_parser as _p4
 
     _p4(sub)
+    from .profilecli import add_parser as _prof
+
+    _prof(sub)
     ak = sub.add_parser("set-key", help="ulozi API klic kurzoveho API")
     ak.add_argument("key")
 
@@ -201,6 +204,10 @@ def main(argv: list[str] | None = None) -> int:
         from .profil4.cli import run as run_profil4
 
         return run_profil4(args)
+    if args.cmd == "profile":
+        from .profilecli import run as run_profile
+
+        return run_profile(args)
     if args.cmd == "web":
         from .web import run
 

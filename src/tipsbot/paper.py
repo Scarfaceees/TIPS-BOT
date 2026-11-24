@@ -71,17 +71,52 @@ PROFILES = (
             "každý kombinovaný tiket, který bot navrhne v Přehledu (doporučený i další kombinace), 2–3 sázky z různých "
             "zápasů, celkový kurz = součin kurzů; vyhodnotí se po všech zápasech – i když ho bot před výkopem přestal "
             "navrhovat", method="kombi"),
-    Profile("rohy", "Rohy a karty",
-            "jen rohy a karty: šance = 25 % model týmů (a u karet rozhodčího) + 75 % trh (Pinnacle bez marže, jinak "
-            "medián kanceláří z API-Football); od 21. 11. 2026, dřív jen model. Proti kurzům kanceláří (Pinnacle, "
-            "Bet365, Betano…); u zápasu výběr s nejvyšším čekaným ziskem od 5 %; "
-            "jen 6 lig (Anglie, Španělsko, Německo, Itálie, Francie, Portugalsko)", props=True),
+    Profile("rohy", "Rohy",
+            "jen rohy: šance = 25 % model rohů týmů + 75 % trh (Pinnacle bez marže, jinak medián kanceláří "
+            "z API-Football); od 21. 11. 2026 22:09 UTC, dřív jen model. Proti kurzům kanceláří (Pinnacle, Bet365, "
+            "Betano…); u zápasu výběr s nejvyšším čekaným ziskem od 5 %; jen 6 lig (Anglie, Španělsko, Německo, "
+            "Itálie, Francie, Portugalsko). Do 23. 11. 2026 společně s kartami (jeden výběr na zápas)",
+            markets=("ROHY_",), props=True),
+    Profile("karty", "Karty",
+            "jen karty: šance = 25 % model karet týmů a rozhodčího + 75 % trh (Pinnacle bez marže, jinak medián "
+            "kanceláří z API-Football); od 21. 11. 2026 22:09 UTC, dřív jen model. U zápasu výběr s nejvyšším "
+            "čekaným ziskem od 5 %; 6 lig. Do 23. 11. 2026 společně s rohy (výběry z profilu „Rohy a karty“ se "
+            "počítají sem)", markets=("KARTY_",), props=True),
+    Profile("profil5", "Profil 5 – Market Value (SHADOW)",
+            "EXPERIMENT, jen stínový režim: kurz kanceláře proti férové ceně z ostatních kanceláří (bez hodnocené "
+            "kanceláře a její skupiny, aspoň 3 nezávislé), bez modelu týmů; musí projít kontrolou kurzu. Nevydává "
+            "tipy, nemění bankroll ani ostatní profily", method="p5"),
 )
+# Rohy a karty byly do 23.11.2026 jeden profil ("rohy"); jeho vybery se zobrazuji podle trhu (props_key).
+PROPS_V2_FROM = datetime(2026, 11, 21, 22, 9, 51)  # commit 25366af: sance 25 % model + 75 % trh
 DEFAULT = PROFILES[0].key
 
 
 def profile(key: str | None) -> Profile:
     return next((pr for pr in PROFILES if pr.key == key), PROFILES[0])
+
+
+def group_key(p: "Pick") -> str:
+    """Profil, do jehoz statistik vyber patri: vybery puvodniho profilu „Rohy a karty“ podle trhu do Rohu / Karet."""
+    if p.profile in ("rohy", "karty"):
+        return "karty" if p.market.startswith("KARTY_") else "rohy"
+    return p.profile
+
+
+def of_profile(picks: list["Pick"], key: str) -> list["Pick"]:
+    return [p for p in picks if group_key(p) == key]
+
+
+def props_method(p: "Pick") -> str:
+    """Metodika rohu a karet: "25/75" (model + trh, od 21.11.2026 22:09 UTC) nebo "jen model" (driv)."""
+    if p.meta.get("method"):
+        return p.meta["method"]
+    if "% model (" in (p.detail or ""):
+        return "25/75"
+    try:
+        return "25/75" if datetime.fromisoformat(p.created).replace(tzinfo=None) >= PROPS_V2_FROM else "jen model"
+    except ValueError:
+        return "jen model"
 
 
 def selections(market: str) -> tuple[str, ...] | None:
@@ -113,6 +148,8 @@ class Pick:
     detail: str = ""  # rozbor vyberu (Profil 3: ocekavane goly, simulace, scenare)
     legs: list = field(default_factory=list)  # kombi tiket: nohy s vlastnim vysledkem (kombi.py)
     info: list = field(default_factory=list)  # rozbor vyberu a zapasu [{"title", "lines"}] (pickinfo.py)
+    integrity: dict = field(default_factory=dict)  # spolecna Market Integrity (marketcheck.py), od Faze 3.2.1
+    meta: dict = field(default_factory=dict)  # strukturovane scenare a metodika vyberu (Profil 2/3, rohy, karty)
 
     @property
     def ev(self) -> float | None:
@@ -177,6 +214,7 @@ def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: d
         day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=sp.market,
         selection=sp.selection, odds=sp.odds, book=sp.book, p_model=round(sp.p_equiv, 4), source="model",
         created=now.isoformat(), flags=sp.flags, profile=pr.key, detail=sp.detail,
+        meta={"p3": sp.scen or {}, "p3_lobo": marketsim.lobo_market(ev.match_id, model, entries, sp, cfg)},
     )
 
 
@@ -195,7 +233,7 @@ def _p2(pr: Profile, league: str, ev, model: dict | None, entries: list, now: da
         id=uuid.uuid4().hex[:8], league=league, match_id=ev.match_id, name=ev.name,
         day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=o.market, selection=o.selection,
         odds=o.odds, book=o.book, p_model=round(p_eff, 4), source="model", created=now.isoformat(), flags=flags,
-        profile=pr.key, detail=profile2.pick_detail(a, pk),
+        profile=pr.key, detail=profile2.pick_detail(a, pk), meta={"p2": profile2.scenario_data(a, pk)},
     )
 
 
@@ -264,15 +302,20 @@ def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetim
                     day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=e.market,
                     selection=sel, odds=odds, book=e.book, p_model=round(p, 4), source="model",
                     created=now.isoformat(), flags=flags, profile=pr.key, detail=detail,
+                    meta={"method": "25/75", "p_model_raw": round(pm, 4), "p_market": round(mkt[0], 4),
+                          "market_src": mkt[1]} if pr.props else {},
                 ))
     return best[1] if best else None
 
 
 def track(ledger, league: str, offers: list, now: datetime, settings: Settings = SETTINGS,
-          extra: dict[str, list] | None = None) -> int:
+          extra: dict[str, list] | None = None, stamps: dict | None = None) -> int:
     """`offers`: [(udalost, model {trh:vyber: p}, [ceske zaznamy])]. Kazdy aktivni profil vybere u zapasu
     nejvyssi cekany zisk podle svych pravidel; pred vykopem se vyber jen aktualizuje, po vykopu se nemeni.
-    `extra`: {match_id: dalsi trhy} pro simulaci trhu (Profil 3)."""
+    `extra`: {match_id: dalsi trhy} pro simulaci trhu (Profil 3). `stamps`: casy kurzu kancelari
+    (marketcheck.stamps_from_payload) pro spolecnou kontrolu kurzu – kontrola vyber NEMENI, jen se k nemu ulozi."""
+    from . import marketcheck
+
     picks = load(ledger)
     by_match = {(p.profile, p.match_id): p for p in picks if p.source == "model"}
     n = 0
@@ -280,7 +323,7 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
         if ev.kickoff <= now:
             continue
         for pr in PROFILES:
-            if not pr.active or pr.method in ("tips", "kombi"):
+            if not pr.active or pr.method in ("tips", "kombi", "p5"):
                 continue
             if league == "NHL" and (pr.method != "edge" or pr.props):
                 continue  # scenare golu, simulace trhu a rohy/karty jsou jen fotbalove
@@ -292,6 +335,10 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
                 if old is not None and old.result is None:
                     picks.remove(old)  # vyhoda zmizela, vyber uz neplati
                 continue
+            try:  # spolecna Market Integrity: jen zaznam, vyber se nemeni
+                new.integrity = marketcheck.for_event(ev, new.market, new.selection, new.odds, new.book, now, stamps)
+            except Exception as e:  # noqa: BLE001 - kontrola nesmi shodit sledovani
+                new.integrity = {"status": marketcheck.UNVERIFIED, "reasons": [f"kontrola selhala: {e}"]}
             if old is not None:
                 picks.remove(old)
             picks.append(new)
@@ -400,19 +447,26 @@ def counted(picks: list[Pick]) -> list[Pick]:
 
 
 def stats(picks: list[Pick]) -> dict:
+    """Jednotne definice (Faze 3.2.1, stejne jako Excel): ROI na 1 j. (= yield) = zisk / pocet sazek s vysledkem
+    vyhra/prohra (vcetne pul); vracene sazky se do jmenovatele nepocitaji (driv panel delil i vracenymi)."""
     picks = counted(picks)
     done = [p for p in picks if p.result is not None]
-    out = {"open": len(picks) - len(done), "settled": len(done), "profit": 0.0, "roi": None, "hit": None,
-           "avg_odds": None, "avg_ev": None, "by_market": {}}
+    staked = [p for p in done if p.result != "void"]
+    out = {"open": len(picks) - len(done), "settled": len(done), "staked": len(staked),
+           "push": len(done) - len(staked), "profit": 0.0, "roi": None, "hit": None,
+           "avg_odds": None, "avg_ev": None, "by_market": {},
+           "matches": len({(p.name, p.day) for p in done})}
     if not done:
         return out
     out["profit"] = sum(p.profit for p in done)
-    out["roi"] = out["profit"] / len(done)
-    out["hit"] = sum(p.result in ("won", "half_won") for p in done) / len(done)
-    out["avg_odds"] = sum(p.odds for p in done) / len(done)
-    evs = [p.ev for p in done if p.ev is not None]
+    if not staked:
+        return out
+    out["roi"] = out["profit"] / len(staked)
+    out["hit"] = sum(p.result in ("won", "half_won") for p in staked) / len(staked)
+    out["avg_odds"] = sum(p.odds for p in staked) / len(staked)
+    evs = [p.ev for p in staked if p.ev is not None]
     out["avg_ev"] = sum(evs) / len(evs) if evs else None
-    for m in sorted({p.market for p in done}):
-        sub = [p for p in done if p.market == m]
+    for m in sorted({p.market for p in staked}):
+        sub = [p for p in staked if p.market == m]
         out["by_market"][m] = (len(sub), sum(p.profit for p in sub), sum(p.profit for p in sub) / len(sub))
     return out

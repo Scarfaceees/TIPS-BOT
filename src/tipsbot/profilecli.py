@@ -1,0 +1,98 @@
+"""Prikazy `tipsbot profile …` (Faze 3.2.1). Vsechny jen ctou – historicka data nemeni.
+
+  tipsbot profile audit               prehled profilu, metodik a znamych omezeni z aktualni databaze
+  tipsbot profile market-integrity    spolecna kontrola kurzu: stav vyberu podle profilu, neshody mezi profily
+  tipsbot profile compare             srovnani strategii (stejne definice metrik, fotbal / NHL zvlast)
+  tipsbot profile 5 shadow            Profil 5: stav stinoveho rezimu, nastaveni, posledni skeny
+  tipsbot profile 5 report            Profil 5: kandidati, odmitnuti, vysledky, Line Shopping zvlast
+  tipsbot profile 5 validate          Profil 5: nezavisla kontrola ulozenych kandidatu (LOBO, p_ref, EV)
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+
+
+def add_parser(sub) -> None:
+    p = sub.add_parser("profile", help="audit a srovnani profilu, spolecna kontrola kurzu, Profil 5 (jen cteni)")
+    p.add_argument("what", choices=["audit", "market-integrity", "compare", "5"])
+    p.add_argument("action", nargs="?", choices=["shadow", "report", "validate"], default="report")
+
+
+def _pct(x) -> str:
+    return "–" if x is None else f"{x * 100:+.1f} %"
+
+
+def run(args) -> int:
+    from . import export, kombi, marketcheck, paper, profil5, strategy
+    from .profil4.config import P4
+    from .storage import Ledger, make_session_factory
+
+    with make_session_factory(args.db)() as session:
+        led = Ledger(session)
+        picks = paper.load(led)
+        if args.what == "audit":
+            print("PROFILY (Faze 3.2.1)")
+            for pr in paper.PROFILES:
+                n = len(paper.of_profile(picks, pr.key))
+                print(f"- {pr.name} [{pr.key}, metoda {pr.method}]: {n} výběrů v databázi")
+            no_int = sum(1 for p in picks if not p.legs and not p.integrity)
+            print(f"\nSpolečná kontrola kurzů: {len(picks) - no_int - sum(1 for p in picks if p.legs)} výběrů zkontrolováno, "
+                  f"{no_int} starších bez kontroly (NEOVĚŘENO)")
+            v = kombi.verification(picks)
+            print(f"Kombi: {v['tickets']} započítaných tiketů, plně ověřených {v['fully_verified']}, s cílovou/neověřenou "
+                  f"nohou {v['with_unverified_leg']}; ROI hypotetické {_pct(v['hypothetical']['roi'])}, "
+                  f"ověřené {_pct(v['verified']['roi'])}")
+            for key in ("rohy", "karty"):
+                c = Counter(paper.props_method(p) for p in paper.of_profile(picks, key))
+                print(f"{key.capitalize()}: " + ", ".join(f"{m} {n}" for m, n in sorted(c.items())) if c else f"{key}: 0")
+            p3 = [p for p in paper.of_profile(picks, "profil3") if p.meta.get("p3_lobo")]
+            ok = [p.meta["p3_lobo"] for p in p3 if p.meta["p3_lobo"].get("status") == "OK"]
+            if ok:
+                d = sum(x["ev_own"] - x["ev_lobo"] for x in ok) / len(ok)
+                print(f"Profil 3 LOBO: {len(ok)} měření, průměrně EV vlastní − EV bez hodnoceného trhu = {d * 100:+.1f} p. b.")
+            else:
+                print("Profil 3 LOBO: zatím žádné měření (vzniká u nových výběrů)")
+            print("\nPodrobný audit: docs/profil-faze3-2-1-strategy-audit-market-value.md")
+        elif args.what == "market-integrity":
+            c = Counter((export.strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks if not p.legs)
+            for (prof, st), n in sorted(c.items()):
+                print(f"{prof:<36} {st:<20} {n}")
+            bad = strategy.integrity_consistency(picks)
+            print(f"\nNeshody stejné nabídky mezi profily: {len(bad)}")
+            for b in bad[:20]:
+                print(" ", b)
+            print(f"Prahy (= Profil 4): {marketcheck.DEFAULT}")
+        elif args.what == "compare":
+            d = export.collect(session, P4.db_path, light=True)
+            for r in strategy.comparison(d):
+                ci = f" [{r['yield_ci'][0] * 100:+.0f}; {r['yield_ci'][1] * 100:+.0f} %]" if r["yield_ci"] else ""
+                print(f"{r['group'][:38]:<38} {r['sport']:<7} výběrů {r['picks']:>4} zápasů {r['matches']:>4} "
+                      f"vyhodn. {r['settled']:>4} yield {_pct(r['yield']):>9}{ci:<16} CLV {_pct(r['clv'])} ({r['clv_n']}) "
+                      f"| {r['reliability']}")
+        else:
+            if args.action == "validate":
+                bad = profil5.validate(session)
+                print(f"Profil 5 – kontrola uložených kandidátů: {'v pořádku' if not bad else f'{len(bad)} problémů'}")
+                for b in bad:
+                    print(" ", b)
+                return 1 if bad else 0
+            rep = profil5.report(session)
+            print(f"Profil 5 – Market Value · {rep['mode']} · {rep['algo']}")
+            print(f"Nastavení: {profil5.DEFAULT}")
+            if args.action == "shadow":
+                for s in rep["last_scans"]:
+                    print(" ", s)
+                print(f"Otevřených kandidátů: {sum(1 for c in profil5.rows(session) if c.result is None)}")
+                return 0
+            print(f"Kandidátů {rep['candidates']}, odmítnutých nabídek {rep['rejected']}")
+            for k, n in rep["reasons"].items():
+                print(f"  odmítnuto – {k}: {n}")
+            for sp, pf in [("celkem", rep["all"])] + list(rep["by_sport"].items()):
+                print(f"{sp:<7} kandidátů {pf['n']} zápasů {pf['matches']} vyhodn. {pf['staked']} yield {_pct(pf['yield'])} "
+                      f"CLV ověřené {_pct(pf['clv'])} ({pf['clv_n']}), poslední pozorovaný {_pct(pf['clv_last'])} "
+                      f"({pf['clv_last_n']}) | {pf['status']}")
+            ls = rep["line_shopping"]
+            print(f"Line Shopping (zvlášť): kancelář {_pct(ls['at_book']['yield'])}, medián {_pct(ls['at_median']['yield'])}, "
+                  f"nejlepší kurz {_pct(ls['at_best']['yield'])}, Ø nejlepší/medián {_pct(ls['avg_gain'])}")
+    return 0

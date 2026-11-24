@@ -23,6 +23,7 @@ aby se dalo po case zmerit, jestli skutecne vydelavaji.
 from __future__ import annotations
 
 import json
+import math
 import re
 import zlib
 from dataclasses import asdict, dataclass, field
@@ -861,6 +862,52 @@ def pick_detail(a: Analysis, pk: Pick) -> str:
     push = f", vrácení {o.worst_push:.0%}" if o.worst_push > 0.005 else ""
     return (f"{pk.title}. Góly {sc}. Výhra {o.worst_win:.0%}{push}, prohra {o.worst_loss:.0%}; EV {ev}; "
             f"min. kurz {o.min_odds:.2f}.")
+
+
+def outcome_split(market: str, selection: str, odds: float, mat: np.ndarray) -> dict[str, float]:
+    """Pet vysledku sazky ze skorove matice (Faze 3.2.1): plna vyhra, pul vyhra, vraceni, pul prohra, plna prohra.
+    U ctvrtinovych linii jde polovina vkladu na kazdou sousedni linii (stejne jako `returns`)."""
+    r, eps = returns(market, selection, odds), 1e-9
+    full_win = r >= odds - eps
+    push = np.abs(r - 1.0) < eps
+    half_win = (r > 1.0 + eps) & ~full_win
+    half_loss = (r > eps) & (r < 1.0 - eps)
+    loss = r < eps
+    return {k: float(mat[m].sum()) for k, m in (("win", full_win), ("half_win", half_win), ("push", push),
+                                                 ("half_loss", half_loss), ("loss", loss))}
+
+
+def p_interval(market: str, selection: str, odds: float, lam_h: float, lam_a: float, k: float,
+               q: tuple[float, float] = (0.05, 0.95)) -> tuple[float, float] | None:
+    """Citlivost sance na vyhru na nejistotu ocekavanych golu: sance pri λ na 5. a 95. kvantilu gama(k).
+    Neni to konfidencni interval modelu, jen rozsah, ve kterem se sance pohybuje pri chybe odhadu golu."""
+    if k <= 0:
+        return None
+    vals = []
+    for qq in q:
+        f = float(stats.gamma.ppf(qq, a=k, scale=1.0 / k))
+        split = outcome_split(market, selection, odds, score_matrix(lam_h * f, lam_a * f, 0))
+        vals.append(split["win"] + split["half_win"])
+    return (min(vals), max(vals))
+
+
+def scenario_data(a: Analysis, pk: Pick) -> dict:
+    """Strukturovane scenare vyberu pro Sledovani (od Faze 3.2.1; starsi vybery maji jen textovy rozbor):
+    λ, EV, sance (5 vysledku) a citlivost kazdeho scenare, pocet simulaci a seed. Simulace slouzi jen
+    k zobrazeni – sance i EV se pocitaji presne ze skorove matice (vyber na seedu nezavisi)."""
+    o = pk.offer
+    out = {"role": pk.role, "title": pk.title, "k": a.k, "sims": a.sim.get("n"), "seed": _seed(a.match),
+           "sim_profit": o.sim_profit, "verdict": o.verdict, "scenarios": []}
+    for s, ev, be in zip(a.scenarios, o.ev, o.breakeven):
+        mat = score_matrix(s.lam_h, s.lam_a, a.k)
+        split = outcome_split(o.market, o.selection, o.odds, mat)
+        out["scenarios"].append({
+            "name": s.name, "lam_h": round(s.lam_h, 3), "lam_a": round(s.lam_a, 3), "decides": s.decides,
+            "source": s.source, "ev": round(ev, 4), "breakeven": round(be, 3) if math.isfinite(be) else None,
+            "split": {k_: round(v, 4) for k_, v in split.items()},
+            "p_range": [round(x, 4) for x in (p_interval(o.market, o.selection, o.odds, s.lam_h, s.lam_a, a.k) or ())],
+        })
+    return out
 
 
 def auto_pick(match: str, model: dict | None, czech_entries: list, cfg: Profile2Config = P2) -> tuple[Pick, Analysis] | None:

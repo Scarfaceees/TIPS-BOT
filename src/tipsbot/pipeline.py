@@ -366,8 +366,15 @@ def scan_league(
             # bez ceskych kurzu vse z medianu; s nimi jen rohy a karty, ktere rucne zadane nejsou
             entries.extend(e for e in market_entries(ev, now)
                            if not have or (e.market.startswith(paper.PROPS) and e.market not in have))
+        stamps = _odds_stamps(ledger, league)
         paper.track(ledger, league, [v for v in by_ev.values() if v[2]], now, settings,
-                    extra=_sim_extra(events, now) if is_football else None)
+                    extra=_sim_extra(events, now) if is_football else None, stamps=stamps)
+        try:  # Profil 5 – Market Value: jen stinova evidence z uz stazenych kurzu (zadny dalsi dotaz)
+            from . import profil5
+
+            profil5.scan(ledger, league, events, now, stamps)
+        except Exception as e:  # noqa: BLE001 - experiment nesmi shodit sken ani ostatni profily
+            log.warning("Profil 5 (shadow) selhal: %s", e)
     update_closing(ledger, cands_by_match)  # posledni sken pred vykopem = zaviraci ferova linie pro CLV
     _release(ledger)
 
@@ -547,6 +554,17 @@ def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:
 
 MARKET_BOOK = "zahraničí (medián)"
 _EXCHANGES = ("betfair_ex_eu", "betfair_ex_uk", "matchbook")
+
+
+def _odds_stamps(ledger: Ledger, league: str) -> dict:
+    """Casy posledni zmeny kurzu kancelari z ulozene odpovedi kurzoveho API (pro Market Integrity a Profil 5)."""
+    from . import marketcheck
+
+    try:
+        cached = ledger.odds_cache(league)
+        return marketcheck.stamps_from_payload(cached[1]) if cached else {}
+    except Exception:  # noqa: BLE001 - bez casu kurzu je kontrola NEOVĚŘENO, sken pokracuje
+        return {}
 
 
 def _sim_extra(events, now: datetime) -> dict[str, list]:

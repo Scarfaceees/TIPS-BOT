@@ -412,7 +412,12 @@ def scan_league(
     results: list[Tip | Rejection] = []
     for cands in cands_by_match.values():
         results.extend(evaluate(c, ledger, now=now, settings=settings) for c in cands)
+    stamps_now = _odds_stamps(ledger, league)
     for tip in best_per_match(results):
+        if _hard_reject_tip(ledger, tip, by_id.get(tip.match_id), now, stamps_now):
+            report.notes.append(f"tip {tip.match_name} {tip.market} {tip.selection} @ {tip.raw_odds:.2f} nevydán – "
+                                "bezpečnostně odmítnut kontrolou kurzu (záznam v integrity_rejections)")
+            continue
         ledger.add_tip(tip)
         report.new_tips.append(tip)
     _release(ledger)  # rozbor nize stahuje zpravy (i desitky sekund) – tipy uz jsou ulozene
@@ -554,6 +559,24 @@ def _absences(league, events, ledger, now, settings) -> tuple[list, bool]:
 
 MARKET_BOOK = "zahraničí (medián)"
 _EXCHANGES = ("betfair_ex_eu", "betfair_ex_uk", "matchbook")
+
+
+def _hard_reject_tip(ledger: Ledger, tip, ev, now: datetime, stamps: dict) -> bool:
+    """Faze 3.2.2: oficialni tip s podezrelym kurzem (spolecna Market Integrity) se nevyda; nabidka se zapise
+    jako diagnosticky zaznam. EV, pravdepodobnost ani prahy se nemeni. Chyba kontroly tip nezastavi."""
+    from . import marketcheck
+
+    if ev is None:
+        return False
+    try:
+        it = marketcheck.for_event(ev, tip.market, tip.selection, tip.raw_odds, tip.bookmaker, now, stamps)
+        if not marketcheck.is_hard_reject(it):
+            return False
+        marketcheck.log_rejection(ledger.s, "tipy", tip.match_id, tip.match_name, tip.kickoff, it)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.warning("kontrola kurzu tipu selhala: %s", e)
+        return False
 
 
 def _odds_stamps(ledger: Ledger, league: str) -> dict:

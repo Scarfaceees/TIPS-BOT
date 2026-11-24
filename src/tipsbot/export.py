@@ -106,6 +106,9 @@ class Data:
     picks: list = field(default_factory=list)  # Sledovani (paper.Pick) – pro listy Faze 3.2.1
     p5: dict | None = None  # Profil 5 – report (profil5.report)
     p5_cands: list = field(default_factory=list)  # Profil 5 – kandidati i odmitnute nabidky
+    rejections: list = field(default_factory=list)  # Faze 3.2.2: tvrda odmitnuti spolecne kontroly kurzu
+    placed_combo: dict | None = None  # skutecne vsazene AKU tikety (Kc)
+    rankdiag: dict | None = None  # diagnostika rankingu Profilu 4
 
 
 def _sport(league: str) -> str:
@@ -473,6 +476,17 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
                         it.get("status"), it.get("validity"), it.get("freshness"), it.get("age_min"), it.get("counterside"),
                         it.get("availability"), it.get("confirmation"), it.get("reference"), it.get("ref_n"),
                         it.get("ref_fair"), it.get("edge"), it.get("dev_median"), "; ".join(it.get("reasons") or [])])
+    ws.cell(end + 2, 1, f"Tvrdá bezpečnostní odmítnutí (PODEZŘELÉ) – všechny profily: {len(d.rejections)}. Výběr zůstává jako "
+                        "diagnostický záznam, není to schválená sázka a do výsledků profilu se nepočítá.").font = FB
+    end = table(ws, end + 3, ["Profil", "Zaznamenáno (UTC)", "Zápas", "Trh", "Výběr", "Kancelář", "Původní kurz",
+                              "Referenční (férový) kurz", "Medián ostatních", "Stáří kurzu (min)", "Nezávislých skupin",
+                              "Důvod odmítnutí"],
+                [[r.profile, r.created.strftime("%Y-%m-%d %H:%M"), r.match, r.market, r.selection, r.book, r.odds,
+                  r.ref_fair, r.ref_median, r.age_min, r.ref_n, "; ".join(_json.loads(r.reasons or "[]"))]
+                 for r in d.rejections], {7: "0.00", 8: "0.00", 9: "0.00"}, filt=False)
+    if not d.rejections:
+        ws.cell(end + 1, 1, "Zatím žádné tvrdé odmítnutí.").font = F
+        end += 1
     table(ws, end + 3, ["Profil", "Zápas", "Výkop (UTC)", "Trh", "Výběr", "Kancelář", "Kurz", "Stav", "Platnost",
                         "Čerstvost", "Stáří (min)", "Protistrana", "Dostupnost", "Potvrzení", "Reference",
                         "Nezávislých kanceláří", "Férový kurz (bez hodnocené)", "EV proti trhu", "Odchylka od mediánu",
@@ -535,7 +549,11 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
         for m in ("jen model", "25/75"):
             sub = [r for r in recs if r.method == m]
             if sub:
-                prow.append(strategy.row(f"{grp} – {m}", "celkem", sub))
+                rr = strategy.row(f"{grp} – {m}", "celkem", sub)
+                if rr["matches"] < 30:  # Faze 3.2.2: metodika se z par tipu nevyhodnocuje (ani yield se neuvadi)
+                    rr.update({"yield": None, "yield_ci": None, "brier": None, "logloss": None,
+                               "reliability": f"nevyhodnocuje se – {rr['matches']} záp. (min. 30)"})
+                prow.append(rr)
         end = table(ws, 7, ["Strategie", "Výběrů", "Nezávislých zápasů", "Výhry", "Prohry", "Vráceno", "Yield", "95% od",
                             "95% do", "Spolehlivost", "Brier", "Log Loss", "CLV", "Kontrola kurzů"],
                     [[r["group"], r["picks"], r["matches"], r["wins"], r["losses"], r["push"], r["yield"], *ci(r),
@@ -560,6 +578,11 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
                   v["verified"]["profit"] if v["verified"]["settled"] else None, v["verified"]["roi"]])
     end = table(ws, 7, ["Skupina", "Tiketů", "Vyhodnoceno", "Zisk (j.)", "ROI na 1 j."], srows,
                 {4: "+0.00;-0.00;0.00", 5: YF}, [44, 8, 10, 9, 10], False)
+    pc = d.placed_combo or {}
+    ws.cell(end + 2, 1, f"Skutečně vsazené kombinované tikety (Moje tikety, Kč – nesčítá se s jednotkami): {pc.get('tickets', 0)}, "
+                        f"vyhodnoceno {pc.get('settled', 0)}, vsazeno {pc.get('stake', 0):.0f} Kč, zisk {pc.get('profit', 0):+.0f} Kč"
+                        + (f", ROI {pc['roi'] * 100:+.1f} %" if pc.get("roi") is not None else "")).font = F
+    end += 1
     ws.cell(end + 1, 1, f"Tiketů s alespoň jednou neověřenou nohou: {v['with_unverified_leg']}; plně ověřených: "
                         f"{v['fully_verified']}; nohou {v['legs']}, z toho unikátních {v['unique_legs']}, "
                         f"unikátních zápasů {v['unique_matches']}.").font = F
@@ -591,12 +614,51 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
                 [34, 9, 7, 6, 26, 10, 10, 12, 12, 10], False)
     if not p3:
         ws.cell(end + 1, 1, "Zatím žádný výběr s měřením (objeví se po dalších skenech).").font = F
+    pr = strategy.paired(d.picks, "profil3", "profil3x")
+    ws.cell(end + 2, 1, "Produkční Profil 3 proti stínovému nekruhovému Profilu 3x – jen stejné zápasy "
+                        f"(společných {pr['common_matches']}, stejná sázka {pr['same_bet']}, jen P3 {pr['only_a']}, jen P3x "
+                        f"{pr['only_b']})").font = FB
+    end = table(ws, end + 3, ["Profil", "Vyhodnoceno", "Sázek s vkladem", "Zisk (j.)", "Yield", "Celkem vyhodnoceno (vše)",
+                              "Yield (vše)"],
+                [[lab, s["settled"], s["staked"], s["profit"] if s["staked"] else None, s["roi"], sa["settled"], sa["roi"]]
+                 for lab, s, sa in (("Profil 3 (produkce, kruhový)", pr["a"], pr["a_all"]),
+                                    ("Profil 3x (stín, nekruhový)", pr["b"], pr["b_all"]))],
+                {4: "+0.00;-0.00;0.00", 5: YF, 7: YF}, filt=False)
     st = marketsim.sim_stability(1.45, 1.15)
     table(ws, end + 4, ["Simulací", "Skóre", "Přesná šance", "Průměr přes 30 seedů", "Směrodatná odchylka", "Max. chyba"],
           [[x["sims"], x["score"], x["exact"], x["mean"], x["sd"], x["max_err"]] for x in st],
           {3: "0.0%", 4: "0.0%", 5: "0.00%", 6: "0.00%"}, filt=False)
     ws.cell(end + 3, 1, "Stabilita simulace (λ 1,45 : 1,15). Šance a EV Profilů 2 a 3 se počítají přesně ze skórové matice – "
                         "simulace mění jen zobrazené nejčastější výsledky, ne výběr ani pořadí.").font = FB
+
+
+def _rankdiag_sheet(d, sheet, table, F, FB) -> None:
+    from .rankdiag import MIN_MATCHES
+
+    ws = sheet("Ranking Diagnostics")
+    rd = d.rankdiag or {}
+    _note(ws, 5, "Opportunity Ranking Profilu 4 rozložený na kvalitu dat, ranking, EV a skutečný výsledek. Váhy se nemění. "
+                 "„Zbytek rankingu“ = ranking minus část vysvětlená kvalitou dat; o přidané hodnotě se rozhoduje až od "
+                 f"{MIN_MATCHES} nezávislých zápasů. Intervaly = bootstrap po zápasech.", F)
+    row = 7
+    for name, dg in [("celkem", rd.get("all"))] + list((rd.get("sports") or {}).items()):
+        if not dg:
+            continue
+        ws.cell(row, 1, f"{name}: {dg['selections']} výběrů, {dg['matches']} nezávislých zápasů – {dg['verdict']}").font = FB
+        r2 = dg.get("r2_quality")
+        ws.cell(row + 1, 1, "Korelace (Spearman): " + ", ".join(f"{k} {v:+.2f}" for k, v in dg["corr"].items() if v is not None)
+                + ("" if r2 is None else f"; kvalita dat vysvětluje {r2 * 100:.0f} % rozptylu rankingu")).font = F
+        rows = []
+        for grp, key in (("kvalita dat", "by_quality"), ("ranking", "by_rank"), ("EV", "by_ev"), ("zbytek rankingu", "residual")):
+            for b in dg.get(key) or []:
+                rows.append([grp, b["band"], b["selections"], b["matches"], b["staked"], b["profit"] if b["staked"] else None,
+                             b["yield"], *(b["yield_ci"] or (None, None)), b["avg_rank"], b["avg_quality"], b["avg_ev"]])
+        row = table(ws, row + 3, ["Dělení", "Pásmo", "Výběrů", "Nezávislých zápasů", "Sázek s vkladem", "Zisk (j.)", "Yield",
+                                  "95% od", "95% do", "Ø ranking", "Ø kvalita", "Ø EV"], rows,
+                    {6: "+0.00;-0.00;0.00", 7: "+0.0%;-0.0%;0.0%", 8: "+0.0%;-0.0%", 9: "+0.0%;-0.0%", 10: "0", 11: "0",
+                     12: "+0.0%;-0.0%"}, [16, 40, 8, 10, 9, 9, 9, 9, 9, 9, 9, 9], False) + 3
+    if row == 7:
+        ws.cell(7, 1, "Data Profilu 4 nejsou k dispozici.").font = F
 
 
 def MC_VERSION() -> str:
@@ -665,9 +727,9 @@ def _perf_sheets(d, sheet, table, F, FB) -> None:
                 for k, v in items.items():
                     rows.append([SP[sp], gname, k, v["matches"], v["n"], v["won"], v["half_won"], v["push"], v["half_lost"],
                                  v["lost"], v["turnover"], v["profit"], v["yield"], ci(v["yield_ci95"], 0),
-                                 ci(v["yield_ci95"], 1), v["roi"], v["win_rate"], v["avg_odds"], v["yield_status"]])
+                                 ci(v["yield_ci95"], 1), v["capital_return"], v["win_rate"], v["avg_odds"], v["yield_status"]])
         end = table(ws, top, ["Sport", "Dělení", "Skupina", "Zápasů", "Sázek", "Výhry", "Půl výhry", "Vráceno", "Půl prohry",
-                              "Prohry", "Obrat (j.)", "Zisk (j.)", "Yield", "Yield 95% od", "Yield 95% do", "ROI (100 j.)",
+                              "Prohry", "Obrat (j.)", "Zisk (j.)", "Yield", "Yield 95% od", "Yield 95% do", "Zhodnocení kapitálu (zisk / 100 j.)",
                               "Win rate", "Ø kurz", "Průkaznost"], rows,
                     {11: "0", 12: UNITS, 13: PC, 14: PC, 15: PC, 16: PC, 17: PCT, 18: ODDS}, None)
         end = lines(ws, end + 2, ["Vyřazeno z výsledků: " + ", ".join(f"{k} {v}" for k, v in fi["excluded"].items())]
@@ -687,10 +749,10 @@ def _perf_sheets(d, sheet, table, F, FB) -> None:
                              b["half_lost"], b["lost"], b["win_rate"], b["avg_odds"], b["avg_p"], b["avg_p_market"],
                              b["avg_ev"], b["avg_ev_conservative"], b["profit"], b["yield"], ci(b["yield_ci95"], 0),
                              ci(b["yield_ci95"], 1), ci(b["yield_ci_bonferroni"], 0), ci(b["yield_ci_bonferroni"], 1),
-                             b["roi"], b["clv"], b["clv_n"], b["brier"], b["log_loss"], b["status"]])
+                             b["capital_return"], b["clv"], b["clv_n"], b["brier"], b["log_loss"], b["status"]])
         end = table(ws, 7, ["Sport", "Pásmo", "Nezávislých zápasů", "Výběrů", "Výhry", "Půl výhry", "Push", "Půl prohry",
                             "Prohry", "Win rate", "Ø kurz", "Ø p modelu", "Ø p trhu", "Ø EV", "Ø konz. EV", "Zisk (j.)",
-                            "Yield", "Yield 95% od", "Yield 95% do", "Bonferroni od", "Bonferroni do", "ROI (100 j.)",
+                            "Yield", "Yield 95% od", "Yield 95% do", "Bonferroni od", "Bonferroni do", "Zhodnocení kapitálu (zisk / 100 j.)",
                             "CLV", "CLV n", "Brier", "Log Loss", "Stav"], rows,
                     {10: PCT, 11: ODDS, 12: PCT, 13: PCT, 14: PC, 15: PC, 16: UNITS, 17: PC, 18: PC, 19: PC, 20: PC, 21: PC,
                      22: PC, 23: PC, 25: DEC4, 26: DEC4}, None, False)
@@ -915,7 +977,7 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
     led = Ledger(session)
     names = {p.key: p.name for p in paper.PROFILES}
     recs, legs, seen, dup = [], [], set(), 0
-    from .kombi import HYPO, IMPOSSIBLE, price_class
+    from .kombi import is_verified
     picks = paper.load(led)
     kombi_skip = kombi.overlaps(picks)
     for p in picks:
@@ -929,7 +991,9 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
         gk = paper.group_key(p)  # rohy a karty zvlast (i vybery puvodniho spolecneho profilu)
         group = names.get(gk, p.profile)
         if p.profile == "kombi":  # hypoteticke a overene ceny se nikdy nescitaji
-            group += " – hypotetické (cílový kurz)" if price_class(p) in (HYPO, IMPOSSIBLE) else " – ověřené ceny"
+            group += " – ověřené ceny" if is_verified(p) else " – hypotetické / neověřené ceny"
+        elif paper.hard_rejected(p):  # Faze 3.2.2: diagnosticky zaznam, ne sazka profilu
+            group += " – bezpečnostně odmítnuto"
         recs.append(Rec(group, kind, sport, p.league, p.name, p.kickoff, p.market,
                         p.selection, p.odds, p.book, p.p_model, p.result, p.score, 1.0,
                         None if p.result is None else p.profit, None, None, SETTINGS.model_version, p.id,
@@ -980,8 +1044,23 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
         p5, p5_cands = profil5.report(session), profil5.rows(session, None)
     except Exception:  # noqa: BLE001 - starsi databaze bez tabulky
         pass
+    rej, placed = [], None
+    try:
+        from . import kombi as _k
+        from .storage import IntegrityRejection
+
+        rej = list(session.query(IntegrityRejection).order_by(IntegrityRejection.created.desc()).limit(2000))
+        placed = _k.placed(session)
+    except Exception:  # noqa: BLE001 - starsi databaze bez tabulky
+        pass
+    rd = None
+    if not light:
+        from . import rankdiag
+
+        rd = rankdiag.report(p4_path)
     return Data(created, recs, legs, bank, versions, dup, p4_eval, None if light else _p4_intel(p4_path, created),
-                perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5, p5_cands=p5_cands)
+                perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5,
+                p5_cands=p5_cands, rejections=rej, placed_combo=placed, rankdiag=rd)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -1097,9 +1176,17 @@ METHOD = [
                            "bootstrap po zápasech. Váhy se neladí; závěr až od 100 zápasů, jinak MÁLO DAT."),
     ("Portfolio Risk", "Oficiální tipy, sledované výběry, skutečné tikety a kombi zvlášť; virtuální jednotky a Kč se nesčítají. "
                        "Více výběrů jednoho zápasu = korelované, ne nezávislé sázky."),
-    ("Yield / ROI (od 3.2.1)", "Všude stejně: zisk v jednotkách / počet sázek s výsledkem výhra nebo prohra (včetně půl). "
-                               "Vráceno (PUSH) a neplatné (INVALID) se do jmenovatele nepočítají a nejsou totéž. "
-                               "Profil 4 v panelu uvádí yield stejně; jeho „ROI“ = zisk / 100 j. kapitálu."),
+    ("Yield / ROI (od 3.2.2 jednotně)", "Jedna definice pro panel, Excel, CLI i Profil 4 (metrics.py): sázka s vkladem = výhra, "
+                                       "půl výhra, prohra nebo půl prohra (každá 1 j. obratu). Zisk: výhra kurz − 1, půl výhra "
+                                       "(kurz − 1)/2, půl prohra −0,5, prohra −1. Vráceno (PUSH) a neplatné (INVALID) nejsou "
+                                       "v obratu ani v počtu sázek, vykazují se zvlášť a nejsou totéž. Yield = ROI na 1 j. = "
+                                       "zisk / sázky s vkladem; u skutečných tiketů zisk Kč / vsazené Kč. Profil 4 navíc "
+                                       "„zhodnocení kapitálu“ = zisk / 100 j. (není to ROI)."),
+    ("Ranking Diagnostics", "Opportunity Ranking rozložený na kvalitu dat, ranking, EV a výsledek; zbytek rankingu nad kvalitu "
+                            "dat. Závěr až od 100 nezávislých zápasů. Váhy se nemění."),
+    ("Bezpečnostní odmítnutí", "Nabídka se stavem PODEZŘELÉ ve společné kontrole kurzu (stejná pro všechny profily) zůstává "
+                               "jako diagnostický záznam (skupina „… – bezpečnostně odmítnuto“, list Market Integrity – All "
+                               "Profiles), ale není schválená sázka a do výsledků profilu se nepočítá. Oficiální tip se nevydá."),
     ("Nezávislé zápasy", "Výběry jednoho zápasu nejsou nezávislé. Intervaly a stav spolehlivosti jsou z bootstrapu po "
                          "ZÁPASECH; pod 30 zápasy MÁLO DAT. Počet výběrů ≠ počet zápasů ≠ počet předpovědí."),
     ("Strategy Comparison", "Každý profil celkem a zvlášť fotbal / NHL: výběry, nezávislé zápasy, výsledky, yield s 95% "
@@ -1340,6 +1427,7 @@ def to_xlsx(d: Data) -> bytes:
 
     # 21–27 Faze 3.2.1 – srovnani strategii, spolecna integrita, Profil 5, rohy a karty, kombi kurzy
     _phase321_sheets(d, sheet, table, F, FB)
+    _rankdiag_sheet(d, sheet, table, F, FB)  # Faze 3.2.2
 
     # 7 Metodika
     ws = sheet("Metodika")

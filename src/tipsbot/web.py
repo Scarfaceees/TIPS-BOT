@@ -26,6 +26,7 @@ from flask import (Flask, flash, get_flashed_messages, jsonify, redirect, render
 from sqlalchemy import select
 
 from . import analysis, auto, backtest, combo, czechodds, detail, devig, kombi, metrics, pickinfo, paper, profile2, risk, secondopinion
+from . import strategy
 from .config import LEAGUES, SETTINGS
 from .storage import RESULTS, TICKET_OPEN, Ledger, Ticket, TicketLeg, Tip, make_session_factory, utcnow
 
@@ -729,7 +730,12 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 {% if cmp %}<h2>Srovnání strategií</h2>
 <div class="card"><div class="muted">Stejné definice pro všechny profily: yield = zisk / sázky s výsledkem výhra nebo prohra (vrácené a neplatné se nepočítají), spolehlivost = 95% interval z bootstrapu po zápasech, pod 30 zápasy MÁLO DAT. Výběry jednoho zápasu nejsou nezávislé. Jednotky (bez peněz) a koruny se nesčítají. Výsledky papírových strategií nejsou důkaz dlouhodobé výnosnosti.</div>
 {% if cmp.error %}<div class="flash err">{{ cmp.error }}</div>{% endif %}
-<div class="muted">Stejná nabídka u více profilů – neshody kontroly kurzu: <b>{{ cmp.bad|length }}</b></div></div>
+<div class="muted">Stejná nabídka u více profilů – neshody kontroly kurzu: <b>{{ cmp.bad|length }}</b> · tvrdá bezpečnostní odmítnutí (všechny profily): <b>{{ cmp.rej_n }}</b></div>
+{% if cmp.rej %}<details class="fold"><summary>Poslední odmítnutí</summary>{% for r in cmp.rej[:20] %}<div class="p4kv">{{ r.profile }} · {{ r.match }} · {{ r.market|bet(r.selection, r.match) }} @ {{ '%.2f'|format(r.odds) }} ({{ r.book }}){% if r.ref_fair %} · férový {{ '%.2f'|format(r.ref_fair) }}{% endif %} · {{ r.ref_n }} skupin{% if r.age_min is not none %} · {{ '%.0f'|format(r.age_min) }} min{% endif %} – {{ r.reasons|replace('[', '')|replace(']', '')|replace('"', '') }}</div>{% endfor %}</details>{% endif %}</div>
+{% if cmp.rank and cmp.rank.all %}{% set ra = cmp.rank.all %}<div class="card"><b>Opportunity Ranking – diagnostika</b> <span class="muted">(váhy se nemění)</span>
+<div class="p4kv">{{ ra.selections }} výběrů · {{ ra.matches }} nezávislých zápasů · <span class="badge warn">{{ ra.verdict }}</span></div>
+<div class="p4kv">{% for k, v in ra.corr.items() if v is not none %}{{ k }} {{ '%+.2f'|format(v) }}{{ ' · ' if not loop.last }}{% endfor %}{% if ra.r2_quality is not none %} · kvalita dat vysvětluje {{ '%.0f'|format(ra.r2_quality * 100) }} % rankingu{% endif %}</div>
+{% for b in ra.residual %}<div class="p4kv">{{ b.band }}: {{ b.matches }} záp. · yield {{ '%+.1f %%'|format(b['yield'] * 100) if b['yield'] is not none else '–' }}</div>{% endfor %}</div>{% endif %}
 <div class="cmpgrid">{% for r in cmp.rows %}<div class="card cmpc"><b>{{ r.group }}</b> <span class="muted">{{ r.sport }}</span>
 <div class="muted">{{ r.method }}</div>
 <div class="p4kv">výběrů {{ r.picks }} · nezávislých zápasů {{ r.matches }} · vyhodnoceno {{ r.settled }} ({{ r.wins }} V / {{ r.losses }} P{% if r.push %} / {{ r.push }} vráceno{% endif %}{% if r.invalid %} / {{ r.invalid }} neplatné{% endif %})</div>
@@ -767,12 +773,19 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 {% if kver %}<div class="card sec-warn" style="margin-top:8px"><b>Ověření kurzů</b> <span class="muted">(hypotetické a ověřené se nesčítají)</span>
 <div class="p4kv">plně ověřených tiketů: <b>{{ kver.fully_verified }}</b> · s neověřenou (cílovou) nohou: <b>{{ kver.with_unverified_leg }}</b></div>
 <div class="p4kv">ROI hypotetické (cílové kurzy): {{ '%+.1f %%'|format(kver.hypothetical.roi * 100) if kver.hypothetical.roi is not none else '–' }} ({{ kver.hypothetical.settled }}) · ROI ověřené ceny: {{ '%+.1f %%'|format(kver.verified.roi * 100) if kver.verified.roi is not none else '–' }} ({{ kver.verified.settled }})</div>
-<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé.</div></div>{% endif %}
-{% if props_split %}<div class="card" style="margin-top:8px"><b>Podle metodiky</b> <span class="muted">(stará se do nové nepočítá)</span>{% for m, st in props_split %}<div class="p4kv">{{ m }}: {{ st.settled }} vyhodnoceno{% if st.roi is not none %} · ROI {{ '%+.1f %%'|format(st.roi * 100) }}{% endif %}</div>{% endfor %}</div>{% endif %}
+<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé. Ověřený je jen tiket, kde má každá noha doložený dostupný kurz kanceláře; cílový kurz ověřený není nikdy.</div>
+<div class="p4kv">Skutečně vsazené AKU tikety (Kč, nesčítá se): {{ kver.placed.tickets }} · vyhodnoceno {{ kver.placed.settled }}{% if kver.placed.roi is not none %} · ROI {{ '%+.1f %%'|format(kver.placed.roi * 100) }}{% endif %}</div></div>{% endif %}
+
+{% if pst.rejected %}<div class="muted note-inline">Bezpečnostně odmítnuto kontrolou kurzu: {{ pst.rejected }} – zůstávají jako diagnostický záznam, do výsledků se nepočítají.</div>{% endif %}
+{% if props_split %}<div class="card" style="margin-top:8px"><b>Podle metodiky</b> <span class="muted">(stará se do nové nepočítá)</span>{% for m, st in props_split %}<div class="p4kv">{{ m }}: {{ st.settled }} vyhodnoceno{% if st.judged and st.roi is not none %} · ROI {{ '%+.1f %%'|format(st.roi * 100) }}{% elif st.settled %} · <span class="badge warn">nevyhodnocuje se ({{ st.matches }} záp., min. 30)</span>{% endif %}</div>{% endfor %}</div>{% endif %}
 {% if pst.settled < 30 %}<div class="muted note-inline">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
 {% if pst.by_market %}<table class="mkt" style="margin-top:8px"><tr><th>Trh</th><th class="num">Výběrů</th><th class="num">Zisk (j.)</th><th class="num">ROI</th></tr>
 {% for m, v in pst.by_market.items() %}<tr><td>{{ m }}</td><td class="num">{{ v[0] }}</td><td class="num {{ 'pos' if v[1] >= 0 else 'neg' }}">{{ '%+.2f'|format(v[1]) }}</td><td class="num"><span class="res {{ 'won' if v[2] >= 0 else 'lost' }}">{{ '%+.1f'|format(v[2] * 100) }} %</span></td></tr>{% endfor %}</table>{% endif %}
 {% else %}<div class="muted" style="margin-top:6px">Zatím nic vyhodnoceno ({{ pst.open }} čeká na výsledek).</div>{% endif %}
+{% if p3pair %}<div class="card" style="margin-top:8px"><b>Profil 3 × nekruhový stín (stejné zápasy)</b>
+<div class="p4kv">společných zápasů {{ p3pair.common_matches }} · stejná sázka {{ p3pair.same_bet }} · jen P3 {{ p3pair.only_a }} · jen stín {{ p3pair.only_b }}</div>
+<div class="p4kv">P3: {{ p3pair.a.settled }} vyhodn.{% if p3pair.a.roi is not none %}, yield {{ '%+.1f %%'|format(p3pair.a.roi * 100) }}{% endif %} · stín: {{ p3pair.b.settled }} vyhodn.{% if p3pair.b.roi is not none %}, yield {{ '%+.1f %%'|format(p3pair.b.roi * 100) }}{% endif %}</div>
+<div class="muted">Stínový profil měří, jak by Profil 3 vybíral bez kruhové reference. Produkční Profil 3 se nemění.</div></div>{% endif %}
 <form class="row" method="post" action="{{ url_for('settle_all') }}"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}"><button class="ghost">Stáhnout výsledky a vyhodnotit automaticky</button></form></div>
 <details class="fold card"><summary>Přidat vlastní výběr do sledování</summary>
 <form method="post" action="{{ url_for('paper_add') }}"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}"><div class="grid2" style="margin-top:8px">
@@ -1180,7 +1193,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% for sp, sd in pp.ranking.sports.items() %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b> · {{ sd.sufficiency.level }} – {{ sd.sufficiency.reason }}</div>
 {% if sd.selections %}<div class="p4mcards">{% for b in sd.bands %}<div class="p4mcard"><div class="p4mhead"><b>Ranking {{ b.band }}</b><small>{{ b.matches }} záp. · {{ b.selections }} výb.</small></div>
 <div class="p4kv">Výhry {{ b.won }} (+{{ b.half_won }} půl) · prohry {{ b.lost }} (+{{ b.half_lost }} půl) · push {{ b.push }} · win rate {{ '%.0f %%'|format(b.win_rate * 100) if b.win_rate is not none else '–' }}</div>
-<div class="p4kv">Yield {{ ppc(b['yield']) }}{{ pci(b.yield_ci95) }} · ROI {{ ppc(b.roi) }} · zisk {{ '%+.2f'|format(b.profit) }} j.</div>
+<div class="p4kv">Yield (= ROI na 1 j.) {{ ppc(b['yield']) }}{{ pci(b.yield_ci95) }} · zhodnocení kapitálu 100 j. {{ ppc(b.get('capital_return', b.roi)) }} · zisk {{ '%+.2f'|format(b.profit) }} j.</div>
 <div class="p4kv">CLV {{ ppc(b.clv) }} ({{ b.clv_n }}) · Brier {{ pf4(b.brier) }} · log loss {{ pf4(b.log_loss) }}</div>
 <div class="p4kv">Ø kurz {{ '%.2f'|format(b.avg_odds) if b.avg_odds else '–' }} · Ø p modelu {{ '%.0f %%'|format(b.avg_p * 100) if b.avg_p is not none else '–' }} · Ø p trhu {{ '%.0f %%'|format(b.avg_p_market * 100) if b.avg_p_market is not none else '–' }} · Ø EV {{ ppc(b.avg_ev) }} · Ø konz. EV {{ ppc(b.avg_ev_conservative) }}</div>
 <div class="muted">{{ b.status }}</div></div>{% endfor %}</div>
@@ -1206,7 +1219,7 @@ fortuna | OU_3.5 | 2.30 1.66">{{ p2f.odds }}</textarea></label>
 {% for it in (sa.last_run_items or []) + (sa.live_mismatches or []) %}<div class="p4kv"><span class="badge bad">INTEGRITY MISMATCH</span> {{ it.match or it.fixture_id }} · {{ it.market }} {{ it.selection }} – {{ it.reason }}</div>{% endfor %}
 {% set fi = pp.finance %}<h3>Finanční výkonnost Profilu 4 (virtuální jednotky)</h3>
 <div class="muted">{{ fi.currency }}. Vyřazeno: {% for k, v in fi.excluded.items() %}{{ k }} {{ v }}{{ ', ' if not loop.last }}{% endfor %}. Skutečné tikety v Kč jsou zvlášť (Export → list Predictive Performance).</div>
-{% for sp, sd in fi.by_sport.items() if sd.all.n %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b>: {{ sd.all.n }} sázek / {{ sd.all.matches }} záp. · zisk {{ '%+.2f'|format(sd.all.profit) }} j. · yield {{ ppc(sd.all['yield']) }}{{ pci(sd.all.yield_ci95) }} · ROI {{ ppc(sd.all.roi) }} · {{ sd.all.yield_status }}</div>
+{% for sp, sd in fi.by_sport.items() if sd.all.n %}<div class="p4kv"><b>{{ 'Fotbal' if sp == 'fotbal' else 'NHL' }}</b>: {{ sd.all.n }} sázek / {{ sd.all.matches }} záp. · zisk {{ '%+.2f'|format(sd.all.profit) }} j. · yield {{ ppc(sd.all['yield']) }}{{ pci(sd.all.yield_ci95) }} · zhodnocení kapitálu 100 j. {{ ppc(sd.all.get('capital_return', sd.all.roi)) }} · {{ sd.all.yield_status }}</div>
 <details class="fold"><summary>Podle rozhodnutí, modelu, soutěže, trhu a rankingu</summary>{% for title, key in (('Rozhodnutí', 'by_decision'), ('Model nad trhem', 'by_model'), ('Soutěž', 'by_league'), ('Trh', 'by_market'), ('Ranking', 'by_band'), ('Kurz', 'by_odds')) %}<div class="p4kv"><b>{{ title }}:</b> {% for k, v in sd[key].items() %}{{ k }} {{ v.n }}× {{ ppc(v['yield']) }}{{ ' · ' if not loop.last }}{% endfor %}</div>{% endfor %}</details>{% endfor %}
 <details class="fold"><summary>Metodika výpočtu</summary>{% for k, v in fi.method.items() %}<div class="p4kv"><b>{{ k }}</b>: {{ v }}</div>{% endfor %}</details>
 <div class="muted">{{ pp.note }}</div>
@@ -1773,7 +1786,10 @@ def create_app(database_url: str | None = None) -> Flask:
             | ({"profil5": _p5_stats(p5v)} if p5v else {}),
             p5=p5v,
             cmp=cmpv,
-            kver=kombi.verification(all_picks) if tab == "sledovani" and prof.key == "kombi" else None,
+            kver=({**kombi.verification(all_picks), "placed": kombi.placed(session)}
+                  if tab == "sledovani" and prof.key == "kombi" else None),
+            p3pair=(strategy.paired(all_picks, "profil3", "profil3x")
+                    if tab == "sledovani" and prof.key in ("profil3", "profil3x") else None),
             props_split=_props_split(picks) if tab == "sledovani" and prof.props else None,
             rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
             prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
@@ -1890,15 +1906,24 @@ def create_app(database_url: str | None = None) -> Flask:
 
         try:
             d = export.collect(session, P4.db_path, utcnow(), light=True)
-            return {"rows": strategy.comparison(d), "bad": strategy.integrity_consistency(d.picks)}
+            from . import rankdiag
+            from .storage import IntegrityRejection
+
+            rej = list(session.query(IntegrityRejection).order_by(IntegrityRejection.created.desc()).limit(50))
+            return {"rows": strategy.comparison(d), "bad": strategy.integrity_consistency(d.picks),
+                    "rank": rankdiag.report(P4.db_path), "rej": rej,
+                    "rej_n": session.query(IntegrityRejection).count()}
         except Exception as e:  # noqa: BLE001
             return {"error": str(e), "rows": [], "bad": []}
 
     def _props_split(picks) -> list:
+        """Metodiky rohu a karet zvlast; pod 30 zapasy se metodika nevyhodnocuje (zadne ROI z par tipu)."""
         out = []
         for m in ("jen model", "25/75"):
             sub = [p for p in picks if paper.props_method(p) == m]
-            out.append((m, paper.stats(sub)))
+            st = paper.stats(sub)
+            st["judged"] = st["matches"] >= 30
+            out.append((m, st))
         return out
 
     def _export_data(session):

@@ -82,7 +82,9 @@ def record(store: Store, an: MatchAnalysis, cfg: Profil4Config) -> int:
              c.fair_odds_c, c.odds, q.bookmaker, q.source, iso(q.stamp), c.ev_c, c.ev_d, c.robustness,
              decision, c.category, when, MODEL_VERSION, h, sources, iso(q.fetched_at), q.age_minutes(an.created),
              c.quote_status, c.p_market, (c.intel.get("quality") or {}).get("score"),
-             (c.intel.get("rank") or {}).get("score"), json.dumps(c.intel, ensure_ascii=False, default=str) if c.intel else None))
+             (c.intel.get("rank") or {}).get("score"),
+             json.dumps({**(c.intel or {}), **({"model_guard": c.guard} if c.guard else {})}, ensure_ascii=False, default=str)
+             if (c.intel or c.guard) else None))
         n += 1
     record_predictions(store, an, cfg)
     return n
@@ -127,7 +129,7 @@ def _record_rankings(store: Store, an: MatchAnalysis) -> int:
                                                                                          "uncertain")},
                   "odds": {k: oi.get(k) for k in ("median", "fair_market", "dev", "books", "flags", "suspicious")},
                   "integrity": integ, "p": c.p, "p_market": c.p_market, "category": c.category,
-                  "reasons_decision": c.reasons[:6]}
+                  "reasons_decision": c.reasons[:6], **({"model_guard": c.guard} if c.guard else {})}
         store.execute(
             "INSERT INTO rankings(computed_at, version, fixture_id, match, league, kickoff, market, selection, label, odds, "
             "bookmaker, odds_time, ev, ev_conservative, robustness, quality, rank, decision, integrity, valid, detail) "
@@ -455,11 +457,16 @@ def unique_bets(rows: list[dict]) -> tuple[list[dict], int]:
 
 
 def bet_stats(rows: list[dict], bankroll_units: float = 100.0) -> dict:
-    """Jednotkove vklady (1 j. na tip). yield = zisk / obrat; ROI = zisk / vychozi kapital (bankroll_units).
+    """Jednotkove vklady (1 j. na tip). yield = ROI na 1 j. = zisk / obrat (sazky vyhra/prohra vc. pul; push a
+    neplatne mimo – metrics.py); capital_return = zisk / vychozi kapital (bankroll_units), neni to ROI.
 
     Intervaly yieldu a CLV jsou ze shlukoveho bootstrapu po zapasech. CLV jen proti skutecnemu zaviracimu kurzu;
     chybejici zaviraci kurz se nepocita (neni to CLV 0). Proti poslednimu pozorovanemu kurzu zvlast (clv_last)."""
-    settled = [r for r in rows if r["result"] and r["result"] != mathcore.VOID]
+    from ..metrics import is_staked
+
+    # jednotna definice (metrics.py, Faze 3.2.2): vraceni (push) a neplatne (void) nejsou v obratu
+    push = sum(1 for r in rows if r["result"] == mathcore.PUSH)
+    settled = [r for r in rows if is_staked(r["result"])]
     n = len(settled)
     profit = float(sum(r["profit"] for r in settled))
     wins = sum(1 for r in settled if r["result"] in (mathcore.WON, mathcore.HALF_WON))
@@ -471,7 +478,8 @@ def bet_stats(rows: list[dict], bankroll_units: float = 100.0) -> dict:
     clv_matches = len({r.get("fixture_id", i) for i, r in enumerate(clv_rows)})
     status = verdict(ylo, yhi, matches)
     return {"n": n, "matches": matches, "profit": profit, "yield": profit / n if n else math.nan,
-            "roi": profit / bankroll_units, "win_rate": wins / n if n else math.nan,
+            "roi": profit / n if n else math.nan, "capital_return": profit / bankroll_units, "push": push,
+            "win_rate": wins / n if n else math.nan,
             "avg_clv": float(np.mean([r["clv"] for r in clv_rows])) if clv_rows else math.nan, "clv_n": len(clv_rows),
             "clv_ci95": None if math.isnan(clo) else (clo, chi), "clv_status": verdict(clo, chi, clv_matches),
             "avg_clv_last": float(np.mean([r["clv_last"] for r in last_rows])) if last_rows else math.nan,

@@ -419,6 +419,10 @@ class OfferEval:
     sim_profit: float  # vysledek 1000 simulovanych zapasu po 100 Kc (v %)
     verdict: str  # robust | borderline | none | avoid | suspicious
     gradeable: bool  # umi ho vyhodnotit Sledovani (OU, TTH/TTA, BTTS, 1X2, DC, DNB)
+    # Faze 3.2.2: podil uspesneho vyporadani = plna vyhra + 0,5 × pul vyhra (pul vyhra = pul vkladu vyhraje,
+    # pul se vrati). p_win (a z nej p_model ve Sledovani) se NEMENI – pouziva se jen v podmince „výhra ≥ 60 %“.
+    win_share: list = field(default_factory=list)
+    worst_win_share: float | None = None
 
 
 @dataclass
@@ -462,9 +466,11 @@ class Analysis:
 def _eval_offer(market: str, sel: str, book: str, odds: float, mats: list[np.ndarray], sim_scores: np.ndarray,
                 cfg: Profile2Config, decides: list[bool] | None = None) -> OfferEval:
     r = returns(market, sel, odds)
-    p_win, p_push, p_loss, ev, be = [], [], [], [], []
+    p_win, p_push, p_loss, ev, be, share = [], [], [], [], [], []
     for mat in mats:
         win = float(mat[r > 1.0 + 1e-9].sum())
+        half_win = float(mat[(r > 1.0 + 1e-9) & (r < odds - 1e-9)].sum())
+        share.append(win - 0.5 * half_win)
         push = float(mat[np.abs(r - 1.0) < 1e-9].sum())
         half = float(mat[(r > 1e-9) & (r < 1.0 - 1e-9)].sum())  # polovicni prohra
         e = float((mat * r).sum() - 1.0)
@@ -494,6 +500,7 @@ def _eval_offer(market: str, sel: str, book: str, odds: float, mats: list[np.nda
         p_win=p_win, p_push=p_push, p_loss=p_loss, ev=ev, breakeven=be,
         min_odds=round(max(be[i] for i in idx) * (1.0 + cfg.safety_margin), 2), worst_ev=w_ev, worst_win=p_win[worst],
         worst_loss=p_loss[worst], worst_push=p_push[worst], sim_profit=profit, verdict=verdict, gradeable=gradeable,
+        win_share=share, worst_win_share=share[worst],
     )
 
 
@@ -731,7 +738,7 @@ def analyse(
     safe = [o for o in usable if o.worst_loss <= cfg.safe_max_loss]
     if safe:
         picks.append(Pick("safe", "Nejrozumnější sázka", max(safe, key=lambda o: o.worst_ev)))
-    high = [o for o in usable if o.odds >= cfg.high_prob_min_odds and o.worst_win >= cfg.high_prob_min_win]
+    high = [o for o in usable if o.odds >= cfg.high_prob_min_odds and win_share(o) >= cfg.high_prob_min_win]
     if high:
         picks.append(Pick("high_prob", "Kurz 1,5+ s vysokou šancí", max(high, key=lambda o: o.worst_ev)))
     val = [o for o in usable if o.worst_ev >= cfg.value_ev]
@@ -862,6 +869,11 @@ def pick_detail(a: Analysis, pk: Pick) -> str:
     push = f", vrácení {o.worst_push:.0%}" if o.worst_push > 0.005 else ""
     return (f"{pk.title}. Góly {sc}. Výhra {o.worst_win:.0%}{push}, prohra {o.worst_loss:.0%}; EV {ev}; "
             f"min. kurz {o.min_odds:.2f}.")
+
+
+def win_share(o: "OfferEval") -> float:
+    """Podil uspesneho vyporadani v horsim scenari (pul vyhra = 0,5). Starsi ulozene rozbory pole nemaji."""
+    return o.worst_win_share if o.worst_win_share is not None else o.worst_win
 
 
 def outcome_split(market: str, selection: str, odds: float, mat: np.ndarray) -> dict[str, float]:

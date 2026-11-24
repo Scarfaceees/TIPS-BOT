@@ -153,6 +153,9 @@ def build_candidates(fx: Fixture, ms: M.ModelSet, quotes: list[O.OddsQuote], now
     every = O.best_prices(quotes, now, cfg.odds, usable_only=False)
     best = {**every, **cur}  # aktualni kurz ma prednost; zastaraly jen kdyz jiny neni (rozhodnuti ho oznaci)
     mats = scenario_matrices(ms, cfg, lstate == "confirmed")
+    from .guards import model_a_guard
+
+    guard = model_a_guard(ms, cfg.decision)  # Faze 3.2.2: pojistka Modelu A pro cely zapas
     out = []
     for key, q in best.items():
         if not supported(q.market):
@@ -177,7 +180,7 @@ def build_candidates(fx: Fixture, ms: M.ModelSet, quotes: list[O.OddsQuote], now
             fair_odds_d=(d[0].fair_odds if d else None), ev_c=ec.ev, ev_d=(d[0].ev if d else None),
             min_odds=mathcore.min_odds_for_ev(ec.a, ec.b, cfg.decision.ev_min), robustness=rb.score,
             data_quality=dq, models_complete=ms.a.available and ms.b.available, lineups=lstate,
-            stress=st.scenarios, robustness_parts=rb.parts)
+            stress=st.scenarios, robustness_parts=rb.parts, guard=guard if guard["triggered"] else None)
         _check(cand, ms, quotes, now, cfg)
         out.append(decide(cand, cfg.decision))
     return out

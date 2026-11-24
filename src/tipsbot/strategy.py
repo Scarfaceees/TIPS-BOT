@@ -156,3 +156,19 @@ def integrity_consistency(picks: list) -> list[dict]:
             bad.append({"offer": k, "profiles": (seen[k][0], p.profile), "status": (seen[k][1], it.get("status"))})
         seen.setdefault(k, (p.profile, it.get("status")))
     return bad
+
+
+def paired(picks: list, a: str, b: str) -> dict:
+    """Dva profily jen na STEJNYCH zapasech (Faze 3.2.2: Profil 3 proti nekruhovemu stinovemu profilu 3x).
+    Vybery jednoho zapasu v obou profilech nejsou nezavisle – srovnava se rozdil na tychz zapasech."""
+    from . import paper
+
+    pa, pb = paper.of_profile(picks, a), paper.of_profile(picks, b)
+    ma, mb = {p.match_id for p in pa}, {p.match_id for p in pb}
+    common = ma & mb
+    same = sum(1 for p in pa if p.match_id in common
+               and any(q.match_id == p.match_id and (q.market, q.selection) == (p.market, p.selection) for q in pb))
+    return {"common_matches": len(common), "only_a": len(ma - mb), "only_b": len(mb - ma), "same_bet": same,
+            "a": paper.stats([p for p in pa if p.match_id in common]),
+            "b": paper.stats([p for p in pb if p.match_id in common]),
+            "a_all": paper.stats(pa), "b_all": paper.stats(pb)}

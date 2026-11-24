@@ -70,6 +70,6 @@ def test_profile3_tracks_without_bot_model():
     led = Ledger(make_session_factory("sqlite://")())
     ev = Event("x:wp", "UNL", "Wales", "Portugal", NOW + timedelta(hours=20))
     paper.track(led, "UNL", [(ev, None, _entries())], NOW)
-    (p,) = paper.load(led)
+    (p,) = [x for x in paper.load(led) if x.profile == "profil3"]  # od Faze 3.2.2 vybira i stinovy profil3x
     assert p.profile == "profil3" and p.detail and (p.market, p.selection) == ("OU_2.0", "over")  # bez modelu bota vede trh
     assert p.ev == pytest.approx(marketsim.best_pick("x:wp", None, _entries()).ev, abs=1e-3)

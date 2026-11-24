@@ -98,6 +98,8 @@ class OddsConfig:
     max_age_manual_min: int = 120  # rucne opsany kurz plati 2 h
     # kurzy pred vykopem pro CLV: u zapasu s tipy/predikcemi se stahnou v techto bodech (minut pred vykopem),
     # kazdy bod 1 pozadavek; automat bota to dela sam, bez skenu (closing.py)
+    # Faze 3.2.2 (jen doporuceni, neprovedeno): bod 75 min nikdy nedava zaviraci kurz (plati pozorovani <= 20 min);
+    # posun na 5 min by drzel 3 pozadavky na zapas, ale meni logiku posledniho bodu (NHL, zahranicni overeni).
     closing_slots_min: tuple[int, ...] = (75, 30, 10)
     # skutecny zaviraci kurz: pozorovan nejvys 20 min pred vykopem A posledni aktualizace u poskytovatele nejvys
     # 60 min pred vykopem. Jinak jde jen o posledni pozorovany kurz, pripadne zastaraly (poskytovatel neaktualizoval).
@@ -153,6 +155,9 @@ class DecisionConfig:
     max_logit_gap: float = 0.5  # model A vs trh B v log-sancich (pomer sanci ~1.65) – hlavne u outsideru
     min_book_overround: float = -0.01  # soucet 1/kurz trhu jedne kancelare pod 99 % = kurzy nejsou jeden trh
     max_book_overround: float = 0.25  # marze nad 25 % = chybny nebo neuplny trh
+    # Faze 3.2.2 – pojistka Modelu A (guards.py, zduvodneni z dat tamtez): pri spusteni NO BET pro cely zapas
+    model_a_guard_logit: float = 3.0  # rozdil log-sanci A vs trh na 1X2 (pomer sanci 20×)
+    model_a_guard_p: float = 0.99  # bez ceny trhu: Model A dava vysledku 1X2 aspon tolik
 
 
 @dataclass(frozen=True)

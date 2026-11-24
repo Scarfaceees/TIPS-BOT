@@ -117,9 +117,10 @@ def _bet_stats(rows: list[dict], key_profit: str = "profit") -> dict:
     for r in rs:
         cnt[r["result"]] += 1
     non_push = len(rs) - cnt[mathcore.PUSH]
+    staked = [r for r in rs if r["result"] != mathcore.PUSH]  # jednotna definice: push neni v obratu (metrics.py)
     profit = sum(r[key_profit] for r in rs)
     m = len({r["fixture_id"] for r in rs})
-    y, ylo, yhi = cluster_ci(_clusters(rs, lambda r: r[key_profit]), reps=REPS) if rs else (math.nan,) * 3
+    y, ylo, yhi = cluster_ci(_clusters(staked, lambda r: r[key_profit]), reps=REPS) if staked else (math.nan,) * 3
     w, wlo, whi = (cluster_ci(_clusters([r for r in rs if r["result"] != mathcore.PUSH],
                                         lambda r: 1.0 if r["result"] in (mathcore.WON, mathcore.HALF_WON) else 0.0), reps=REPS)
                    if non_push else (math.nan,) * 3)
@@ -128,10 +129,11 @@ def _bet_stats(rows: list[dict], key_profit: str = "profit") -> dict:
     return {"matches": m, "n": len(rs), "won": cnt[mathcore.WON], "half_won": cnt[mathcore.HALF_WON],
             "push": cnt[mathcore.PUSH], "half_lost": cnt[mathcore.HALF_LOST], "lost": cnt[mathcore.LOST],
             "win_rate": _f(w), "win_rate_ci95": None if math.isnan(wlo) else (wlo, whi),
-            "avg_odds": _mean([r.get("odds") for r in rs]), "turnover": float(len(rs)), "profit": float(profit),
-            "yield": _f(y) if rs else None, "yield_ci95": None if math.isnan(ylo) else (ylo, yhi),
-            "roi": float(profit) / BANKROLL_UNITS if rs else None,
-            "yield_status": IG.verdict(ylo, yhi, m) if rs else "bez vyhodnocených sázek"}
+            "avg_odds": _mean([r.get("odds") for r in staked]), "turnover": float(len(staked)), "profit": float(profit),
+            "yield": _f(y) if staked else None, "yield_ci95": None if math.isnan(ylo) else (ylo, yhi),
+            "roi": _f(y) if staked else None,  # ROI na 1 j. = yield (jedna definice)
+            "capital_return": float(profit) / BANKROLL_UNITS if rs else None,  # zhodnoceni kapitalu 100 j. (ne ROI)
+            "yield_status": IG.verdict(ylo, yhi, m) if staked else "bez vyhodnocených sázek"}
 
 
 def _prob_stats(rows: list[dict], pk: str = "p") -> dict:
@@ -693,7 +695,7 @@ def format_text(perf: dict, section: str = "performance") -> str:
             for b in sd["bands"]:
                 L.append(f"  {b['band']}: {b['matches']} záp. / {b['selections']} výb., výhry {b['won']} (+{b['half_won']} půl), "
                          f"prohry {b['lost']} (+{b['half_lost']} půl), push {b['push']}, win rate {'–' if b['win_rate'] is None else f"{b['win_rate']:.0%}"}, "
-                         f"yield {_pct(b['yield'])}{_ci(b['yield_ci95'])}, ROI {_pct(b['roi'])}, CLV {_pct(b['clv'])} "
+                         f"yield {_pct(b['yield'])}{_ci(b['yield_ci95'])}, zhodnocení kapitálu {_pct(b.get('capital_return', b['roi']))}, CLV {_pct(b['clv'])} "
                          f"({b['clv_n']}), Brier {'–' if b['brier'] is None else f'{b['brier']:.4f}'} – {b['status']}")
             av = sd.get("added_value")
             if av:

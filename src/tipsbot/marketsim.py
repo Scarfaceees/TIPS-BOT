@@ -172,8 +172,23 @@ class SimPick:
 
 
 def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> tuple[SimPick | None, dict]:
+    """Produkcni Profil 3 (beze zmeny) – viz _analyse."""
+    return _analyse(match_id, model, entries, cfg, False)
+
+
+def analyse_lobo(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT) -> tuple[SimPick | None, dict]:
+    """Stinovy nekruhovy Profil 3x (Faze 3.2.2) – viz _analyse(lobo=True)."""
+    return _analyse(match_id, model, entries, cfg, True)
+
+
+def _analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = DEFAULT,
+             lobo: bool = False) -> tuple[SimPick | None, dict]:
     """Rozbor zapasu: (vybrana sazka nebo None, rozbor). Rozbor se uklada i bez sazky – co trh ceka, nejcastejsi
-    vysledky a proc zadna sazka neprosla pravidly (nejblizsi kandidat a duvod)."""
+    vysledky a proc zadna sazka neprosla pravidly (nejblizsi kandidat a duvod).
+
+    `lobo=True` (Faze 3.2.2, stinovy profil „Profil 3 – nekruhový“): scenare kazde nabidky se pocitaji z golu
+    fitovanych BEZ jejiho trhu – hodnocena cena tak neovlivni vlastni referenci. Pravidla vyberu jsou stejna;
+    nabidka, u ktere bez jejiho trhu nezbydou aspon 2 trhy, se nehodnoti (NEOVĚŘENO)."""
     prior = None
     if model and model.get("lambda_home") and model.get("lambda_away"):
         prior = (float(model["lambda_home"]), float(model["lambda_away"]))
@@ -186,6 +201,18 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
     info.update(lam=round(lam, 2), mu=round(mu, 2), fit_err=round(err, 4), fit_markets=n_mk,
                 top=[(sc_, round(p, 3)) for sc_, p in simulate(lam, mu, cfg.sims, zlib.crc32(match_id.encode()))])
     sc = {k: score_matrix(a, b, RHO, MAX_GOALS) for k, (a, b) in scenarios(lam, mu, model, cfg).items()}
+    per_market: dict[str, tuple | None] = {}  # lobo: trh -> (scenare, lam, mu, chyba, trhu) bez tohoto trhu
+
+    def market_sc(market: str):
+        if not lobo:
+            return sc, lam, mu, err, n_mk
+        if market not in per_market:
+            f = fit_lambdas([x for x in entries if x.market != market], prior, cfg)
+            per_market[market] = None if f is None or f[3] < 2 else (
+                {k: score_matrix(a, b, RHO, MAX_GOALS) for k, (a, b) in scenarios(f[0], f[1], model, cfg).items()}, *f)
+        return per_market[market]
+    if lobo:
+        info["lobo_unverified"] = 0
     best: tuple[tuple[float, float], SimPick] | None = None
     near: tuple[float, dict] | None = None  # nejblizsi zamitnuty kandidat
     for e in entries:
@@ -195,7 +222,11 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
         for sel, odds in zip(sels, e.odds):
             if not (cfg.min_odds <= odds <= cfg.max_odds):
                 continue
-            res = {k: evaluate(e.market, sel, odds, m) for k, m in sc.items()}
+            ms_ = market_sc(e.market)
+            if ms_ is None:
+                info["lobo_unverified"] += 1
+                continue
+            res = {k: evaluate(e.market, sel, odds, m) for k, m in ms_[0].items()}
             if any(r is None for r in res.values()):
                 continue
             info["checked"] += 1
@@ -223,6 +254,7 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
                                                      else f"žádný z {info['checked']} kurzů v pásmu {cfg.min_odds:.2f}–{cfg.max_odds:.2f} nesplnil pravidla"))
         return None, info
     pick = best[1]
+    sc, lam, mu, err, n_mk = market_sc(pick.market)  # lobo: goly bez trhu vybrane sazky
     full = {k: evaluate(pick.market, pick.selection, pick.odds, m) for k, m in sc.items()}
     evs = {k: v["ev"] for k, v in full.items()}
     lams = scenarios(lam, mu, model, cfg)
@@ -230,9 +262,10 @@ def analyse(match_id: str, model: dict | None, entries: list, cfg: SimConfig = D
                  "weights": dict(cfg.weights), "sims": cfg.sims, "seed": zlib.crc32(match_id.encode()),
                  "scenarios": {k: {"lam": round(lams[k][0], 3), "mu": round(lams[k][1], 3),
                                    **{x: round(v[x], 4) for x in ("ev", "win", "push", "loss")}} for k, v in full.items()},
-                 "score": round(pick.score, 4), "worst_ev": round(pick.worst_ev, 4)}
+                 "score": round(pick.score, 4), "worst_ev": round(pick.worst_ev, 4), "lobo": lobo}
     pick.detail = (
-        f"Trh čeká {lam:.2f} : {mu:.2f} gólu ({n_mk} trhů). Simulace {cfg.sims}×: "
+        ("Nekruhově (góly bez trhu této sázky). " if lobo else "")
+        + f"Trh čeká {lam:.2f} : {mu:.2f} gólu ({n_mk} trhů). Simulace {cfg.sims}×: "
         + ", ".join(f"{s_} {p * 100:.0f} %" for s_, p in info["top"])
         + f". Výhra {pick.win * 100:.0f} %"
         + (f", vrácení {pick.push * 100:.0f} %" if pick.push > 0.005 else "")

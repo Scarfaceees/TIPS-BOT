@@ -46,6 +46,7 @@ class Profile:
 
 
 PROPS = ("ROHY_", "KARTY_")
+HARD_REJECT = "BEZPEČNOSTNĚ ODMÍTNUTO – kontrola kurzu"
 # Rohy a karty: sance = smes modelu a trhu (Pinnacle, jinak median kancelari bez marze). Model rohu a karet je ve
 # zpetnem testu (2 656 zapasu 2025/26) jen o 1-4 % lepsi nez ligovy prumer, trh zna rozhodci, derby a sestavy –
 # samotny model vybiral hlavne zapasy, kde se mylil nejvic (11/2026: 2 z 11, slibovany zisk +24 %).
@@ -63,6 +64,11 @@ PROFILES = (
             "góly fitované z kurzů kanceláří, simulace 1000 zápasů a 4 scénáře; nižší kurz 1.15–1.75, "
             "prohra nejvýš ve 25 % zápasů, sázka musí obstát i při méně příznivém průběhu",
             min_odds=1.15, max_odds=1.75, method="sim"),
+    Profile("profil3x", "Profil 3 – nekruhový (SHADOW)",
+            "STÍNOVÉ MĚŘENÍ k Profilu 3 (od 24. 11. 2026): stejná pravidla (kurz 1.15–1.75, prohra nejvýš 25 %, nejhorší "
+            "scénář), ale góly každé nabídky se fitují BEZ jejího vlastního trhu – hodnocená cena neovlivní referenci. "
+            "Produkční Profil 3 se nemění; srovnání jen na stejných zápasech",
+            min_odds=1.15, max_odds=1.75, method="sim_lobo"),
     Profile("tipy", "Tipy bota",
             "každý oficiální tip bota (TIP / VSADIT), vsazený i nevsazený, se zapíše s kurzem a šancí v okamžiku tipu "
             "a vyhodnotí se – i když ho pak bot zruší (pokles kurzu) nebo vyprší; tak je vidět skutečná úspěšnost tipů",
@@ -201,11 +207,13 @@ def _save_analysis(ledger, league: str, ev, info: dict, now: datetime) -> None:
 
 
 def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: datetime, ledger=None) -> Pick | None:
-    """Profil se simulaci trhu (marketsim). Rozbor se ulozi i bez sazky (panel: proc sazku nenasel)."""
+    """Profil se simulaci trhu (marketsim). Rozbor se ulozi i bez sazky (panel: proc sazku nenasel).
+    Stinovy nekruhovy profil (method sim_lobo) rozbory Profilu 3 neprepisuje."""
     cfg = marketsim.SimConfig(min_odds=pr.min_odds or marketsim.DEFAULT.min_odds,
                               max_odds=pr.max_odds or marketsim.DEFAULT.max_odds)
-    sp, info = marketsim.analyse(ev.match_id, model, entries, cfg)
-    if ledger is not None:
+    lobo = pr.method == "sim_lobo"
+    sp, info = (marketsim.analyse_lobo if lobo else marketsim.analyse)(ev.match_id, model, entries, cfg)
+    if ledger is not None and not lobo:
         _save_analysis(ledger, league, ev, info, now)
     if sp is None:
         return None
@@ -214,7 +222,8 @@ def _sim(pr: Profile, league: str, ev, model: dict | None, entries: list, now: d
         day=ev.kickoff.date().isoformat(), kickoff=ev.kickoff.isoformat(), market=sp.market,
         selection=sp.selection, odds=sp.odds, book=sp.book, p_model=round(sp.p_equiv, 4), source="model",
         created=now.isoformat(), flags=sp.flags, profile=pr.key, detail=sp.detail,
-        meta={"p3": sp.scen or {}, "p3_lobo": marketsim.lobo_market(ev.match_id, model, entries, sp, cfg)},
+        meta={"p3": sp.scen or {}} if lobo else
+        {"p3": sp.scen or {}, "p3_lobo": marketsim.lobo_market(ev.match_id, model, entries, sp, cfg)},
     )
 
 
@@ -264,7 +273,7 @@ def _best(pr: Profile, league: str, ev, model: dict, entries: list, now: datetim
     """Vyber s nejvyssim cekanym ziskem podle pravidel profilu. `extra` = dalsi trhy (median API-Football) jen pro
     simulaci trhu – ta potrebuje co nejvic linii, ostatni profily zustavaji u svych kurzu."""
     entries = [e for e in entries if e.market.startswith(PROPS) == pr.props]
-    if pr.method == "sim":
+    if pr.method in ("sim", "sim_lobo"):
         have = {e.market for e in entries}
         entries = entries + [e for e in extra or [] if e.market not in have and not e.market.startswith(PROPS)]
         return _sim(pr, league, ev, model, entries, now, ledger) if entries else None
@@ -339,6 +348,15 @@ def track(ledger, league: str, offers: list, now: datetime, settings: Settings =
                 new.integrity = marketcheck.for_event(ev, new.market, new.selection, new.odds, new.book, now, stamps)
             except Exception as e:  # noqa: BLE001 - kontrola nesmi shodit sledovani
                 new.integrity = {"status": marketcheck.UNVERIFIED, "reasons": [f"kontrola selhala: {e}"]}
+            if marketcheck.is_hard_reject(new.integrity):  # Faze 3.2.2: diagnosticky zaznam, ne sazka profilu
+                new.meta = {**new.meta, "hard_reject": True}
+                new.flags = new.flags + [f"{HARD_REJECT}: " + "; ".join(new.integrity.get("reasons") or [])]
+                try:
+                    marketcheck.log_rejection(ledger.s, pr.key, ev.match_id, ev.name, ev.kickoff, new.integrity)
+                except Exception as e:  # noqa: BLE001
+                    import logging
+
+                    logging.getLogger(__name__).warning("zapis odmitnuti selhal: %s", e)
             if old is not None:
                 picks.remove(old)
             picks.append(new)
@@ -438,24 +456,33 @@ def settle(ledger, results: pd.DataFrame) -> list[str]:
     return notes
 
 
+def hard_rejected(p: "Pick") -> bool:
+    """Vyber tvrde odmitnuty spolecnou kontrolou kurzu (Faze 3.2.2): zustava jako diagnosticky zaznam."""
+    return bool((p.meta or {}).get("hard_reject"))
+
+
 def counted(picks: list[Pick]) -> list[Pick]:
-    """Vybery, ktere jdou do statistik: kombi tiket s uz zapocitanou sazkou se nepocita (kombi.overlaps)."""
+    """Vybery, ktere jdou do statistik: kombi tiket s uz zapocitanou sazkou se nepocita (kombi.overlaps) a tvrde
+    odmitnuty vyber (PODEZŘELÉ – kontrola kurzu pred vykopem, ne podle vysledku) take ne."""
     from . import kombi
 
     skip = kombi.overlaps(picks)
-    return [p for p in picks if p.id not in skip]
+    return [p for p in picks if p.id not in skip and not hard_rejected(p)]
 
 
 def stats(picks: list[Pick]) -> dict:
     """Jednotne definice (Faze 3.2.1, stejne jako Excel): ROI na 1 j. (= yield) = zisk / pocet sazek s vysledkem
     vyhra/prohra (vcetne pul); vracene sazky se do jmenovatele nepocitaji (driv panel delil i vracenymi)."""
+    from .metrics import is_staked
+
+    rejected = sum(1 for p in picks if hard_rejected(p))
     picks = counted(picks)
     done = [p for p in picks if p.result is not None]
-    staked = [p for p in done if p.result != "void"]
+    staked = [p for p in done if is_staked(p.result)]
     out = {"open": len(picks) - len(done), "settled": len(done), "staked": len(staked),
            "push": len(done) - len(staked), "profit": 0.0, "roi": None, "hit": None,
            "avg_odds": None, "avg_ev": None, "by_market": {},
-           "matches": len({(p.name, p.day) for p in done})}
+           "matches": len({(p.name, p.day) for p in done}), "rejected": rejected}
     if not done:
         return out
     out["profit"] = sum(p.profit for p in done)

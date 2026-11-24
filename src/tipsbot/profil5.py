@@ -149,6 +149,8 @@ def scan(ledger, league: str, events: list, now: datetime, stamps: dict | None =
                                                 "included": ref["included"], "excluded": ref["excluded"],
                                                 "integrity": chk}, ensure_ascii=False, default=str),
                                reasons=json.dumps(reasons, ensure_ascii=False))
+                    if MC.is_hard_reject(chk):  # spolecna stopa tvrdych odmitnuti vsech profilu
+                        MC.log_rejection(s, "profil5", ev.match_id, ev.name, ev.kickoff, chk)
                     if reasons:
                         for r in reasons:
                             counts["odmítnuto: " + _reason_key(r)] += 1
@@ -262,7 +264,9 @@ def _ci(items: list[tuple[str, float, float]]):
 def perf(cands: list[P5Candidate], price: str = "odds") -> dict:
     """Vysledky kandidatu pri danem kurzu (odds = kancelar nad konsenzem, median_odds, best_odds).
     Yield = zisk / pocet sazek s vysledkem vyhra/prohra; interval = bootstrap po zapasech."""
-    staked = [c for c in cands if c.result and c.result != "void" and getattr(c, price)]
+    from .metrics import is_staked
+
+    staked = [c for c in cands if is_staked(c.result) and getattr(c, price)]
     profit = [(c.match_id, _unit_profit(c.result, getattr(c, price)), 1.0) for c in staked]
     out = {"n": len(cands), "settled": sum(1 for c in cands if c.result), "staked": len(staked),
            "matches": len({c.match_id for c in cands}), "wins": sum(c.result in ("won", "half_won") for c in staked),

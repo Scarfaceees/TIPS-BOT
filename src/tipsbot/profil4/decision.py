@@ -53,6 +53,7 @@ class Candidate:
     market_covered: bool = False  # ma trh B pro tento typ sazky aktualni kurzy
     confirmed_by: list[str] = field(default_factory=list)  # jine kancelare s podobnym kurzem
     intel: dict = field(default_factory=dict)  # Faze 3 (intelligence.annotate): kvalita dat, kurzy, EV, ranking – bez vlivu na rozhodnuti
+    guard: dict | None = None  # Faze 3.2.2: pojistka Modelu A pro zapas (guards.model_a_guard); nemeni p ani EV
 
     @property
     def odds(self) -> float:
@@ -107,6 +108,10 @@ def decide(c: Candidate, cfg: DecisionConfig) -> Candidate:
     if c.lineups != "confirmed":
         c.risks.append("sestavy nejsou potvrzené")
     _integrity(c, cfg, fails_hard, fails_soft)
+    if c.guard and c.guard.get("triggered"):  # extremni predikce Modelu A: nikdy schvalit ani sledovat
+        from .guards import GUARD
+
+        fails_hard.insert(0, f"{GUARD}: " + "; ".join(c.guard["reasons"]))
 
     if not fails_hard and not fails_soft:
         c.decision, c.reasons = APPROVED, ok

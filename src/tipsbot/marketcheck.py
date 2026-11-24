@@ -280,3 +280,38 @@ def summary(items: list[dict | None]) -> dict[str, int]:
     for it in items:
         out[(it or {}).get("status", UNVERIFIED)] = out.get((it or {}).get("status", UNVERIFIED), 0) + 1
     return out
+
+
+# --- Faze 3.2.2: tvrde bezpecnostni odmitnuti -------------------------------------------------------------------
+HARD = (SUSPECT,)  # PODEZŘELÉ = cenovy extrem nad medianem / nad ferovou cenou bez potvrzeni / kurzy netvori trh
+
+
+def is_hard_reject(it: dict | None) -> bool:
+    """Tvrde odmitnuti: vyber zustava jako diagnosticky zaznam, ale nesmi byt prezentovan jako schvalena sazka
+    ani se pocitat do vysledku profilu. NEOVĚŘENO (malo dat) tvrde odmitnuti NENI – jen se tak oznaci."""
+    return bool(it) and it.get("status") in HARD
+
+
+def log_rejection(session, profile: str, match_id: str, match: str, kickoff, it: dict) -> bool:
+    """Zapise tvrde odmitnuti do spolecne stopy (jednou pro profil + nabidku + kurz). Vraci True, kdyz je novy."""
+    import json
+
+    from sqlalchemy import select
+
+    from .storage import IntegrityRejection
+
+    q = select(IntegrityRejection.id).where(
+        IntegrityRejection.profile == profile, IntegrityRejection.match_id == match_id,
+        IntegrityRejection.market == it.get("market"), IntegrityRejection.selection == it.get("selection"),
+        IntegrityRejection.book == it.get("book"), IntegrityRejection.odds == it.get("odds"))
+    if session.scalar(q) is not None:
+        return False
+    if isinstance(kickoff, str):
+        kickoff = datetime.fromisoformat(kickoff)
+    session.add(IntegrityRejection(
+        profile=profile, match_id=match_id, match=match, kickoff=kickoff, market=it.get("market"),
+        selection=it.get("selection"), book=it.get("book"), odds=it.get("odds"), ref_fair=it.get("ref_fair"),
+        ref_median=it.get("ref_median_odds"), age_min=it.get("age_min"), ref_n=it.get("ref_n") or 0,
+        reasons=json.dumps(it.get("reasons") or [], ensure_ascii=False),
+        check=json.dumps(it, ensure_ascii=False, default=str)))
+    return True

@@ -164,6 +164,30 @@ class P5Candidate(Base):
     settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class IntegrityRejection(Base):
+    """Faze 3.2.2: nabidky, ktere spolecna Market Integrity tvrde odmitla (PODEZŘELÉ). Puvodni vyber zustava jako
+    diagnosticky zaznam u profilu; tady je jednotna stopa pro vsechny profily. Jen pridavani."""
+
+    __tablename__ = "integrity_rejections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    profile: Mapped[str] = mapped_column(String, index=True)  # profil, ktery nabidku vybral
+    match_id: Mapped[str] = mapped_column(String, index=True)
+    match: Mapped[str] = mapped_column(String, default="")
+    kickoff: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    market: Mapped[str] = mapped_column(String)
+    selection: Mapped[str] = mapped_column(String)
+    book: Mapped[str] = mapped_column(String)
+    odds: Mapped[float] = mapped_column(Float)  # puvodni kurz
+    ref_fair: Mapped[float | None] = mapped_column(Float, nullable=True)  # referencni (ferovy) kurz bez kancelare
+    ref_median: Mapped[float | None] = mapped_column(Float, nullable=True)
+    age_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ref_n: Mapped[int] = mapped_column(Integer, default=0)  # nezavislych skupin kancelari
+    reasons: Mapped[str] = mapped_column(String, default="[]")
+    check: Mapped[str] = mapped_column(String, default="{}")  # cely vysledek kontroly (JSON)
+
+
 class ArchiveEntry(Base):
     """Trvaly archiv rozboru a skenu (archive.py): jen pridavani, nic se nemaze."""
 

@@ -196,7 +196,8 @@ def test_kombi_target_legs_are_hypothetical_and_not_mixed(led):
     assert v["verified"]["roi"] is None and v["hypothetical"]["roi"] == pytest.approx(2.06)  # nesmichano
     # starsi noha bez overeni: cilova = hypoteticka, necilova = kurz kancelare z API pri navrhu
     assert kombi.leg_price({"target": True, "odds": 1.5}) == kombi.HYPO
-    assert kombi.leg_price({"target": False, "odds": 1.5}) == kombi.VERIFIED
+    # Faze 3.2.2 (prisne): noha bez dolozeneho kurzu neni overena, i kdyz neni cilova
+    assert kombi.leg_price({"target": False, "odds": 1.5}) == kombi.UNDOCUMENTED
 
 
 def test_kombi_verified_prices_and_change(led):

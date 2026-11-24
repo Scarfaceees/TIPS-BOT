@@ -3,6 +3,7 @@
   tipsbot profile audit               prehled profilu, metodik a znamych omezeni z aktualni databaze
   tipsbot profile market-integrity    spolecna kontrola kurzu: stav vyberu podle profilu, neshody mezi profily
   tipsbot profile compare             srovnani strategii (stejne definice metrik, fotbal / NHL zvlast)
+  tipsbot profile ranking             diagnostika Opportunity Rankingu (kvalita dat / ranking / EV / vysledek)
   tipsbot profile 5 shadow            Profil 5: stav stinoveho rezimu, nastaveni, posledni skeny
   tipsbot profile 5 report            Profil 5: kandidati, odmitnuti, vysledky, Line Shopping zvlast
   tipsbot profile 5 validate          Profil 5: nezavisla kontrola ulozenych kandidatu (LOBO, p_ref, EV)
@@ -15,7 +16,7 @@ from collections import Counter
 
 def add_parser(sub) -> None:
     p = sub.add_parser("profile", help="audit a srovnani profilu, spolecna kontrola kurzu, Profil 5 (jen cteni)")
-    p.add_argument("what", choices=["audit", "market-integrity", "compare", "5"])
+    p.add_argument("what", choices=["audit", "market-integrity", "compare", "ranking", "5"])
     p.add_argument("action", nargs="?", choices=["shadow", "report", "validate"], default="report")
 
 
@@ -53,7 +54,15 @@ def run(args) -> int:
                 print(f"Profil 3 LOBO: {len(ok)} měření, průměrně EV vlastní − EV bez hodnoceného trhu = {d * 100:+.1f} p. b.")
             else:
                 print("Profil 3 LOBO: zatím žádné měření (vzniká u nových výběrů)")
-            print("\nPodrobný audit: docs/profil-faze3-2-1-strategy-audit-market-value.md")
+            from .storage import IntegrityRejection
+
+            rej = Counter(r.profile for r in session.query(IntegrityRejection))
+            print("Tvrdá bezpečnostní odmítnutí (PODEZŘELÉ): " + (", ".join(f"{k} {n}" for k, n in sorted(rej.items())) or "0"))
+            pr = strategy.paired(picks, "profil3", "profil3x")
+            print(f"Profil 3 × stín 3x: společných zápasů {pr['common_matches']}, P3 yield {_pct(pr['a']['roi'])}, "
+                  f"stín yield {_pct(pr['b']['roi'])}")
+            print("\nPodrobný audit: docs/profil-faze3-2-1-strategy-audit-market-value.md, "
+                  "docs/profil-faze3-2-2-safety-guards-settlement-data-quality.md")
         elif args.what == "market-integrity":
             c = Counter((export.strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks if not p.legs)
             for (prof, st), n in sorted(c.items()):
@@ -63,6 +72,16 @@ def run(args) -> int:
             for b in bad[:20]:
                 print(" ", b)
             print(f"Prahy (= Profil 4): {marketcheck.DEFAULT}")
+        elif args.what == "ranking":
+            from . import rankdiag
+
+            rd = rankdiag.report(P4.db_path)
+            for name, dg in [("celkem", rd["all"])] + list(rd["sports"].items()):
+                print(f"[{name}] {dg['selections']} výběrů, {dg['matches']} zápasů – {dg['verdict']}")
+                print("  " + ", ".join(f"{k} {v:+.2f}" for k, v in dg["corr"].items() if v is not None))
+                for key in ("by_quality", "by_rank", "by_ev", "residual"):
+                    for b in dg[key]:
+                        print(f"  {b['band']:<44} záp. {b['matches']:>3} sázek {b['staked']:>5} yield {_pct(b['yield'])}")
         elif args.what == "compare":
             d = export.collect(session, P4.db_path, light=True)
             for r in strategy.comparison(d):

@@ -37,6 +37,7 @@ SRC_TARGET = "cíl – minimální kurz (neověřeno u kanceláře)"
 SRC_API = "kurzové API – nejvyšší nabídka při návrhu"
 VERIFIED, CHANGED, HYPO, IMPOSSIBLE = ("ověřené ceny", "ověřené ceny – kurz se změnil", "hypotetický (cílový kurz)",
                                        "nelze sestavit za uvedený kurz")
+UNDOCUMENTED = "neověřený (kurz bez dokladu, starší záznam)"
 
 
 def _legs(c, now: datetime | None = None) -> list[dict]:
@@ -62,26 +63,47 @@ def _legs(c, now: datetime | None = None) -> list[dict]:
 
 
 def leg_price(x: dict) -> str:
-    """Stav ceny nohy. Starsi nohy (pred Fazi 3.2.1) nemaji overeni: necilova noha = kurz kancelare z kurzoveho API
-    v dobe navrhu, cilova = jen minimalni kurz."""
+    """Stav ceny nohy (Faze 3.2.2 – prisne): overena je jen noha s DOLOZENYM kurzem kancelare (verified_odds),
+    ktery byl v dobe navrhu dostupny. Cilovy minimalni kurz neni nikdy overeny kurz. Starsi nohy bez dokladu
+    ceny (pred Fazi 3.2.1) jsou neoverene, i kdyz nejde o cilovou nohu."""
     if x.get("target"):
-        if x.get("verified_odds") is not None and x["verified_odds"] >= x["odds"] - 1e-9:
-            return VERIFIED
-        return IMPOSSIBLE if x.get("verified_odds") is not None else HYPO
-    if x.get("available") is False:
+        return IMPOSSIBLE if x.get("verified_odds") is not None and x["verified_odds"] < x["odds"] - 1e-9 else HYPO
+    if x.get("verified_odds") is None:
+        return UNDOCUMENTED
+    if x.get("available") is not True:
         return IMPOSSIBLE
     return CHANGED if x.get("first_odds") not in (None, x["odds"]) else VERIFIED
 
 
 def price_class(p) -> str | None:
-    """Trida tiketu podle cen nohou: hypoteticky > nelze sestavit > zmena kurzu > overene ceny."""
+    """Trida tiketu podle nejhorsi nohy: hypoteticky > nelze sestavit > bez dokladu ceny > zmena kurzu > overene."""
     if not p.legs:
         return None
     states = {leg_price(x) for x in p.legs}
-    for st in (HYPO, IMPOSSIBLE, CHANGED):
+    for st in (HYPO, IMPOSSIBLE, UNDOCUMENTED, CHANGED):
         if st in states:
             return st
     return VERIFIED
+
+
+def is_verified(p) -> bool:
+    """Do overene vykonnosti smi jen tiket, jehoz KAZDA noha ma dolozeny dostupny kurz."""
+    return price_class(p) in (VERIFIED, CHANGED)
+
+
+def placed(session) -> dict:
+    """Skutecne vsazene kombinovane tikety (Moje tikety, AKU) – v Kc, nikdy se nescitaji s jednotkami."""
+    from sqlalchemy import select
+
+    from .metrics import is_staked
+    from .storage import COMBO, Ticket
+
+    ts = list(session.scalars(select(Ticket).where(Ticket.market == COMBO)))
+    st = [t for t in ts if is_staked(t.status)]
+    stake = sum(t.stake for t in st)
+    profit = sum(t.profit_loss or 0.0 for t in st)
+    return {"tickets": len(ts), "settled": len(st), "open": sum(1 for t in ts if t.status == "open"),
+            "stake": stake, "profit": profit, "roi": profit / stake if stake else None}
 
 
 def verification(picks) -> dict:
@@ -89,11 +111,11 @@ def verification(picks) -> dict:
     Hypoteticke a overene vysledky se NIKDY nescitaji do jednoho ROI."""
     mine = paper.counted([p for p in picks if p.profile == PROFILE])
     out = {"all": paper.stats(mine), "classes": {}, "tickets": len(mine)}
-    for cls in (VERIFIED, CHANGED, IMPOSSIBLE, HYPO):
+    for cls in (VERIFIED, CHANGED, UNDOCUMENTED, IMPOSSIBLE, HYPO):
         out["classes"][cls] = paper.stats([p for p in mine if price_class(p) == cls])
-    real = [p for p in mine if price_class(p) in (VERIFIED, CHANGED)]
+    real = [p for p in mine if is_verified(p)]
     out["verified"] = paper.stats(real)
-    out["hypothetical"] = paper.stats([p for p in mine if price_class(p) in (HYPO, IMPOSSIBLE)])
+    out["hypothetical"] = paper.stats([p for p in mine if not is_verified(p)])
     out["fully_verified"] = len(real)
     out["with_unverified_leg"] = len(mine) - len(real)
     legs = [_leg_key(x) for p in mine for x in p.legs]

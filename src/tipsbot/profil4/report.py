@@ -229,7 +229,7 @@ def format_evaluation(ev: dict) -> str:
          f"  nezávislých zápasů {a['matches']}, vyhodnocených tipů {a['n']}"
          + (f" (opakovaně uložených výběrů vyřazeno: {ev['duplicates']})" if ev.get("duplicates") else ""),
          f"  zisk {a['profit']:+.2f} j. · yield {pct(a['yield'])} (95% interval {_ci(a['yield_ci95'])}) · "
-         f"ROI {pct(a['roi'])} na 100 j. · úspěšnost {pct(a['win_rate'])}",
+         f"zhodnocení kapitálu {pct(a['capital_return'])} (zisk / 100 j.) · úspěšnost {pct(a['win_rate'])}",
          f"  stav: {a['yield_status']}",
          f"  CLV proti skutečnému závěrečnému kurzu: {pct(a['avg_clv'])} z {a['clv_n']} tipů "
          f"(95% interval {_ci(a['clv_ci95'])}) – {a['clv_status']}"]

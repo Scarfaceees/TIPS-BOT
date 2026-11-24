@@ -210,8 +210,11 @@ def test_roi_yield_push_half_and_duplicates():
         t["id"] = i + 1
     f = PF.finance(tips, [])
     a = f["by_sport"]["fotbal"]["all"]
-    assert a["n"] == 4 and a["turnover"] == 4.0 and a["profit"] == pytest.approx(1.0)
-    assert a["yield"] == pytest.approx(0.25) and a["roi"] == pytest.approx(1.0 / PF.BANKROLL_UNITS)
+    # Faze 3.2.2 (jednotna definice, metrics.py): push neni v obratu -> obrat 3, yield 1/3; ROI na 1 j. = yield,
+    # zisk / 100 j. je zvlast jako zhodnoceni kapitalu (driv obrat 4 a yield 25 %)
+    assert a["n"] == 4 and a["turnover"] == 3.0 and a["profit"] == pytest.approx(1.0) and a["push"] == 1
+    assert a["yield"] == pytest.approx(1 / 3) and a["roi"] == pytest.approx(1 / 3)
+    assert a["capital_return"] == pytest.approx(1.0 / PF.BANKROLL_UNITS)
     assert a["win_rate"] == pytest.approx(2 / 3)  # push se do win rate nepocita
     assert f["excluded"] == {"opakované záznamy stejného výběru": 1, "uloženo po výkopu": 1, "neplatné (void)": 1}
 
@@ -332,12 +335,13 @@ def test_nhl_push_saved_as_push_and_counted_in_statistics():
     a = st.query("SELECT * FROM settlement_audit WHERE tip_id=?", (t["id"],))[0]
     assert a["status"] == SA.MATCH and a["algo_version"] == nhl.NHL_GRADE_VERSION and "push" in a["method"]
     assert json.loads(a["raw_result"])["reg"] == [3, 3]
-    # agregace: vraceni je sazka s obratem 1 j. a ziskem 0 (ne neplatna sazka)
+    # agregace: vraceni (push) je zvlast evidovane vypořádání se ziskem 0, ne neplatna sazka; od Faze 3.2.2 neni v obratu
     tips = [dict(r) for r in st.query("SELECT * FROM tips ORDER BY id")]
     bs = history.bet_stats(tips)
-    assert bs["n"] == 2 and bs["profit"] == pytest.approx(1.0) and bs["yield"] == pytest.approx(0.5)
+    # Faze 3.2.2 jednotna definice: push neni v obratu ani v poctu sazek (driv n 2, yield 0,5), eviduje se zvlast
+    assert bs["n"] == 1 and bs["push"] == 1 and bs["profit"] == pytest.approx(1.0) and bs["yield"] == pytest.approx(1.0)
     fin = PF.finance(tips, [])["by_sport"]["hokej"]["all"]
-    assert fin["push"] == 1 and fin["turnover"] == 2.0 and fin["win_rate"] == pytest.approx(1.0)
+    assert fin["push"] == 1 and fin["turnover"] == 1.0 and fin["win_rate"] == pytest.approx(1.0)  # driv obrat 2
     assert PF.finance(tips, [])["excluded"]["neplatné (void)"] == 0
 
 
@@ -535,7 +539,7 @@ def test_excel_new_sheets_filled_and_missing_data_is_not_zero(tmp_path):
     _filled_store(tmp_path / "p4.db").close()
     d = export.collect(s, tmp_path / "p4.db", datetime(2026, 12, 3))
     wb = load_workbook(io.BytesIO(export.to_xlsx(d)))
-    assert all(n in wb.sheetnames for n in export.PERF_SHEETS) and len(wb.sheetnames) == 28  # 20 puvodnich + 8 Faze 3.2.1
+    assert all(n in wb.sheetnames for n in export.PERF_SHEETS) and len(wb.sheetnames) == 29  # 20 puvodnich + 8 Faze 3.2.1 + 1 Faze 3.2.2
     si = [c for row in wb["Settlement Integrity"].iter_rows(values_only=True) for c in row if c is not None]
     assert "přepočet při exportu" in si
     d2 = export.collect(s, tmp_path / "neni.db", datetime(2026, 12, 3))

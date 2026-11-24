@@ -465,7 +465,9 @@ def _group(rows, fn, stats) -> dict:
 
 
 def clv_performance(tip_rows: list[dict], rank_rows: list[dict], now: datetime) -> dict:
-    tips = [t for t in unique_bets(tip_rows)[0] if t.get("result") != mathcore.VOID]
+    from .history import CLV_SCOPE, clv_scope
+
+    tips, excluded = clv_scope(tip_rows)
     ranks = IG._latest_rank(rank_rows, only_valid=False)
     for t in tips:
         r = ranks.get((t["fixture_id"], t["market"], t["selection"]))
@@ -493,6 +495,7 @@ def clv_performance(tip_rows: list[dict], rank_rows: list[dict], now: datetime) 
                   "n_older": len(older), "diff": float(np.mean(recent) - np.mean(older))}
     pend = len([t for t in tips if t.get("result")])
     out = {"tips": len(tips), "settled": pend, "valid": len(valid), "classes": dict(classes),
+           "scope": {"text": CLV_SCOPE, **excluded, "unsettled": len(tips) - pend},
            "coverage": len(valid) / pend if pend else None, "overall": _clv_stats(valid), "series": series,
            "change_7d": change, "by_sport": {}, "note":
            "CLV = kurz tipu / férový závěrečný kurz − 1 (bez marže, pokud trh má obě strany; jinak proti samotnému "

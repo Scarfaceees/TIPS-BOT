@@ -89,17 +89,24 @@ def evaluate(market: str, sel: str, odds: float, m: np.ndarray) -> dict | None:
     return {"ev": ev, "win": win, "push": oc.get("void", 0.0), "loss": loss}
 
 
+@lru_cache(maxsize=512)
+def in_fit(market: str) -> bool:
+    """Pouziva se trh pri fitu ocekavanych golu? Jen trhy bez vraceni vkladu: cela / ctvrtinova linie (TTH_2.0,
+    OU_2.25…), dvojita sance a sazka bez remizy se nefituji – jejich vlastni kurz odhad golu nikdy neovlivni."""
+    sels = selections(market)
+    if sels is None or market in ("DC", "DNB"):
+        return False
+    oc = _outcomes(market, sels[0], score_matrix(1.4, 1.1, RHO, MAX_GOALS))
+    return oc is not None and not set(oc) - {"won", "lost"}
+
+
 def _fit_rows(entries: list) -> list[tuple[str, tuple[str, ...], list[float]]]:
     """Trhy bez vraceni vkladu s odstranenou marzi (pro fit ocekavanych golu)."""
     rows = []
-    probe = score_matrix(1.4, 1.1, RHO, MAX_GOALS)
     for e in entries:
         sels = selections(e.market)
-        if sels is None or len(sels) != len(e.odds) or e.market in ("DC", "DNB"):
-            continue
-        oc = _outcomes(e.market, sels[0], probe)
-        if oc is None or set(oc) - {"won", "lost"}:
-            continue  # cela / ctvrtinova linie - pri fitu se nepouziva
+        if sels is None or len(sels) != len(e.odds) or not in_fit(e.market):
+            continue  # cela / ctvrtinova linie, DC, DNB - pri fitu se nepouziva
         try:
             fair = devig_power(list(e.odds))
         except DevigError:

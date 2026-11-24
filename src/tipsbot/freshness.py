@@ -14,7 +14,8 @@ Sekce reportu (stejna data pro panel i Excel, list "Odds Freshness"):
   vedle toho cas posledniho stazeni a zpozdeni stazeni za aktualizaci;
 - slots: body 75/30/10 – kolik planovanych stazeni prineslo NOVOU verzi kurzu (podle casu aktualizace, ne stazeni);
 - batches: hromadne aktualizace poskytovatele – rozlozeni podle hodiny UTC, pocet davek, interval mezi verzemi;
-- clv: CLV coverage vyhodnocenych tipu – overitelny zaviraci kurz vs zastaraly vs chybejici;
+- clv: CLV coverage vyhodnocenych tipu – overitelny zaviraci kurz vs zastaraly vs chybejici (rozsah history.clv_scope,
+  stejny jako list CLV Performance);
 - weeks: vyvoj po tydnech (pondeli, UTC) pro porovnani obdobi.
 """
 
@@ -82,8 +83,9 @@ def load(con: sqlite3.Connection) -> dict:
             for r in q("SELECT fixture_id, source, fetched_at, MAX(source_time), MAX(kickoff) FROM odds_quotes "
                        "WHERE source IN (?, ?) AND source_time IS NOT NULL GROUP BY fixture_id, source, fetched_at",
                        (API, ODDSAPI))]
-    tips = [dict(zip(("fixture_id", "league", "kickoff", "decision", "closing_kind"), r))
-            for r in q("SELECT fixture_id, league, kickoff, decision, closing_kind FROM tips WHERE result IS NOT NULL")]
+    cols = ("id", "fixture_id", "league", "kickoff", "market", "selection", "decision", "predicted_at", "result",
+            "closing_kind")
+    tips = [dict(zip(cols, r)) for r in q(f"SELECT {', '.join(cols)} FROM tips ORDER BY id")]
     return {"leagues": leagues, "obs": obs, "versions": vers, "tips": tips}
 
 
@@ -222,9 +224,15 @@ def build(raw: dict, now: datetime) -> dict:
                         "interval_min": min(gaps) if gaps else None, "hours": hours,
                         "top_hours": [h for h, n in sorted(enumerate(hours), key=lambda x: -x[1]) if n][:5]})
 
-    # 4) CLV coverage vyhodnocenych tipu
+    # 4) CLV coverage vyhodnocenych tipu – stejny rozsah jako CLV Performance (history.clv_scope, Faze 3.2.3):
+    # bez opakovane ulozenych tipu, tipu ulozenych po vykopu a neplatnych sazek; nevyhodnocene zvlast
+    from .profil4.history import CLV_SCOPE, _period, clv_scope
+
+    scoped, excluded = clv_scope(raw["tips"])
+    tips = [t for t in scoped if t.get("result") is not None]
+    clv_sc = {"text": CLV_SCOPE, **excluded, "unsettled": len(scoped) - len(tips), "settled": len(tips),
+              "period": _period(tips)}
     clv_rows = []
-    tips = raw["tips"]
     for t in tips:
         t["cat"] = clv_category(t.get("closing_kind"), _sport(t.get("league")))
     for scope, flt in (("všechny vyhodnocené tipy", lambda t: True),
@@ -265,7 +273,7 @@ def build(raw: dict, now: datetime) -> dict:
                               "missing": sum(t["cat"] == CLV_MISSING for t in rs), "coverage": ok / len(rs)})
 
     return {"competitions": comps, "slots": slots, "batches": batches, "clv": clv_rows, "weeks": weeks,
-            "clv_weeks": clv_weeks, "fixtures": len(tracked), "observations": len(obs), "now": now}
+            "clv_weeks": clv_weeks, "clv_scope": clv_sc, "fixtures": len(tracked), "observations": len(obs), "now": now}
 
 
 def clv_category(kind: str | None, sport: str) -> str:

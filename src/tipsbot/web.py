@@ -722,15 +722,24 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 
 {% elif tab == 'sledovani' %}
 {{ page_head('Bez peněz', 'Sledování modelu', 'Každý profil si sám vybírá sázky (1 jednotka, bez peněz) a bot je po zápase vyhodnotí. Tak se ukáže, který přístup by vydělával.') }}
-<div style="margin:-4px 0 10px;display:flex;flex-wrap:wrap;gap:8px"><a class="secondary-link" href="{{ url_for('index', tab='export') }}">📤 Export výsledků (Excel, CSV, PDF)</a><a class="secondary-link" href="{{ url_for('index', tab='sledovani', cmp=1) }}">📊 Srovnání strategií</a><a class="secondary-link" href="{{ url_for('index', tab='sledovani', fresh=1) }}">⏱ Čerstvost kurzů</a></div>
+<div style="margin:-4px 0 10px;display:flex;flex-wrap:wrap;gap:8px"><a class="secondary-link" href="{{ url_for('index', tab='export') }}">📤 Export výsledků (Excel, CSV, PDF)</a><a class="secondary-link" href="{{ url_for('index', tab='sledovani', cmp=1) }}">📊 Srovnání strategií</a><a class="secondary-link" href="{{ url_for('index', tab='sledovani', fresh=1) }}">⏱ Čerstvost kurzů</a><a class="secondary-link" href="{{ url_for('index', tab='sledovani', audit=1) }}">🔎 Audit měření</a></div>
 <div class="profbar">{% for pr in profiles %}{% set st = prof_stats[pr.key] %}
 <a class="prof{{ ' on' if pr.key == prof.key }}{{ ' off' if not pr.active }}" href="{{ url_for('index', tab='sledovani', profile=pr.key) }}">
 <b>{{ pr.name }}</b>{% if not pr.active %} <span class="badge warn">nenastaven</span>{% endif %}<small>{{ pr.about }}</small>
 <span class="pst">{% if pr.method == 'p5' %}<span class="badge warn">SHADOW</span> {% endif %}{% if st.settled %}{{ st.settled }} vyhodnoceno · zisk <b class="{{ 'pos' if st.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(st.profit) }} j.</b> · ROI <b class="{{ 'pos' if st.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(st.roi * 100) }} %</b>{% else %}zatím nic vyhodnoceno{% endif %}{% if st.open %} · {{ st.open }} čeká{% endif %}</span></a>{% endfor %}</div>
-{% if fresh %}<h2>Čerstvost kurzů (Odds Freshness)</h2>
+{% if audit %}<h2>Audit měření</h2>
+<div class="card"><div class="muted">Fáze 3.2.3 – jen čtení uložených dat. Ověřuje, že diagnostika měří to, co tvrdí: nezávislost Profilu 3x, unikátní nabídky a důvody Profilu 5, rozsah CLV tabulek a pokrytí Market Integrity. Nedostupný výpočet je prázdné pole se stavem a důvodem, nikdy EV 0. Stejné tabulky jsou v Excelu (listy Profile 3 LOBO, Profile 5 Market Value, CLV Performance, Odds Freshness, Market Integrity – All Profiles).</div>
+{% if audit.error %}<div class="flash err">{{ audit.error }}</div>{% endif %}
+{% if audit.reconcile %}<div class="p4kv">{{ audit.reconcile }}</div>{% endif %}</div>
+{% for key, t in audit.tables.items() %}<div class="card"><b>{{ audit.titles[key] }}</b>
+{% if t[1] %}<div class="tablewrap"><table class="audit" data-key="{{ key }}"><tr>{% for h in t[0] %}<th>{{ h }}</th>{% endfor %}</tr>
+{% for r in t[1] %}<tr>{% for v in r %}<td>{{ fcell(v, audit.fmt[key].get(loop.index)) }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+{% else %}<div class="muted">Zatím žádná data.</div>{% endif %}</div>{% endfor %}
+{% elif fresh %}<h2>Čerstvost kurzů (Odds Freshness)</h2>
 <div class="card"><div class="muted">Jen uložená data – žádný API dotaz ani kredit. Rozlišuje čas <b>stažení</b> (kdy bot kurz stáhl) a čas <b>aktualizace</b> u zdroje (API-Football „update“ za celý zápas, kurzové API „last_update“ za kancelář). API-Football a kurzové API se nikdy nesčítají. Body 75/30/10, pravidla závěrečného kurzu (aktualizace ≤ 60 min, pozorování ≤ 20 min před výkopem) a CLV beze změny. Stejná čísla jsou v Excelu na listu Odds Freshness.</div>
 {% if fresh.error %}<div class="flash err">{{ fresh.error }}</div>{% endif %}
-<div class="p4kv">odehraných sledovaných zápasů {{ fresh.rep.fixtures }} · pozorování v bodech {{ fresh.rep.observations }}</div></div>
+<div class="p4kv">odehraných sledovaných zápasů {{ fresh.rep.fixtures }} · pozorování v bodech {{ fresh.rep.observations }}</div>
+{% if fresh.rep.clv_scope %}<div class="p4kv">Rozsah CLV coverage: {{ fresh.rep.clv_scope.text }}. Vyhodnocených sázek {{ fresh.rep.clv_scope.settled }} (vyloučeno opakovaně uložených {{ fresh.rep.clv_scope.settled_duplicates }}, po výkopu {{ fresh.rep.clv_scope.settled_after_kickoff }}, neplatných {{ fresh.rep.clv_scope.void }}) – stejný rozsah jako CLV Performance, rozpis v <a href="{{ url_for('index', tab='sledovani', audit=1) }}">Auditu měření</a>.</div>{% endif %}</div>
 {% for key, t in fresh.tables.items() %}<div class="card"><b>{{ fresh.titles[key] }}</b>
 {% if t[1] %}<div class="tablewrap"><table class="fresh" data-key="{{ key }}"><tr>{% for h in t[0] %}<th>{{ h }}</th>{% endfor %}</tr>
 {% for r in t[1] %}<tr>{% for v in r %}<td>{{ fcell(v, fresh.fmt[key].get(loop.index)) }}</td>{% endfor %}</tr>{% endfor %}</table></div>
@@ -738,7 +747,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 {% elif cmp %}<h2>Srovnání strategií</h2>
 <div class="card"><div class="muted">Stejné definice pro všechny profily: yield = zisk / sázky s výsledkem výhra nebo prohra (vrácené a neplatné se nepočítají), spolehlivost = 95% interval z bootstrapu po zápasech, pod 30 zápasy MÁLO DAT. Výběry jednoho zápasu nejsou nezávislé. Jednotky (bez peněz) a koruny se nesčítají. Výsledky papírových strategií nejsou důkaz dlouhodobé výnosnosti.</div>
 {% if cmp.error %}<div class="flash err">{{ cmp.error }}</div>{% endif %}
-<div class="muted">Stejná nabídka u více profilů – neshody kontroly kurzu: <b>{{ cmp.bad|length }}</b> · tvrdá bezpečnostní odmítnutí (všechny profily): <b>{{ cmp.rej_n }}</b></div>
+<div class="muted">Stejná nabídka u více profilů – neshody kontroly kurzu: <b>{{ cmp.bad|length }}</b>{% if cmp.mi %} z {{ cmp.mi.comparable }} porovnatelných nabídek (záznam kontroly má {{ cmp.mi.checked }} z {{ cmp.mi.selections }} výběrů, OVĚŘENO {{ cmp.mi.ok }}){% endif %} · tvrdá bezpečnostní odmítnutí (všechny profily): <b>{{ cmp.rej_n }}</b></div>
 {% if cmp.rej %}<details class="fold"><summary>Poslední odmítnutí</summary>{% for r in cmp.rej[:20] %}<div class="p4kv">{{ r.profile }} · {{ r.match }} · {{ r.market|bet(r.selection, r.match) }} @ {{ '%.2f'|format(r.odds) }} ({{ r.book }}){% if r.ref_fair %} · férový {{ '%.2f'|format(r.ref_fair) }}{% endif %} · {{ r.ref_n }} skupin{% if r.age_min is not none %} · {{ '%.0f'|format(r.age_min) }} min{% endif %} – {{ r.reasons|replace('[', '')|replace(']', '')|replace('"', '') }}</div>{% endfor %}</details>{% endif %}</div>
 {% if cmp.rank and cmp.rank.all %}{% set ra = cmp.rank.all %}<div class="card"><b>Opportunity Ranking – diagnostika</b> <span class="muted">(váhy se nemění)</span>
 <div class="p4kv">{{ ra.selections }} výběrů · {{ ra.matches }} nezávislých zápasů · <span class="badge warn">{{ ra.verdict }}</span></div>
@@ -1665,16 +1674,10 @@ def _series_svg(series: list) -> str:
 
 
 def export_fcell(v, fmt: str | None = None) -> str:
-    """Bunka tabulky Odds Freshness v panelu podle formatu Excelu (0% / 0 / 0.0)."""
-    if v is None:
-        return "–"
-    if isinstance(v, (int, float)) and not isinstance(v, bool) and fmt:
-        if fmt == "0%":
-            return f"{v * 100:.0f} %"
-        if fmt == "0.0":
-            return f"{v:.1f}"
-        return f"{v:.0f}"
-    return str(v)
+    """Bunka tabulky v panelu podle formatu Excelu (jedna definice: export.fcell)."""
+    from .export import fcell
+
+    return fcell(v, fmt)
 
 
 def create_app(database_url: str | None = None) -> Flask:
@@ -1697,6 +1700,7 @@ def create_app(database_url: str | None = None) -> Flask:
         p5v = _p5_view(session) if tab == "sledovani" else None
         cmpv = _cmp_view(session) if tab == "sledovani" and request.values.get("cmp") else None
         freshv = _fresh_view() if tab == "sledovani" and request.values.get("fresh") else None
+        auditv = _audit_view(session, all_picks) if tab == "sledovani" and request.values.get("audit") else None
         prof = paper.profile(request.values.get("profile"))
         picks = paper.of_profile(all_picks, prof.key)  # rohy a karty zvlast (i vybery puvodniho spolecneho profilu)
         p2 = profile2.load(led)
@@ -1810,6 +1814,7 @@ def create_app(database_url: str | None = None) -> Flask:
             p5=p5v,
             cmp=cmpv,
             fresh=freshv,
+            audit=auditv,
             kver=({**kombi.verification(all_picks), "placed": kombi.placed(session)}
                   if tab == "sledovani" and prof.key == "kombi" else None),
             p3pair=(strategy.paired(all_picks, "profil3", "profil3x")
@@ -1935,10 +1940,27 @@ def create_app(database_url: str | None = None) -> Flask:
 
             rej = list(session.query(IntegrityRejection).order_by(IntegrityRejection.created.desc()).limit(50))
             return {"rows": strategy.comparison(d), "bad": strategy.integrity_consistency(d.picks),
+                    "mi": strategy.integrity_coverage(d.picks),
                     "rank": rankdiag.report(P4.db_path), "rej": rej,
                     "rej_n": session.query(IntegrityRejection).count()}
         except Exception as e:  # noqa: BLE001
             return {"error": str(e), "rows": [], "bad": []}
+
+    def _audit_view(session, picks) -> dict:
+        """Audit mereni (Faze 3.2.3) – stejne tabulky jako listy Excelu (export.audit_tables), jen cteni."""
+        from . import export, freshness, profil5
+        from .profil4.config import P4
+
+        try:
+            try:
+                p5rep = profil5.report(session)
+            except Exception:  # noqa: BLE001 - starsi databaze bez tabulky Profilu 5
+                p5rep = None
+            a = export.measure_audit(picks, p5rep, P4.db_path, freshness.report(P4.db_path, utcnow()))
+            return {"tables": export.audit_tables(a), "titles": export.AUDIT_TITLES, "fmt": export.AUDIT_FMT,
+                    "reconcile": export.clv_reconcile(a)}
+        except Exception as e:  # noqa: BLE001 - diagnostika nesmi shodit panel
+            return {"tables": {}, "titles": {}, "fmt": {}, "reconcile": "", "error": str(e)}
 
     def _fresh_view() -> dict:
         """Odds Freshness – stejne tabulky jako list Excelu (export.freshness_tables), jen ulozena data."""

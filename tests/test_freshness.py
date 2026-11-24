@@ -34,11 +34,11 @@ def _obs(st, fid, ko, slot, at, update, n=10, status="AVAILABLE"):
                "VALUES(?,?,?,?,?,?,?)", (fid, iso(ko), slot, iso(at), status, n, iso(update) if update else None))
 
 
-def _tip(st, fid, league, ko, kind, decision="APPROVED BET", result="won"):
+def _tip(st, fid, league, ko, kind, decision="APPROVED BET", result="won", sel="1"):
     st.execute("INSERT INTO tips(fixture_id, match, league, kickoff, market, selection, probs, odds, bookmaker, odds_source, "
                "decision, predicted_at, model_version, config_hash, result, profit, closing_kind) "
                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-               (fid, f"A{fid} - B{fid}", league, iso(ko), "1X2", "1", "{}", 2.0, "pinnacle", "api", decision,
+               (fid, f"A{fid} - B{fid}", league, iso(ko), "1X2", sel, "{}", 2.0, "pinnacle", "api", decision,
                 iso(ko - timedelta(hours=8)), "t", "h", result, 1.0 if result == "won" else -1.0, kind))
 
 
@@ -72,7 +72,7 @@ def db(tmp_path):
     _tip(st, 1, "Premier League", KO, H.CK_STALE)
     _tip(st, 2, "Premier League", KO, H.CK_CLOSING, decision="WATCH")
     _tip(st, 3, "NHL", KO, H.CK_FOREIGN)
-    _tip(st, 3, "NHL", KO, None, result="lost")
+    _tip(st, 3, "NHL", KO, None, result="lost", sel="2")  # jina sazka tehoz zapasu (Faze 3.2.3: duplicity se nepocitaji)
     st.conn.commit()
     st.conn.close()
     return path

@@ -4,6 +4,8 @@
   tipsbot profile market-integrity    spolecna kontrola kurzu: stav vyberu podle profilu, neshody mezi profily
   tipsbot profile compare             srovnani strategii (stejne definice metrik, fotbal / NHL zvlast)
   tipsbot profile ranking             diagnostika Opportunity Rankingu (kvalita dat / ranking / EV / vysledek)
+  tipsbot profile measure             audit mereni (Faze 3.2.3): Profil 3x, Profil 5, rozsah CLV, pokryti Market
+                                      Integrity – stejne tabulky jako panel (Audit mereni) a Excel
   tipsbot profile 5 shadow            Profil 5: stav stinoveho rezimu, nastaveni, posledni skeny
   tipsbot profile 5 report            Profil 5: kandidati, odmitnuti, vysledky, Line Shopping zvlast
   tipsbot profile 5 validate          Profil 5: nezavisla kontrola ulozenych kandidatu (LOBO, p_ref, EV)
@@ -16,12 +18,24 @@ from collections import Counter
 
 def add_parser(sub) -> None:
     p = sub.add_parser("profile", help="audit a srovnani profilu, spolecna kontrola kurzu, Profil 5 (jen cteni)")
-    p.add_argument("what", choices=["audit", "market-integrity", "compare", "ranking", "5"])
+    p.add_argument("what", choices=["audit", "market-integrity", "compare", "ranking", "measure", "5"])
     p.add_argument("action", nargs="?", choices=["shadow", "report", "validate"], default="report")
 
 
 def _pct(x) -> str:
     return "–" if x is None else f"{x * 100:+.1f} %"
+
+
+def measure_lines(a: dict) -> list[str]:
+    """Tabulky auditu mereni jako text – hodnoty formatuje export.fcell (stejne jako panel)."""
+    from . import export
+
+    out = []
+    for key, (head, rows) in export.audit_tables(a).items():
+        fmt = export.AUDIT_FMT[key]
+        out += ["", export.AUDIT_TITLES[key], " | ".join(head)]
+        out += [" | ".join(export.fcell(v, fmt.get(j)) for j, v in enumerate(r, 1)) for r in rows] or ["Zatím žádná data."]
+    return out + ["", export.clv_reconcile(a)]
 
 
 def run(args) -> int:
@@ -63,12 +77,26 @@ def run(args) -> int:
                   f"stín yield {_pct(pr['b']['roi'])}")
             print("\nPodrobný audit: docs/profil-faze3-2-1-strategy-audit-market-value.md, "
                   "docs/profil-faze3-2-2-safety-guards-settlement-data-quality.md")
+        elif args.what == "measure":
+            from . import freshness
+            from .storage import utcnow
+
+            try:
+                p5rep = profil5.report(session)
+            except Exception:  # noqa: BLE001 - starsi databaze bez tabulky Profilu 5
+                p5rep = None
+            a = export.measure_audit(picks, p5rep, P4.db_path, freshness.report(P4.db_path, utcnow()))
+            print("AUDIT MĚŘENÍ (Fáze 3.2.3) – jen čtení")
+            print("\n".join(measure_lines(a)))
         elif args.what == "market-integrity":
             c = Counter((export.strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks if not p.legs)
             for (prof, st), n in sorted(c.items()):
                 print(f"{prof:<36} {st:<20} {n}")
             bad = strategy.integrity_consistency(picks)
-            print(f"\nNeshody stejné nabídky mezi profily: {len(bad)}")
+            m = strategy.integrity_coverage(picks)
+            print(f"\nZáznam kontroly má {m['checked']} z {m['selections']} výběrů (OVĚŘENO {m['ok']}, NEOVĚŘENO "
+                  f"{m['unverified']}, PODEZŘELÉ {m['suspect']}); bez záznamu {m['unchecked']}")
+            print(f"Neshody stejné nabídky mezi profily: {len(bad)} z {m['comparable']} porovnatelných nabídek")
             for b in bad[:20]:
                 print(" ", b)
             print(f"Prahy (= Profil 4): {marketcheck.DEFAULT}")
@@ -104,9 +132,13 @@ def run(args) -> int:
                     print(" ", s)
                 print(f"Otevřených kandidátů: {sum(1 for c in profil5.rows(session) if c.result is None)}")
                 return 0
-            print(f"Kandidátů {rep['candidates']}, odmítnutých nabídek {rep['rejected']}")
-            for k, n in rep["reasons"].items():
-                print(f"  odmítnuto – {k}: {n}")
+            c = rep["counts"]
+            print(f"Unikátních kandidátů {c['candidates']}, unikátních odmítnutých nabídek {c['rejected']} "
+                  f"(po skupinách kanceláří {c['rejected_groups']}), jednotlivých důvodů {c['reason_instances']}, "
+                  f"nabídek s více důvody {c['multi_reason']}")
+            for k, v in c["reasons"].items():
+                print(f"  odmítnuto – {k}: nabídek {v['offers']}, důvodů {v['instances']}, "
+                      f"z toho i s jiným důvodem {v['overlap']}")
             for sp, pf in [("celkem", rep["all"])] + list(rep["by_sport"].items()):
                 print(f"{sp:<7} kandidátů {pf['n']} zápasů {pf['matches']} vyhodn. {pf['staked']} yield {_pct(pf['yield'])} "
                       f"CLV ověřené {_pct(pf['clv'])} ({pf['clv_n']}), poslední pozorovaný {_pct(pf['clv_last'])} "

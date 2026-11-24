@@ -16,6 +16,8 @@ Definice (stejne pro vsechny profily; vyberova logika profilu se nemeni):
 from __future__ import annotations
 
 import re
+from collections import Counter
+from datetime import datetime, timezone
 
 from . import export as X
 from . import marketcheck as MC
@@ -156,6 +158,113 @@ def integrity_consistency(picks: list) -> list[dict]:
             bad.append({"offer": k, "profiles": (seen[k][0], p.profile), "status": (seen[k][1], it.get("status"))})
         seen.setdefault(k, (p.profile, it.get("status")))
     return bad
+
+
+def integrity_coverage(picks: list) -> dict:
+    """Faze 3.2.3: pokryti spolecnou kontrolou kurzu. „Zkontrolováno“ = vyber ma zaznam kontroly (jakykoli stav);
+    vyber bez zaznamu (starsi) neni „v poradku“. Neshody se hledaji jen mezi POROVNATELNYMI nabidkami – stejna
+    nabidka (zapas, trh, vyber, kancelar, kurz, cas kontroly) vybrana aspon dvema profily."""
+    from . import marketcheck as MC
+
+    sel = [p for p in picks if not p.legs]
+    rec = [p for p in sel if p.integrity]
+    st = Counter(p.integrity.get("status", MC.UNVERIFIED) for p in rec)
+    offers: dict[tuple, set] = {}
+    for p in rec:
+        k = (p.match_id, p.market, p.selection, p.book, round(p.odds, 2), p.integrity.get("t"))
+        offers.setdefault(k, set()).add(p.profile)
+    n = len(sel)
+    return {"selections": n, "checked": len(rec), "unchecked": n - len(rec), "ok": st[MC.OK],
+            "partial": st[MC.PARTIAL], "unverified": st[MC.UNVERIFIED], "suspect": st[MC.SUSPECT],
+            "comparable": sum(1 for v in offers.values() if len(v) > 1),
+            "mismatches": len(integrity_consistency(picks)),
+            "coverage": len(rec) / n if n else None, "verified_coverage": st[MC.OK] / n if n else None}
+
+
+P3_OK, P3_INSUFFICIENT, P3_MISSING, P3_INVALID, P3_CIRCULAR, P3_ERROR = (
+    "OK", "INSUFFICIENT_BOOKMAKERS", "MISSING_MARKET", "INVALID_LINE", "CIRCULAR_REFERENCE", "CALCULATION_ERROR")
+
+
+def _p3_model(p) -> tuple[str, str]:
+    """Stav nekruhoveho odhadu golu (Profil 3x / LOBO mereni u vyberu Profilu 3) a duvod."""
+    from . import marketsim
+
+    lb = p.meta.get("p3_lobo") or {}
+    if p.market in (lb.get("markets_used") or []):
+        return P3_CIRCULAR, "hodnocený trh je ve vstupech odhadu gólů bez hodnoceného trhu"
+    if lb.get("status") != "OK":
+        return P3_MISSING, lb.get("why") or "měření chybí"
+    if lb.get("ev_lobo") is None:
+        return P3_ERROR, "EV z nezávislého odhadu se nepodařilo spočítat"
+    if not marketsim.in_fit(p.market):
+        return P3_OK, ("trh se do odhadu gólů nepoužívá ani v Profilu 3 (celá/čtvrtinová linie) – vynechání nic "
+                       "nemění, EV 3x = EV 3")
+    return P3_OK, "odhad gólů bez hodnoceného trhu"
+
+
+def _p3_books(p) -> tuple[str, str, str]:
+    """Stav reference kancelari (spolecna Market Integrity) u vyberu: (stav, vynechana kancelar a skupina, duvod)."""
+    from . import marketcheck as MC
+
+    it = p.integrity or {}
+    reasons = it.get("reasons") or []
+    excl = [f"{b} ({why})" for b, why in (it.get("ref_excluded") or {}).items()
+            if why in ("hodnocená kancelář", "stejná skupina jako hodnocená kancelář")]
+    left = ", ".join(excl) if excl else ("žádná – kurz je medián kanceláří, nehodnotí se jedna kancelář"
+                                         if MC.is_median(p.book) else "–")
+    if not it:
+        return P3_MISSING, left, "výběr nemá záznam kontroly kurzu"
+    if any(str(r).startswith("kontrola selhala") for r in reasons):
+        return P3_ERROR, left, "; ".join(reasons)
+    if it.get("validity") == "NESHODA":
+        return P3_INVALID, left, "; ".join(reasons)
+    if it.get("reference") == MC.UNVERIFIED and not it.get("ref_n") and any("není v kurzech" in str(r) for r in reasons):
+        return P3_MISSING, left, ("trh není v kurzech kanceláří kurzového API (týmové góly a celé/čtvrtinové linie "
+                                  "jsou jen v API-Football) – reference nejde spočítat")
+    if it.get("reference") != MC.OK:
+        return P3_INSUFFICIENT, left, f"nezávislých skupin {it.get('ref_n') or 0} (potřeba {MC.DEFAULT.min_ref_books})"
+    return P3_OK, left, "reference bez hodnocené kanceláře a její skupiny"
+
+
+def p3_audit(picks: list) -> dict:
+    """Faze 3.2.3: nekruhove mereni Profilu 3 – pro kazdy vyber s LOBO merenim EV produkce, EV 3x, EV proti
+    kancelarim (jen kdyz je reference platna – nedostupny vypocet NENI EV 0) a stav s duvodem. Nic neprepocitava."""
+    from . import marketsim, paper
+
+    p3 = [p for p in paper.of_profile(picks, "profil3") if p.meta.get("p3_lobo")]
+    p3x = {p.match_id: p for p in paper.of_profile(picks, "profil3x")}
+    rows = []
+    for p in sorted(p3, key=lambda p: (p.kickoff, p.name)):
+        lb = p.meta["p3_lobo"]
+        ms, mwhy = _p3_model(p)
+        bs, left, bwhy = _p3_books(p)
+        x = p3x.get(p.match_id)
+        if x is None:
+            x_ev, x_bet = None, "3x nemá výběr"
+        elif (x.market, x.selection) == (p.market, p.selection):
+            x_ev, x_bet = ((x.meta.get("p3") or {}).get("scenarios") or {}).get("trh", {}).get("ev"), "stejná sázka"
+        else:
+            x_ev, x_bet = None, f"jiná sázka: {x.market} {x.selection} @ {x.odds:.2f}"
+        rows.append({"name": p.name, "market": p.market, "selection": p.selection, "odds": p.odds, "book": p.book,
+                     "in_fit": "ano" if marketsim.in_fit(p.market) else "ne",
+                     "ev_p3": lb.get("ev_own"), "ev_lobo": lb.get("ev_lobo") if ms == P3_OK else None,
+                     "ev_p3x": x_ev, "p3x_bet": x_bet, "model_status": ms, "model_why": mwhy,
+                     "ev_books": (p.integrity or {}).get("edge") if bs == P3_OK else None,
+                     "groups": (p.integrity or {}).get("ref_n"), "left_out": left, "books_status": bs,
+                     "books_why": bwhy, "result": p.result})
+    pr = paired(picks, "profil3", "profil3x")
+    start = min((p.created for p in paper.of_profile(picks, "profil3x")), default=None)
+    m3x = {p.match_id for p in paper.of_profile(picks, "profil3x")}
+    only = [p for p in paper.of_profile(picks, "profil3") if p.match_id not in m3x]
+    def naive(v: str):
+        d = datetime.fromisoformat(v)
+        return d.astimezone(timezone.utc).replace(tzinfo=None) if d.tzinfo else d
+
+    before = sum(1 for p in only if start is None or naive(p.kickoff) <= naive(start))
+    return {"rows": rows, "paired": pr, "p3x_start": start, "only_p3_before_start": before,
+            "only_p3_after_start": len(only) - before,
+            "equal_ev": sum(1 for r in rows if r["ev_lobo"] is not None and abs(r["ev_lobo"] - r["ev_p3"]) < 1e-9),
+            "not_in_fit": sum(1 for r in rows if r["in_fit"] == "ne")}
 
 
 def paired(picks: list, a: str, b: str) -> dict:

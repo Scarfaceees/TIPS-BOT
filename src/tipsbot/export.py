@@ -110,6 +110,7 @@ class Data:
     placed_combo: dict | None = None  # skutecne vsazene AKU tikety (Kc)
     rankdiag: dict | None = None  # diagnostika rankingu Profilu 4
     freshness: dict | None = None  # Odds Freshness – cerstvost kurzu (jen ulozena data)
+    audit: dict | None = None  # Faze 3.2.3: audit mereni (measure_audit)
 
 
 def _sport(league: str) -> str:
@@ -462,13 +463,16 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
     picks = [p for p in d.picks if not p.legs]
     checked = [p for p in picks if p.integrity]
     bad = strategy.integrity_consistency(picks)
-    _note(ws, 5, f"Společná kontrola kurzu (marketcheck {MC_VERSION()}, prahy Profilu 4). Zkontrolováno {len(checked)} z "
+    _note(ws, 5, f"Společná kontrola kurzu (marketcheck {MC_VERSION()}, prahy Profilu 4). Záznam kontroly má {len(checked)} z "
                  f"{len(picks)} výběrů; starší výběry jsou bez kontroly (NEOVĚŘENO, nic se zpětně nedopočítává). "
-                 f"Neshody stejné nabídky mezi profily: {len(bad)}. Kontrola nemění výběr, EV ani výsledky.", F)
+                 f"Neshody stejné nabídky mezi profily: {len(bad)} – jen mezi porovnatelnými nabídkami, ne důkaz, že "
+                 "všechny výběry byly zkontrolovány. Kontrola nemění výběr, EV ani výsledky.", F)
+    at = audit_tables(d.audit) if d.audit else None
+    top = audit_block(ws, 7, "mi", at, table, F, FB) + 1 if at else 7
     from collections import Counter as _C
 
     summ = _C((strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks)
-    end = table(ws, 7, ["Profil", "Stav kontroly", "Výběrů"], [[a, b, n] for (a, b), n in sorted(summ.items())],
+    end = table(ws, top, ["Profil", "Stav kontroly", "Výběrů"], [[a, b, n] for (a, b), n in sorted(summ.items())],
                 widths=[30, 22, 8], filt=False)
     it_rows = []
     for p in sorted(checked, key=lambda p: p.kickoff, reverse=True):
@@ -501,9 +505,13 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
     _note(ws, 5, "SHADOW MODE – experiment: žádné tipy, vklady ani vliv na jiné profily. Referenční pravděpodobnost = medián "
                  "de-vig (mocninná metoda) nezávislých skupin kanceláří BEZ hodnocené kanceláře a její skupiny; minimálně "
                  f"{_p5cfg().min_ref_books} skupiny; EV proti trhu ≥ {_p5cfg().min_edge:.0%}; kandidát musí projít kontrolou kurzu.", F)
-    info = [("Algoritmus", rep.get("algo")), ("Kandidátů", rep.get("candidates")), ("Odmítnutých nabídek", rep.get("rejected"))]
-    info += [(f"Důvod odmítnutí: {k}", v) for k, v in (rep.get("reasons") or {}).items()]
-    end = table(ws, 7, ["Položka", "Hodnota"], [list(x) for x in info], widths=[50, 14], filt=False)
+    ws.cell(6, 1, f"Algoritmus: {rep.get('algo') or '–'}").font = F
+    end = 7
+    if at and "p5_summary" in at:
+        end = audit_block(ws, 7, "p5_summary", at, table, F, FB)
+        end = audit_block(ws, end + 1, "p5_reasons", at, table, F, FB) - 2
+    else:
+        ws.cell(7, 1, "Profil 5 zatím nemá data.").font = F
     ctab = []
     for c in allc:
         dd = _json.loads(c.data or "{}")
@@ -603,23 +611,22 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
 
     # Profile 3 LOBO + stabilita simulace
     ws = sheet("Profile 3 LOBO")
-    _note(ws, 5, "Paralelní měření (výběr Profilu 3 se nemění): EV výběru podle Profilu 3 (scénář trh, góly fitované i z "
-                 "hodnoceného kurzu) proti EV z gólů fitovaných BEZ hodnoceného trhu a proti férové ceně kanceláří bez "
-                 "hodnocené kanceláře. Starší výběry (před 24.11.2026) měření nemají.", F)
-    p3 = [p for p in d.picks if p.profile == "profil3" and p.meta.get("p3_lobo")]
-    end = table(ws, 7, ["Zápas", "Trh", "Výběr", "Kurz", "Kancelář", "EV Profil 3 (trh)", "EV bez hodnoceného trhu",
-                        "Stav LOBO", "EV proti kancelářím (bez hodnocené)", "Výsledek"],
-                [[p.name, p.market, p.selection, p.odds, p.book, p.meta["p3_lobo"].get("ev_own"),
-                  p.meta["p3_lobo"].get("ev_lobo"), p.meta["p3_lobo"].get("status"), (p.integrity or {}).get("edge"),
-                  RESULT_CZ.get(p.result, p.result)] for p in p3], {4: "0.00", 6: YF, 7: YF, 9: YF},
-                [34, 9, 7, 6, 26, 10, 10, 12, 12, 10], False)
-    if not p3:
-        ws.cell(end + 1, 1, "Zatím žádný výběr s měřením (objeví se po dalších skenech).").font = F
+    _note(ws, 5, "Paralelní měření (výběr Profilu 3 se nemění): EV výběru podle Profilu 3 (scénář trh) proti EV z gólů "
+                 "fitovaných BEZ hodnoceného trhu (Profil 3x) a proti férové ceně kanceláří bez hodnocené kanceláře a její "
+                 "skupiny. Celé/čtvrtinové linie se do odhadu gólů nepoužívají ani v Profilu 3 – u nich je EV 3x = EV 3 "
+                 "z definice. Starší výběry (před 24.11.2026) měření nemají.", F)
+    at = audit_tables(d.audit) if d.audit else None
+    if at:
+        row = audit_block(ws, 7, "p3", at, table, F, FB)
+        row = audit_block(ws, row + 1, "p3_summary", at, table, F, FB)
+    else:
+        ws.cell(7, 1, "Audit měření není k dispozici.").font = F
+        row = 9
     pr = strategy.paired(d.picks, "profil3", "profil3x")
-    ws.cell(end + 2, 1, "Produkční Profil 3 proti stínovému nekruhovému Profilu 3x – jen stejné zápasy "
-                        f"(společných {pr['common_matches']}, stejná sázka {pr['same_bet']}, jen P3 {pr['only_a']}, jen P3x "
-                        f"{pr['only_b']})").font = FB
-    end = table(ws, end + 3, ["Profil", "Vyhodnoceno", "Sázek s vkladem", "Zisk (j.)", "Yield", "Celkem vyhodnoceno (vše)",
+    ws.cell(row + 1, 1, "Produkční Profil 3 proti stínovému nekruhovému Profilu 3x – jen stejné zápasy "
+                        f"(společných {pr['common_matches']}, stejná sázka {pr['same_bet']})").font = FB
+    end = row
+    end = table(ws, end + 2, ["Profil", "Vyhodnoceno", "Sázek s vkladem", "Zisk (j.)", "Yield", "Celkem vyhodnoceno (vše)",
                               "Yield (vše)"],
                 [[lab, s["settled"], s["staked"], s["profit"] if s["staked"] else None, s["roi"], sa["settled"], sa["roi"]]
                  for lab, s, sa in (("Profil 3 (produkce, kruhový)", pr["a"], pr["a_all"]),
@@ -707,7 +714,8 @@ FRESH_TITLES = {
     "batches": "3) Hromadné aktualizace poskytovatele – verze kurzů ze všech uložených stažení; dávka = aktualizace různých "
                "zápasů do 10 min po sobě",
     "hours": "Rozložení aktualizací podle hodiny UTC (počet verzí)",
-    "clv": "4) CLV coverage – druh závěrečného kurzu uložený u vyhodnocených tipů (nic se nepřepočítává)",
+    "clv": "4) CLV coverage – druh závěrečného kurzu uložený u vyhodnocených tipů (nic se nepřepočítává). Rozsah: Profil 4, "
+           "jedna sázka na zápas + trh + výběr, bez tipů po výkopu a neplatných – stejný jako CLV Performance",
     "weeks": "5) Vývoj po týdnech – čerstvost a nové verze",
     "clv_weeks": "Vývoj CLV coverage po týdnech",
 }
@@ -720,6 +728,149 @@ FRESH_FMT = {
     "weeks": {4: "0", 5: "0%", 6: "0%", 9: "0%"},
     "clv_weeks": {7: "0%"},
 }
+
+
+def fcell(v, fmt: str | None = None) -> str:
+    """Bunka tabulky v panelu a CLI podle formatu Excelu – stejny text pro stejnou hodnotu (testy shody)."""
+    if v is None:
+        return "–"
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and fmt:
+        if fmt == "0%":
+            return f"{v * 100:.0f} %"
+        if fmt.startswith("+0.00%"):
+            return f"{v * 100:+.2f} %"
+        if fmt == "0.00":
+            return f"{v:.2f}"
+        if fmt == "0.0":
+            return f"{v:.1f}"
+        return f"{v:.0f}"
+    return str(v)
+
+
+# --- Faze 3.2.3: audit mereni (Profil 3x, Profil 5, rozsah CLV, pokryti Market Integrity) -------------------------
+EVF = "+0.00%;-0.00%;0.00%"
+
+
+def measure_audit(picks: list, p5rep: dict | None, p4_path: Path | None, fresh: dict | None) -> dict:
+    """Jen cteni: vstupy tabulek auditu mereni. Excel (collect), panel i CLI volaji tutez funkci."""
+    from . import strategy
+    from .profil4 import history
+
+    rows, _ = _p4_rows(p4_path)
+    tips, ex = history.clv_scope(rows)
+    return {"p3": strategy.p3_audit(picks), "mi": strategy.integrity_coverage(picks),
+            "p5": (p5rep or {}).get("counts"),
+            "clv_perf": {**ex, "included": len(tips), "unsettled": sum(1 for t in tips if t.get("result") is None)},
+            "clv_fresh": (fresh or {}).get("clv_scope")}
+
+
+def clv_reconcile(a: dict) -> str:
+    """Presne odvozeni poctu tipu obou CLV tabulek z databaze (zadny odhad)."""
+    f = a.get("clv_fresh")
+    if not f:
+        return "Data Profilu 4 nejsou k dispozici."
+    return (f"Vyhodnocených záznamů v databázi Profilu 4: {f['settled_rows']} − {f['settled_duplicates']} opakovaně uložených "
+            f"− {f['settled_after_kickoff']} uložených po výkopu − {f['void']} neplatných = {f['settled']} vyhodnocených "
+            f"sázek (Odds Freshness). CLV Performance = {f['settled']} vyhodnocených + {f['unsettled']} zatím "
+            f"nevyhodnocených = {a['clv_perf']['included']}.")
+
+
+def audit_tables(a: dict) -> dict:
+    """Tabulky auditu mereni – jeden zdroj radku pro Excel, panel i CLI."""
+    out: dict[str, tuple[list, list]] = {}
+    p3 = a["p3"]
+    out["p3"] = (["Zápas", "Trh", "Výběr", "Kurz", "Cena (kancelář)", "Trh v odhadu gólů P3", "EV Profil 3 (produkce)",
+                  "EV bez hodnoceného trhu (3x)", "EV výběru 3x", "Výběr 3x", "Stav nekruhového odhadu", "Důvod",
+                  "EV proti kancelářím (bez hodnocené)", "Nezávislých skupin", "Vynechaná kancelář / skupina",
+                  "Stav reference kanceláří", "Důvod reference", "Výsledek"],
+                 [[r["name"], r["market"], r["selection"], r["odds"], r["book"], r["in_fit"], r["ev_p3"], r["ev_lobo"],
+                   r["ev_p3x"], r["p3x_bet"], r["model_status"], r["model_why"], r["ev_books"], r["groups"], r["left_out"],
+                   r["books_status"], r["books_why"], RESULT_CZ.get(r["result"], r["result"])] for r in p3["rows"]])
+    pr = p3["paired"]
+    bs = {}
+    for r in p3["rows"]:
+        bs[r["books_status"]] = bs.get(r["books_status"], 0) + 1
+    out["p3_summary"] = (["Ukazatel", "Hodnota"], [
+        ["Výběrů Profilu 3 s měřením nezávislosti", len(p3["rows"])],
+        ["z toho trh mimo odhad gólů (celá/čtvrtinová linie)", p3["not_in_fit"]],
+        ["z toho EV bez hodnoceného trhu = EV Profilu 3", p3["equal_ev"]],
+        ["Stínový Profil 3x běží od (první výběr, UTC)", (p3["p3x_start"] or "–")[:16].replace("T", " ")],
+        ["Společné zápasy P3 a 3x", pr["common_matches"]], ["z toho stejná sázka", pr["same_bet"]],
+        ["Jen P3 – zápasy před spuštěním 3x", p3["only_p3_before_start"]],
+        ["Jen P3 – zápasy po spuštění 3x", p3["only_p3_after_start"]], ["Jen 3x", pr["only_b"]],
+    ] + [[f"Reference kanceláří: {k}", v] for k, v in sorted(bs.items())])
+    m = a["mi"]
+    out["mi"] = (["Ukazatel", "Počet", "Podíl ze všech výběrů"], [
+        ["Výběrů celkem (bez kombi)", m["selections"], None],
+        ["Zkontrolováno (výběr má záznam kontroly)", m["checked"], m["coverage"]],
+        ["Neověřeno – bez záznamu kontroly (starší výběry)", m["unchecked"],
+         m["unchecked"] / m["selections"] if m["selections"] else None],
+        ["OVĚŘENO (OK)", m["ok"], m["verified_coverage"]],
+        ["ČÁSTEČNĚ OVĚŘENO", m["partial"], None],
+        ["NEOVĚŘENO – kontrola proběhla, data nestačí", m["unverified"], None],
+        ["PODEZŘELÉ", m["suspect"], None],
+        ["Porovnatelných nabídek (stejná nabídka u ≥ 2 profilů)", m["comparable"], None],
+        ["Skutečné neshody mezi profily (jen mezi porovnatelnými)", m["mismatches"], None],
+    ])
+    c = a.get("p5")
+    if c:
+        out["p5_summary"] = (["Ukazatel", "Počet", "Poznámka"], [
+            ["Unikátní kandidáti", c["candidates"], f"uložených řádků {c['candidate_rows']}"],
+            ["Unikátní odmítnuté nabídky (zápas + trh + výběr + kancelář)", c["rejected"],
+             f"uložených řádků {c['rejected_rows']}; každá nabídka jednou i při opakovaných skenech"],
+            ["Odmítnuté nabídky po skupinách kanceláří", c["rejected_groups"],
+             "stejná skupina (unibet_se/unibet_nl) = jedna nabídka"],
+            ["Jednotlivých důvodů odmítnutí", c["reason_instances"], "jedna nabídka může mít víc důvodů"],
+            ["Nabídek s více důvody", c["multi_reason"], None],
+            ["Nabídky bez dostatečné reference (< 3 nezávislé skupiny)", c["no_reference_last_scan"],
+             f"jen poslední sken každé soutěže ({c['assessed_last_scan']} posouzených); po nabídkách se neukládají"],
+            ["Nabídky bez platného trhu", c["no_market"], "mezi odmítnutými (chybí protistrana / nejde ověřit)"],
+            ["Nabídka zároveň kandidátem i odmítnutá", c["overlap_cand_rej"], None],
+        ])
+        rs = [[k, v["offers"], v["instances"], v["overlap"], "ano" if v["overlap"] else "ne"]
+              for k, v in c["reasons"].items()]
+        rs.append(["Celkem", c["rejected"], c["reason_instances"], c["multi_reason"],
+                   "ano" if c["multi_reason"] else "ne"])
+        out["p5_reasons"] = (["Důvod odmítnutí", "Nabídek s důvodem", "Jednotlivých důvodů",
+                              "Z toho nabídek i s jiným důvodem", "Důvody se překrývají"], rs)
+    f, pp = a.get("clv_fresh"), a["clv_perf"]
+    rows = [["CLV Performance – druh srovnávacího kurzu", "Profil 4 – všechna rozhodnutí", "fotbal + hokej",
+             "vyhodnocené i nevyhodnocené (řádek „zatím nevyhodnoceno“)", pp["period"], pp["rows"], pp["duplicates"],
+             pp["after_kickoff"], pp["void"], 0, pp["included"]]]
+    if f:
+        rows.append(["Odds Freshness – CLV coverage", "Profil 4 – všechna rozhodnutí", "fotbal a hokej zvlášť",
+                     "jen vyhodnocené", f["period"], f["rows"], f["duplicates"], f["after_kickoff"], f["void"],
+                     f["unsettled"], f["settled"]])
+    out["clv_scope"] = (["Tabulka", "Rozsah profilů", "Sport", "Stav vypořádání", "Období výkopů", "Záznamů v databázi",
+                         "Vyloučeno: opakovaně uložený tip", "Vyloučeno: uložen po výkopu", "Vyloučeno: neplatná sázka",
+                         "Vyloučeno: nevyhodnoceno", "Zahrnuto tipů"], rows)
+    return out
+
+
+AUDIT_TITLES = {
+    "p3": "Profil 3x – nekruhové měření u každého výběru (nedostupný výpočet = prázdné pole se stavem a důvodem, nikdy EV 0)",
+    "p3_summary": "Profil 3 × 3x – souhrn",
+    "mi": "Market Integrity – pokrytí kontrolou (0 neshod platí jen pro porovnatelné nabídky, ne pro všechny výběry)",
+    "p5_summary": "Profil 5 – unikátní nabídky (SHADOW MODE)",
+    "p5_reasons": "Profil 5 – důvody odmítnutí (nabídky × jednotlivé důvody)",
+    "clv_scope": "Rozsah CLV tabulek – profily, sport, vypořádání, období, vyloučené tipy a důvody",
+}
+AUDIT_FMT = {"p3": {4: "0.00", 7: EVF, 8: EVF, 9: EVF, 13: EVF}, "p3_summary": {}, "mi": {3: "0%"},
+             "p5_summary": {}, "p5_reasons": {}, "clv_scope": {}}
+AUDIT_SHEETS = {"p3": "Profile 3 LOBO", "p3_summary": "Profile 3 LOBO", "mi": "Market Integrity – All Profiles",
+                "p5_summary": "Profile 5 Market Value", "p5_reasons": "Profile 5 Market Value",
+                "clv_scope": "CLV Performance"}
+
+
+def audit_block(ws, row: int, key: str, tables: dict, table, F, FB) -> int:
+    """Zapise jednu tabulku auditu (nadpis + tabulka) a vrati prvni volny radek za ni."""
+    head, rows = tables[key]
+    ws.cell(row, 1, AUDIT_TITLES[key]).font = FB
+    end = table(ws, row + 1, head, rows, AUDIT_FMT[key], None, False)
+    if not rows:
+        ws.cell(row + 2, 1, "Zatím žádná data.").font = F
+        end = row + 2
+    return end + 2
 
 
 def _freshness_sheet(d, sheet, table, F, FB) -> None:
@@ -742,6 +893,9 @@ def _freshness_sheet(d, sheet, table, F, FB) -> None:
             ws.cell(row + 2, 1, "Zatím žádná data.").font = F
             end = row + 2
         row = end + 3
+    if d.audit:  # Faze 3.2.3: stejny rozsah CLV jako list CLV Performance, presne odvozeni poctu
+        row = audit_block(ws, row, "clv_scope", audit_tables(d.audit), table, F, FB)
+        ws.cell(row, 1, clv_reconcile(d.audit)).font = F
     for j, w in enumerate([22, 26, 9, 11, 11, 9, 9, 12, 12, 14, 14, 12, 12], 1):
         ws.column_dimensions[get_column_letter(j)].width = w
 
@@ -912,7 +1066,12 @@ def _perf_sheets(d, sheet, table, F, FB) -> None:
     else:
         cl = pf["clv"]
         ws.cell(5, 1, cl["note"]).font = F
-        end = table(ws, 7, ["Druh srovnávacího kurzu", "Tipů", "Počítá se do CLV"],
+        top = 7
+        if d.audit:  # Faze 3.2.3: rozsah tabulky a presne odvozeni poctu proti listu Odds Freshness
+            top = audit_block(ws, 7, "clv_scope", audit_tables(d.audit), table, F, FB)
+            ws.cell(top, 1, clv_reconcile(d.audit)).font = F
+            top += 2
+        end = table(ws, top, ["Druh srovnávacího kurzu", "Tipů", "Počítá se do CLV"],
                     [[k, v, "ano" if k.startswith("skutečný závěrečný") else "ne"] for k, v in cl["classes"].items()],
                     widths=[46, 8, 14], filt=False)
         rows = []
@@ -1144,10 +1303,11 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
 
         rd = rankdiag.report(p4_path)
         fr = freshness.report(p4_path, created)
+    au = None if light else measure_audit(picks, p5, p4_path, fr)
     return Data(created, recs, legs, bank, versions, dup, p4_eval, None if light else _p4_intel(p4_path, created),
                 perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5,
                 p5_cands=p5_cands, rejections=rej, placed_combo=placed, rankdiag=rd,
-                freshness=fr)
+                freshness=fr, audit=au)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -1272,6 +1432,11 @@ METHOD = [
     ("Odds Freshness", "Čerstvost kurzů z uložených dat: čas stažení ≠ čas aktualizace u zdroje. Podle soutěží, nové verze "
                        "v bodech 75/30/10, hromadné aktualizace podle hodiny UTC, CLV coverage tipů a vývoj po týdnech. "
                        "API-Football a kurzové API zvlášť. Nic nemění body, CLV ani historii."),
+    ("Audit měření (3.2.3)", "Profil 3x: EV produkce, EV bez hodnoceného trhu, EV proti kancelářím a stav s důvodem "
+                             "(nedostupný výpočet není EV 0). Profil 5: unikátní nabídky odděleně od jednotlivých důvodů. "
+                             "CLV: rozsah a vyloučené tipy obou CLV tabulek (stejný rozsah). Market Integrity: pokrytí "
+                             "kontrolou; 0 neshod platí jen mezi porovnatelnými nabídkami. Panel: Sledování → Audit měření, "
+                             "CLI: tipsbot profile measure."),
     ("Ranking Diagnostics", "Opportunity Ranking rozložený na kvalitu dat, ranking, EV a výsledek; zbytek rankingu nad kvalitu "
                             "dat. Závěr až od 100 nezávislých zápasů. Váhy se nemění."),
     ("Bezpečnostní odmítnutí", "Nabídka se stavem PODEZŘELÉ ve společné kontrole kurzu (stejná pro všechny profily) zůstává "

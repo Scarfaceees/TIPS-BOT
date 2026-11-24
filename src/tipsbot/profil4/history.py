@@ -456,6 +456,29 @@ def unique_bets(rows: list[dict]) -> tuple[list[dict], int]:
     return list(best.values()), len(rows) - len(best)
 
 
+CLV_SCOPE = ("Profil 4 – všechna rozhodnutí (APPROVED, WATCH, NO BET); jedna sázka na zápas + trh + výběr (opakovaně "
+             "uložený tip se nepočítá znovu); bez tipů uložených po výkopu; bez neplatných sázek (void)")
+
+
+def clv_scope(rows: list[dict]) -> tuple[list[dict], dict]:
+    """Jednotny rozsah tipu pro CLV tabulky (CLV Performance i Odds Freshness, Faze 3.2.3): unique_bets + bez
+    neplatnych. Vraci (tipy, vyrazene {rows, after_kickoff, duplicates, void}) – kazdy vyrazeny tip ma duvod."""
+    after = [r for r in rows if pre_kickoff(r) is False]
+    bets, removed = unique_bets(rows)
+    tips = [r for r in bets if r.get("result") != mathcore.VOID]
+    kept = {id(r) for r in bets}
+    dup = [r for r in rows if id(r) not in kept and pre_kickoff(r) is not False]
+    done = lambda xs: sum(1 for r in xs if r.get("result") is not None)  # noqa: E731
+    return tips, {"rows": len(rows), "after_kickoff": len(after), "duplicates": len(dup),
+                  "void": len(bets) - len(tips), "settled_rows": done(rows), "settled_after_kickoff": done(after),
+                  "settled_duplicates": done(dup), "period": _period(tips)}
+
+
+def _period(rows: list[dict]) -> str:
+    ko = sorted(str(r["kickoff"])[:10] for r in rows if r.get("kickoff"))
+    return f"{ko[0]} – {ko[-1]}" if ko else "–"
+
+
 def bet_stats(rows: list[dict], bankroll_units: float = 100.0) -> dict:
     """Jednotkove vklady (1 j. na tip). yield = ROI na 1 j. = zisk / obrat (sazky vyhra/prohra vc. pul; push a
     neplatne mimo – metrics.py); capital_return = zisk / vychozi kapital (bankroll_units), neni to ROI.

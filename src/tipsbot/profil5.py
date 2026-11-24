@@ -293,9 +293,49 @@ def perf(cands: list[P5Candidate], price: str = "odds") -> dict:
     return out
 
 
+NO_MARKET = ("nabídka nejde ověřit", "chybí protistrana", "kurzy netvoří jeden trh")  # kategorie „bez platného trhu“
+NO_REF = "bez důvěryhodné reference (málo nezávislých kanceláří)"
+
+
+def _offer(c) -> tuple:
+    return (c.match_id, c.market, c.selection, c.book)
+
+
+def counts(cands: list, rej: list, last_scans: list[dict]) -> dict:
+    """Faze 3.2.3: unikatni nabidky oddelene od jednotlivych duvodu. Odmitnuta nabidka je ulozena jednou (id podle
+    zapasu, trhu, vyberu a kancelare) a muze mit vic duvodu – do poctu nabidek se pocita jednou.
+
+    `reasons`: kategorie -> {"offers": nabidek s duvodem, "instances": jednotlivych duvodu, "overlap": z nich nabidek
+    s jeste jinym duvodem}. Nabidky bez duveryhodne reference se po nabidkach neukladaji – jsou jen v pocitadle
+    posledniho skenu kazde souteze (ne unikatni, kazdy sken je pocita znovu)."""
+    per: list[tuple[tuple, set, int]] = []
+    for r in rej:
+        raw = [_reason_key(x) for x in json.loads(r.reasons or "[]")]
+        per.append((_offer(r), set(raw), len(raw)))
+    reasons: dict[str, dict] = {}
+    for _, cats, _ in per:
+        for k in cats:
+            reasons.setdefault(k, {"offers": 0, "instances": 0, "overlap": 0})["offers"] += 1
+            reasons[k]["overlap"] += len(cats) > 1
+    for r in rej:
+        for x in json.loads(r.reasons or "[]"):
+            reasons[_reason_key(x)]["instances"] += 1
+    reasons = dict(sorted(reasons.items(), key=lambda kv: -kv[1]["offers"]))
+    cand_offers, rej_offers = {_offer(c) for c in cands}, {o for o, _, _ in per}
+    return {
+        "candidates": len(cand_offers), "candidate_rows": len(cands),
+        "rejected": len(rej_offers), "rejected_rows": len(rej),
+        "rejected_groups": len({(m, mk, s, MC.family(b)) for m, mk, s, b in rej_offers}),
+        "reason_instances": sum(n for _, _, n in per), "multi_reason": sum(1 for _, c, _ in per if len(c) > 1),
+        "no_market": sum(1 for _, c, _ in per if c & set(NO_MARKET)),
+        "no_reference_last_scan": sum(int(s.get(NO_REF, 0)) for s in last_scans),
+        "assessed_last_scan": sum(int(s.get("posouzeno nabídek", 0)) for s in last_scans),
+        "overlap_cand_rej": len(cand_offers & rej_offers), "reasons": reasons}
+
+
 def report(session) -> dict:
     cands, rej = rows(session, CANDIDATE), rows(session, REJECTED)
-    reasons: Counter = Counter()
+    reasons: Counter = Counter()  # jednotlive duvody (jedna nabidka jich muze mit vic) – viz counts()
     for r in rej:
         for x in json.loads(r.reasons or "[]"):
             reasons[_reason_key(x)] += 1
@@ -314,6 +354,7 @@ def report(session) -> dict:
     led = Ledger(session)
     out["last_scans"] = [json.loads(v) for k, v in led.s.execute(
         __import__("sqlalchemy").text("SELECT key, value FROM state WHERE key LIKE 'p5_last_scan:%'")).all()]
+    out["counts"] = counts(cands, rej, out["last_scans"])
     return out
 
 

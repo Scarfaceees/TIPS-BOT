@@ -48,23 +48,29 @@ vrací stejná data.
 
 ## 3. Rozdíly podle soutěží, kanceláří a sportů
 
-| Soutěž | Poslední verze před výkopem (medián, min) | Interval mezi verzemi (medián, min) | Zápasů |
-|---|---:|---:|---:|
-| Bundesliga | 73 | 259 | 9 |
-| Serie A | 146 | 243 | 10 |
-| La Liga | 174 | 290 | 10 |
-| Ligue 1 | 178 | 395 | 8 |
-| Czech Liga | 236 | 392 | 8 |
-| Premier League | 313 | 487 | 10 |
-| **Liga mistrů** | **1 119** | 485 | 18 |
+> **Oprava (24. 11. 2026):** první verze této tabulky zahrnovala i zápasy, které ještě nezačaly, a zápasy bez
+> stažení v bodech před výkopem (Liga mistrů hraje 24.–25. 11.). Hodnota „Liga mistrů 1 119 min“ proto byla
+> **chybná** a čísla ostatních lig nepřesná. Níže jsou opravená čísla z diagnostiky Odds Freshness: jen odehrané
+> zápasy sledované v bodech 75/30/10, stáří poslední aktualizace u poskytovatele v okamžiku výkopu.
 
-- **Liga mistrů:** kurzy z API-Football jsou v den zápasu typicky přes 18 h staré.
+| Soutěž (API-Football) | Medián (min) | Průměr | Min | Max | Zápasů |
+|---|---:|---:|---:|---:|---:|
+| Serie A | 146 | 157 | 83 | 267 | 10 |
+| La Liga | 174 | 187 | 59 | 414 | 10 |
+| Ligue 1 | 178 | 194 | 105 | 316 | 8 |
+| Bundesliga | 193 | 169 | 45 | 283 | 9 |
+| Czech Liga | 236 | 203 | 47 | 287 | 8 |
+| Premier League | 313 | 273 | 119 | 358 | 10 |
+
+Liga mistrů zatím nemá žádný odehraný zápas sledovaný v bodech před výkopem; ukáže ji až diagnostika.
+
 - **Kanceláře:** API-Football má jen jedno `update` pro celý zápas (v 508 z 508 stažení byl jeden čas).
   Stáří jednotlivých kanceláří tedy v API-Football **rozlišit nelze**. Všech 8 hlavních kanceláří (Pinnacle,
   bet365, Betfair, Marathonbet, William Hill, SBO, Betano a 1xBet) je ve všech 75 zápasech, ale se stejným časem.
 - **NHL** bere kurzy z kurzového API (The Odds API), které má `last_update` u každé kanceláře zvlášť.
   - V bodu 10 min je medián stáří 0 min a do 60 min bylo 14 z 26 pozorování.
-  - Zbytek tvoří zápasy, kde kurzové API kancelář nemělo.
+  - Body 75 a 30 u NHL čtou uloženou cache hlavního bota (bez požadavku). Stahuje se jen v bodu 10 u schváleného
+    tipu, ostatní zápasy mají kurz z posledního stažení hlavního bota.
 - **Ověření fotbalu zahraniční kanceláří** běží přes stejné kurzové API, jen u schválených tipů a jen v bodu 10 min.
   - Medián stáří poslední aktualizace je **10 min** před výkopem; do 20 min bylo 308 z 308 kurzů (kancelář × zápas).
   - Je to jediný dnešní zdroj skutečných závěrečných kurzů fotbalu, ale stojí kredity kurzového API.
@@ -96,8 +102,7 @@ Omezení: u API-Football je čas jen za celý zápas, ne za jednotlivou kancelá
      kurzového API: (počet trhů tipu) × 1 kredit za zápas.
    - Kurzové API je už zapojené (NHL, Profil 5), takže to není nová placená služba. Je to ale vyšší spotřeba
      kreditů a vyžaduje výslovný souhlas.
-5. **Liga mistrů:** CLV z API-Football vychází skoro vždy jako „zastaralý kurz“. To je správně, jde o vlastnost
-   poskytovatele, ne chybu bota.
+5. **Liga mistrů:** opraveno – původní tvrzení o 18 h starých kurzech vycházelo z nezačatých zápasů a neplatí.
 6. Případný testovací návrh 30/10/5 má smysl jen tehdy, pokud měření z bodu 2 ukáže aktualizace v posledních
    45 min. Zatím žádná nebyla.
 

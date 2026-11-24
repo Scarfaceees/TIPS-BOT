@@ -109,6 +109,7 @@ class Data:
     rejections: list = field(default_factory=list)  # Faze 3.2.2: tvrda odmitnuti spolecne kontroly kurzu
     placed_combo: dict | None = None  # skutecne vsazene AKU tikety (Kc)
     rankdiag: dict | None = None  # diagnostika rankingu Profilu 4
+    freshness: dict | None = None  # Odds Freshness – cerstvost kurzu (jen ulozena data)
 
 
 def _sport(league: str) -> str:
@@ -661,6 +662,90 @@ def _rankdiag_sheet(d, sheet, table, F, FB) -> None:
         ws.cell(7, 1, "Data Profilu 4 nejsou k dispozici.").font = F
 
 
+def freshness_tables(fr: dict) -> dict:
+    """Tabulky listu Odds Freshness i panelu – jeden zdroj radku, aby panel a Excel ukazovaly stejne hodnoty."""
+    from .freshness import CLV_CATS
+
+    return {
+        "competitions": (["Zdroj", "Soutěž", "Zápasů", "Medián (min)", "Průměr (min)", "Min (min)", "Max (min)",
+                          "Aktualizace ≤ 60 min", "Aktualizace ≤ 20 min", "Poslední stažení před výkopem (medián, min)",
+                          "Stažení za aktualizací (medián, min)"],
+                         [[r["source"], r["league"], r["n"], r["median"], r["mean"], r["min"], r["max"], r["fresh60"],
+                           r["fresh20"], r["fetch_median"], r["lag_median"]] for r in fr["competitions"]]),
+        "slots": (["Zdroj", "Bod (min)", "Plánováno", "Nová verze", "Stejná verze", "Dohnáno jedním stažením",
+                   "Bez dat / přeskočeno", "Podíl nové verze", "Stáří aktualizace při stažení (medián, min)"],
+                  [[r["source"], r["slot"], r["planned"], r["new"], r["same"], r["catchup"], r["failed"], r["new_share"],
+                    r["age_at_fetch_median"]] for r in fr["slots"]]),
+        "batches": (["Zdroj", "Verzí (zápas × aktualizace)", "Zápasů", "Dní", "Hromadných dávek", "Zápasů v dávce (medián)",
+                     "Zápasů v dávce (max)", "Interval mezi verzemi zápasu (medián, min)", "Nejkratší interval (min)",
+                     "Nejčastější hodiny UTC"],
+                    [[r["source"], r["versions"], r["fixtures"], r["days"], r["batches"], r["batch_median"], r["batch_max"],
+                      r["interval_median"], r["interval_min"], ", ".join(f"{h}:00" for h in r["top_hours"])]
+                     for r in fr["batches"]]),
+        "hours": (["Hodina UTC"] + [r["source"] for r in fr["batches"]],
+                  [[f"{h:02d}:00"] + [r["hours"][h] for r in fr["batches"]] for h in range(24)] if fr["batches"] else []),
+        "clv": (["Rozsah", "Sport", "Tipů"] + list(CLV_CATS) + ["Ověřitelný celkem", "CLV coverage"],
+                [[r["scope"], r["sport"], r["tips"]] + [r[k] for k in CLV_CATS] + [r["verified"], r["coverage"]]
+                 for r in fr["clv"]]),
+        "weeks": (["Týden (od pondělí)", "Zdroj", "Zápasů", "Medián stáří aktualizace při výkopu (min)",
+                   "Aktualizace ≤ 60 min", "Aktualizace ≤ 20 min", "Stažení v bodech", "Z toho nová verze", "Podíl nové verze"],
+                  [[r["week"], r["source"], r["matches"], r["median"], r["fresh60"], r["fresh20"], r["fetches"], r["new"],
+                    r["new_share"]] for r in fr["weeks"]]),
+        "clv_weeks": (["Týden (od pondělí)", "Sport", "Vyhodnocených tipů", "Ověřitelný závěrečný kurz", "Zastaralý",
+                       "Chybí", "CLV coverage"],
+                      [[r["week"], r["sport"], r["tips"], r["verified"], r["stale"], r["missing"], r["coverage"]]
+                       for r in fr["clv_weeks"]]),
+    }
+
+
+FRESH_TITLES = {
+    "competitions": "1) Čerstvost podle soutěží – stáří POSLEDNÍ AKTUALIZACE u zdroje v okamžiku výkopu (jen odehrané zápasy "
+                    "sledované v bodech před výkopem); vedle toho čas posledního STAŽENÍ",
+    "slots": "2) Body 75/30/10 – kolik plánovaných stažení přineslo novou verzi kurzů (podle času aktualizace u zdroje, ne "
+             "času stažení). NHL: body 75 a 30 čtou uloženou cache hlavního bota (bez požadavku), stahuje se jen v bodu 10 "
+             "u schváleného tipu",
+    "batches": "3) Hromadné aktualizace poskytovatele – verze kurzů ze všech uložených stažení; dávka = aktualizace různých "
+               "zápasů do 10 min po sobě",
+    "hours": "Rozložení aktualizací podle hodiny UTC (počet verzí)",
+    "clv": "4) CLV coverage – druh závěrečného kurzu uložený u vyhodnocených tipů (nic se nepřepočítává)",
+    "weeks": "5) Vývoj po týdnech – čerstvost a nové verze",
+    "clv_weeks": "Vývoj CLV coverage po týdnech",
+}
+FRESH_FMT = {
+    "competitions": {4: "0", 5: "0", 6: "0", 7: "0", 8: "0%", 9: "0%", 10: "0.0", 11: "0.0"},
+    "slots": {8: "0%", 9: "0"},
+    "batches": {8: "0", 9: "0"},
+    "hours": {},
+    "clv": {11: "0%"},
+    "weeks": {4: "0", 5: "0%", 6: "0%", 9: "0%"},
+    "clv_weeks": {7: "0%"},
+}
+
+
+def _freshness_sheet(d, sheet, table, F, FB) -> None:
+    from openpyxl.utils import get_column_letter
+
+    ws = sheet("Odds Freshness")
+    fr = d.freshness
+    _note(ws, 5, "Čerstvost kurzů jen z uložených dat (žádný API dotaz ani kredit). Rozlišuje čas STAŽENÍ (kdy bot kurz "
+                 "stáhl) a čas AKTUALIZACE u zdroje (API-Football „update“ za celý zápas, kurzové API „last_update“ za "
+                 "kancelář). API-Football a kurzové API se nikdy nesčítají. Body 75/30/10, pravidla závěrečného kurzu "
+                 "(aktualizace ≤ 60 min, pozorování ≤ 20 min před výkopem) a CLV beze změny.", F)
+    if not fr or fr.get("missing"):
+        ws.cell(7, 1, "Data Profilu 4 nejsou k dispozici.").font = F
+        return
+    row = 7
+    for key, (head, rows) in freshness_tables(fr).items():
+        ws.cell(row, 1, FRESH_TITLES[key]).font = FB
+        end = table(ws, row + 1, head, rows, FRESH_FMT[key], None, False)
+        if not rows:
+            ws.cell(row + 2, 1, "Zatím žádná data.").font = F
+            end = row + 2
+        row = end + 3
+    for j, w in enumerate([22, 26, 9, 11, 11, 9, 9, 12, 12, 14, 14, 12, 12], 1):
+        ws.column_dimensions[get_column_letter(j)].width = w
+
+
 def MC_VERSION() -> str:
     from .marketcheck import VERSION
 
@@ -1053,14 +1138,16 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
         placed = _k.placed(session)
     except Exception:  # noqa: BLE001 - starsi databaze bez tabulky
         pass
-    rd = None
+    rd = fr = None
     if not light:
-        from . import rankdiag
+        from . import freshness, rankdiag
 
         rd = rankdiag.report(p4_path)
+        fr = freshness.report(p4_path, created)
     return Data(created, recs, legs, bank, versions, dup, p4_eval, None if light else _p4_intel(p4_path, created),
                 perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5,
-                p5_cands=p5_cands, rejections=rej, placed_combo=placed, rankdiag=rd)
+                p5_cands=p5_cands, rejections=rej, placed_combo=placed, rankdiag=rd,
+                freshness=fr)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -1182,6 +1269,9 @@ METHOD = [
                                        "v obratu ani v počtu sázek, vykazují se zvlášť a nejsou totéž. Yield = ROI na 1 j. = "
                                        "zisk / sázky s vkladem; u skutečných tiketů zisk Kč / vsazené Kč. Profil 4 navíc "
                                        "„zhodnocení kapitálu“ = zisk / 100 j. (není to ROI)."),
+    ("Odds Freshness", "Čerstvost kurzů z uložených dat: čas stažení ≠ čas aktualizace u zdroje. Podle soutěží, nové verze "
+                       "v bodech 75/30/10, hromadné aktualizace podle hodiny UTC, CLV coverage tipů a vývoj po týdnech. "
+                       "API-Football a kurzové API zvlášť. Nic nemění body, CLV ani historii."),
     ("Ranking Diagnostics", "Opportunity Ranking rozložený na kvalitu dat, ranking, EV a výsledek; zbytek rankingu nad kvalitu "
                             "dat. Závěr až od 100 nezávislých zápasů. Váhy se nemění."),
     ("Bezpečnostní odmítnutí", "Nabídka se stavem PODEZŘELÉ ve společné kontrole kurzu (stejná pro všechny profily) zůstává "
@@ -1428,6 +1518,7 @@ def to_xlsx(d: Data) -> bytes:
     # 21–27 Faze 3.2.1 – srovnani strategii, spolecna integrita, Profil 5, rohy a karty, kombi kurzy
     _phase321_sheets(d, sheet, table, F, FB)
     _rankdiag_sheet(d, sheet, table, F, FB)  # Faze 3.2.2
+    _freshness_sheet(d, sheet, table, F, FB)  # Odds Freshness (po 3.2.2)
 
     # 7 Metodika
     ws = sheet("Metodika")

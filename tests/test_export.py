@@ -20,7 +20,7 @@ SHEETS = ["Souhrn", "Všechny tipy", "Kombi tikety", "Kurzová pásma", "Soutě�
           # Faze 3.2.1 (uzivatel pozadal o nove listy; puvodnich 20 zustava ve stejnem poradi)
           "Strategy Comparison", "Market Integrity – All Profiles", "Profile 5 Market Value", "Profile 5 Line Shopping",
           "Corners Performance", "Cards Performance", "Combo Odds Verification", "Profile 3 LOBO",
-          "Ranking Diagnostics", "Metodika"]  # + Faze 3.2.2
+          "Ranking Diagnostics", "Odds Freshness", "Metodika"]  # + Faze 3.2.2, + Odds Freshness
 
 
 def _pick(pid, result, odds, profile="zaklad", p=0.6, match=None, market="1X2", sel="1"):

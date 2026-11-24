@@ -306,7 +306,7 @@ def test_excel_has_ranking_diagnostics_and_rejections(led):
     led.s.commit()
     d = export.collect(led.s, None, NOW)
     wb = openpyxl.load_workbook(io.BytesIO(export.to_xlsx(d)))
-    assert "Ranking Diagnostics" in wb.sheetnames and len(wb.sheetnames) == 29
+    assert "Ranking Diagnostics" in wb.sheetnames and len(wb.sheetnames) == 30  # + Odds Freshness
     vals = [c for row in wb["Market Integrity – All Profiles"].iter_rows(values_only=True) for c in row if c is not None]
     assert "kurz o +33 % nad mediánem" in vals and 2.6 in vals
 

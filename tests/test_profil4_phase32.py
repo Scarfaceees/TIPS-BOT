@@ -539,7 +539,7 @@ def test_excel_new_sheets_filled_and_missing_data_is_not_zero(tmp_path):
     _filled_store(tmp_path / "p4.db").close()
     d = export.collect(s, tmp_path / "p4.db", datetime(2026, 12, 3))
     wb = load_workbook(io.BytesIO(export.to_xlsx(d)))
-    assert all(n in wb.sheetnames for n in export.PERF_SHEETS) and len(wb.sheetnames) == 29  # 20 puvodnich + 8 Faze 3.2.1 + 1 Faze 3.2.2
+    assert all(n in wb.sheetnames for n in export.PERF_SHEETS) and len(wb.sheetnames) == 30  # 20 puvodnich + 8 Faze 3.2.1 + 1 Faze 3.2.2 + Odds Freshness
     si = [c for row in wb["Settlement Integrity"].iter_rows(values_only=True) for c in row if c is not None]
     assert "přepočet při exportu" in si
     d2 = export.collect(s, tmp_path / "neni.db", datetime(2026, 12, 3))

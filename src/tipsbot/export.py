@@ -111,6 +111,7 @@ class Data:
     rankdiag: dict | None = None  # diagnostika rankingu Profilu 4
     freshness: dict | None = None  # Odds Freshness – cerstvost kurzu (jen ulozena data)
     audit: dict | None = None  # Faze 3.2.3: audit mereni (measure_audit)
+    snapshot: dict | None = None  # datovy snapshot (snapshot.py), None = ziva databaze
 
 
 def _sport(league: str) -> str:
@@ -1211,7 +1212,8 @@ def finance_rows(d: "Data") -> list[list]:
     return rows
 
 
-def collect(session, p4_path: Path | None = None, now: datetime | None = None, light: bool = False) -> Data:
+def collect(session, p4_path: Path | None = None, now: datetime | None = None, light: bool = False,
+            snapshot: dict | None = None) -> Data:
     """Nacte vse z databaze (jen cteni) do jednotne tabulky zaznamu. `light` = bez listu Profilu 4 Faze 3/3.2
     (rychle srovnani strategii v panelu)."""
     from .config import SETTINGS
@@ -1307,7 +1309,7 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
     return Data(created, recs, legs, bank, versions, dup, p4_eval, None if light else _p4_intel(p4_path, created),
                 perf=None if light else _p4_perf(p4_path, created), ticket_kinds=ticket_kinds, picks=picks, p5=p5,
                 p5_cands=p5_cands, rejections=rej, placed_combo=placed, rankdiag=rd,
-                freshness=fr, audit=au)
+                freshness=fr, audit=au, snapshot=snapshot)
 
 
 # --- statistiky -----------------------------------------------------------------------------------------------
@@ -1366,7 +1368,10 @@ def progression(recs: list[Rec]) -> tuple[list[str], dict[str, list[float | None
 
 
 def meta_lines(d: Data) -> list[str]:
-    return [f"Vytvořeno: {d.created:%Y-%m-%d %H:%M} UTC (export čte aktuální databázi, nic nemění)",
+    from .snapshot import label
+
+    return [f"Vytvořeno: {d.created:%Y-%m-%d %H:%M} UTC (export čte databázi jen pro čtení, nic nemění) · "
+            + label(d.snapshot, d.created),
             f"Záznamů: {len(d.records)} tipů/sázek, {len(d.legs)} kombi nohou, {len(d.bankroll)} pohybů bankrollu; "
             f"vyřazených duplicit a tipů uložených po výkopu: {d.duplicates}",
             f"Verze modelu: {', '.join(d.versions)}"]

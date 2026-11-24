@@ -24,6 +24,7 @@ from tipsbot.profil4.store import Store
 from tipsbot.storage import Ledger, P5Candidate, make_session_factory
 
 UTC = timezone.utc
+_REAL_REPORT = freshness.report
 NOW = datetime(2026, 11, 24, 12, 0, tzinfo=UTC)
 KO = NOW + timedelta(hours=8)
 CFG = marketsim.SimConfig(min_odds=1.01, max_odds=10, min_ev=-1, worst_ev=-1, max_loss=1)
@@ -118,10 +119,11 @@ def test_evaluated_book_price_does_not_change_reference_other_books_do():
     assert other["p"] != base["p"]
 
 
-def _p3pick(market="TTH_2.0", lobo=None, integrity=None, mid="m1", profile="profil3", meta=None, odds=1.36):
+def _p3pick(market="TTH_2.0", lobo=None, integrity=None, mid="m1", profile="profil3", meta=None, odds=1.36,
+            book="zahraničí (API-Football, 2 kanc.)"):
     return paper.Pick(id=f"{profile}-{mid}", league="UCL", match_id=mid, name=f"A{mid} - B{mid}", day="2026-11-24",
                       kickoff=KO.isoformat(), market=market, selection="under", odds=odds,
-                      book="zahraničí (API-Football, 2 kanc.)", p_model=0.7, source="model",
+                      book=book, p_model=0.7, source="model",
                       created=NOW.replace(tzinfo=None).isoformat(), profile=profile,
                       meta=meta if meta is not None else {"p3": {}, "p3_lobo": lobo or {}}, integrity=integrity or {})
 
@@ -139,13 +141,14 @@ def test_p3_audit_states_and_empty_ev_with_reason():
         _p3pick(lobo=OK_LOBO, integrity=NO_MARKET, mid="a"),
         _p3pick("OU_2.5", lobo={"ev_own": 0.01, "status": "NEOVĚŘENO", "why": "málo trhů", "markets_used": ["1X2"]},
                 integrity=weak, mid="b"),
-        _p3pick("OU_2.5", lobo={**OK_LOBO, "markets_used": ["OU_2.5", "1X2"]}, integrity=good, mid="c"),
+        _p3pick("OU_2.5", lobo={**OK_LOBO, "markets_used": ["OU_2.5", "1X2"]}, integrity=good, mid="c", book="betano"),
+        _p3pick("OU_2.5", lobo=OK_LOBO, integrity=good, mid="f", book="zahraničí (medián)"),
         _p3pick(lobo={**OK_LOBO, "ev_lobo": None}, integrity={"status": MC.UNVERIFIED,
                                                               "reasons": ["kontrola selhala: x"]}, mid="d"),
         _p3pick(lobo=OK_LOBO, integrity={"status": MC.UNVERIFIED, "validity": "NESHODA", "reasons": ["výběr"]}, mid="e"),
     ]
     rows = {r["name"]: r for r in strategy.p3_audit(picks)["rows"]}
-    a, b, c, d, e = (rows[f"A{m} - B{m}"] for m in "abcde")
+    a, b, c, d, e, f = (rows[f"A{m} - B{m}"] for m in "abcdef")
     assert (a["model_status"], a["books_status"], a["ev_books"]) == ("OK", "MISSING_MARKET", None)
     assert "celá/čtvrtinová" in a["model_why"] and a["in_fit"] == "ne"
     assert (b["model_status"], b["ev_lobo"]) == ("MISSING_MARKET", None)  # nedostupny vypocet neni EV 0
@@ -155,6 +158,8 @@ def test_p3_audit_states_and_empty_ev_with_reason():
     assert (c["books_status"], c["ev_books"]) == ("OK", 0.031) and "pinnacle" not in c["left_out"]
     assert (d["model_status"], d["books_status"]) == ("CALCULATION_ERROR", "CALCULATION_ERROR")
     assert e["books_status"] == "INVALID_LINE"
+    # kurz = median kancelari, reference z tychz kancelari -> neni nezavisla, EV proti nim se nevykazuje
+    assert (f["books_status"], f["ev_books"]) == ("CIRCULAR_REFERENCE", None)
 
 
 def test_p3x_pick_is_compared_on_same_match_and_only_p3_split_by_start():
@@ -380,3 +385,58 @@ def test_unavailable_values_stay_empty_with_reason_not_zero(world):
     assert export.fcell(None, export.EVF) == "–"
     mi = dict((r[0], r[1]) for r in _excel_audit(wb)["mi"][1])
     assert mi["Neověřeno – bez záznamu kontroly (starší výběry)"] == 1 and mi["OVĚŘENO (OK)"] == 1
+
+
+# --- 6. datovy snapshot: Excel, panel i CLI ctou stejna data ---------------------------------------------------------
+def test_snapshot_is_shared_by_excel_panel_and_cli_and_ignores_later_scan(world, tmp_path, monkeypatch):
+    from tipsbot import snapshot
+    from tipsbot.profilecli import run
+    from tipsbot.web import create_app
+
+    monkeypatch.setattr(freshness, "report", _REAL_REPORT)  # snapshot cte vlastni kopii Profilu 4
+    monkeypatch.setenv("TIPSBOT_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    live = tmp_path / "w.db"
+    meta = snapshot.create(live, world.db, snapshot.root())
+    assert re.fullmatch(r"S\d{8}-\d{6}-[0-9a-f]{6}", meta["id"])
+    assert snapshot.get(snapshot.root(), "../w.db") is None  # jen ID ze seznamu, zadne cesty
+    # „automaticky sken“ po snapshotu: novy vyber v zive databazi
+    led = Ledger(world.s)
+    paper.save(led, paper.load(led) + [_p3pick(profile="zaklad", mid="z", meta={}, integrity={"status": MC.OK, "t": "t"})])
+    world.s.commit()
+
+    client = create_app(world.url).test_client()
+    resp = client.get(f"/export/xlsx?snapshot={meta['id']}")
+    assert resp.status_code == 200 and meta["id"] in resp.headers["Content-Disposition"]
+    wb = openpyxl.load_workbook(io.BytesIO(resp.data))
+    assert meta["id"] in str(wb["Souhrn"]["A2"].value)
+    xl = _excel_audit(wb)
+    html = client.get(f"/?tab=sledovani&audit=1&snapshot={meta['id']}").get_data(as_text=True)
+    assert meta["id"] in html
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert run(Namespace(what="measure", action="report", db=world.url, snapshot=meta["id"])) == 0
+    cli = buf.getvalue()
+    assert meta["id"] in cli
+    mi = dict((r[0], r[1]) for r in xl["mi"][1])
+    assert mi["Výběrů celkem (bez kombi)"] == 4  # snapshot: novy vyber z pozdejsiho „skenu“ v nem neni
+    for key, (_, body) in xl.items():
+        fmt = export.AUDIT_FMT[key]
+        for xrow in body:
+            assert " | ".join(export.fcell(v, fmt.get(j)) for j, v in enumerate(xrow, 1)) in cli, key
+    assert "<td>4</td>" in html.split('data-key="mi"')[1].split("</table>")[0]
+    live_html = client.get("/?tab=sledovani&audit=1").get_data(as_text=True)
+    assert "<td>5</td>" in live_html.split('data-key="mi"')[1].split("</table>")[0]  # ziva databaze uz ma 5
+    assert "Živá databáze bez snapshotu" in live_html
+
+
+def test_snapshot_of_same_data_has_same_fingerprint(db, tmp_path):  # noqa: F811
+    from tipsbot import snapshot
+
+    s = make_session_factory(f"sqlite:///{tmp_path / 'a.db'}")()
+    paper.save(Ledger(s), [_p3pick(profile="zaklad", mid="z", meta={})])
+    s.commit()
+    s.close()
+    a = snapshot.create(tmp_path / "a.db", db, tmp_path / "snaps", datetime(2026, 11, 24, 18, 0, tzinfo=UTC))
+    b = snapshot.create(tmp_path / "a.db", db, tmp_path / "snaps", datetime(2026, 11, 24, 18, 1, tzinfo=UTC))
+    assert a["id"][-6:] == b["id"][-6:] and a["id"] != b["id"]
+    assert [m["id"] for m in snapshot.items(tmp_path / "snaps")] == [b["id"], a["id"]]

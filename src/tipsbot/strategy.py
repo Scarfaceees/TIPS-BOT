@@ -223,6 +223,9 @@ def _p3_books(p) -> tuple[str, str, str]:
                                   "jsou jen v API-Football) – reference nejde spočítat")
     if it.get("reference") != MC.OK:
         return P3_INSUFFICIENT, left, f"nezávislých skupin {it.get('ref_n') or 0} (potřeba {MC.DEFAULT.min_ref_books})"
+    if MC.is_median(p.book):  # kurz = median tychz kancelari, ze kterych je reference -> neni nezavisla
+        return P3_CIRCULAR, left, ("kurz je medián kanceláří a reference je z týchž kanceláří – EV proti nim není "
+                                   "nezávislé měření")
     return P3_OK, left, "reference bez hodnocené kanceláře a její skupiny"
 
 

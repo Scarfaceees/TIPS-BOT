@@ -5,7 +5,10 @@
   tipsbot profile compare             srovnani strategii (stejne definice metrik, fotbal / NHL zvlast)
   tipsbot profile ranking             diagnostika Opportunity Rankingu (kvalita dat / ranking / EV / vysledek)
   tipsbot profile measure             audit mereni (Faze 3.2.3): Profil 3x, Profil 5, rozsah CLV, pokryti Market
-                                      Integrity – stejne tabulky jako panel (Audit mereni) a Excel
+                                      Integrity – stejne tabulky jako panel (Audit mereni) a Excel;
+                                      --snapshot ID cte ulozeny datovy snapshot (stejna data jako Excel a panel)
+  tipsbot profile snapshot create     novy datovy snapshot (kopie obou databazi jen pro cteni)
+  tipsbot profile snapshot list       ulozene snapshoty
   tipsbot profile 5 shadow            Profil 5: stav stinoveho rezimu, nastaveni, posledni skeny
   tipsbot profile 5 report            Profil 5: kandidati, odmitnuti, vysledky, Line Shopping zvlast
   tipsbot profile 5 validate          Profil 5: nezavisla kontrola ulozenych kandidatu (LOBO, p_ref, EV)
@@ -18,8 +21,9 @@ from collections import Counter
 
 def add_parser(sub) -> None:
     p = sub.add_parser("profile", help="audit a srovnani profilu, spolecna kontrola kurzu, Profil 5 (jen cteni)")
-    p.add_argument("what", choices=["audit", "market-integrity", "compare", "ranking", "measure", "5"])
-    p.add_argument("action", nargs="?", choices=["shadow", "report", "validate"], default="report")
+    p.add_argument("what", choices=["audit", "market-integrity", "compare", "ranking", "measure", "snapshot", "5"])
+    p.add_argument("action", nargs="?", choices=["shadow", "report", "validate", "create", "list"], default="report")
+    p.add_argument("--snapshot", default=None, help="ID datoveho snapshotu (tipsbot profile snapshot list)")
 
 
 def _pct(x) -> str:
@@ -43,6 +47,23 @@ def run(args) -> int:
     from .profil4.config import P4
     from .storage import Ledger, make_session_factory
 
+    from . import snapshot
+
+    if args.what == "snapshot":
+        if args.action == "create":
+            m = snapshot.create(snapshot.db_file(args.db), P4.db_path, snapshot.root())
+            print(f"Snapshot {m['id']} vytvořen ({m['created']} UTC)")
+        for m in snapshot.items(snapshot.root()):
+            print(f"{m['id']}  data k {m['created']} UTC")
+        return 0
+    meta, at, p4_path = None, None, P4.db_path
+    sid = getattr(args, "snapshot", None)
+    if sid:
+        meta = snapshot.get(snapshot.root(), sid)
+        if meta is None:
+            print(f"Snapshot {sid} neexistuje (tipsbot profile snapshot list)")
+            return 1
+        args.db, p4_path, at = snapshot.paths(snapshot.root(), meta)
     with make_session_factory(args.db)() as session:
         led = Ledger(session)
         picks = paper.load(led)
@@ -85,8 +106,10 @@ def run(args) -> int:
                 p5rep = profil5.report(session)
             except Exception:  # noqa: BLE001 - starsi databaze bez tabulky Profilu 5
                 p5rep = None
-            a = export.measure_audit(picks, p5rep, P4.db_path, freshness.report(P4.db_path, utcnow()))
+            at = at or utcnow()
+            a = export.measure_audit(picks, p5rep, p4_path, freshness.report(p4_path, at))
             print("AUDIT MĚŘENÍ (Fáze 3.2.3) – jen čtení")
+            print("Zdroj dat: " + snapshot.label(meta, at))
             print("\n".join(measure_lines(a)))
         elif args.what == "market-integrity":
             c = Counter((export.strategy_name(p), (p.integrity or {}).get("status", "bez kontroly")) for p in picks if not p.legs)

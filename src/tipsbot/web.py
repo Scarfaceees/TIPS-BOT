@@ -729,6 +729,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <span class="pst">{% if pr.method == 'p5' %}<span class="badge warn">SHADOW</span> {% endif %}{% if st.settled %}{{ st.settled }} vyhodnoceno · zisk <b class="{{ 'pos' if st.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(st.profit) }} j.</b> · ROI <b class="{{ 'pos' if st.roi >= 0 else 'neg' }}">{{ '%+.1f'|format(st.roi * 100) }} %</b>{% else %}zatím nic vyhodnoceno{% endif %}{% if st.open %} · {{ st.open }} čeká{% endif %}</span></a>{% endfor %}</div>
 {% if audit %}<h2>Audit měření</h2>
 <div class="card"><div class="muted">Fáze 3.2.3 – jen čtení uložených dat. Ověřuje, že diagnostika měří to, co tvrdí: nezávislost Profilu 3x, unikátní nabídky a důvody Profilu 5, rozsah CLV tabulek a pokrytí Market Integrity. Nedostupný výpočet je prázdné pole se stavem a důvodem, nikdy EV 0. Stejné tabulky jsou v Excelu (listy Profile 3 LOBO, Profile 5 Market Value, CLV Performance, Odds Freshness, Market Integrity – All Profiles).</div>
+{% if audit.source %}<div class="p4kv"><b>Zdroj dat:</b> {{ audit.source }}</div>{% endif %}
 {% if audit.error %}<div class="flash err">{{ audit.error }}</div>{% endif %}
 {% if audit.reconcile %}<div class="p4kv">{{ audit.reconcile }}</div>{% endif %}</div>
 {% for key, t in audit.tables.items() %}<div class="card"><b>{{ audit.titles[key] }}</b>
@@ -1348,6 +1349,9 @@ Když se jednička zraní nebo přijde o místo, nastav tu, kdo teď chytá – 
 <a class="primary-link" href="{{ url_for('export_file', fmt='xlsx') }}">📊 Excel (XLSX)</a>
 <a class="secondary-link" href="{{ url_for('export_file', fmt='csv') }}">CSV všech tipů</a>
 <a class="secondary-link" href="{{ url_for('export_file', fmt='pdf') }}">PDF report</a></div>
+<div class="card"><b>Datový snapshot</b> <span class="muted">– Excel, Audit měření i CLI (<code>tipsbot profile measure --snapshot ID</code>) čtou stejnou kopii dat, takže je automatický sken mezi výstupy nerozhodí. Kopie obou databází (~130 MB) jen na vyžádání, nic se automaticky nemaže.</span>
+<form method="post" action="{{ url_for('snapshot_create') }}" style="margin-top:6px"><button>📸 Vytvořit snapshot</button></form>
+{% for m in snaps %}<div class="p4kv"><b>{{ m.id }}</b> · data k {{ m.created[:16]|replace('T', ' ') }} UTC · <a href="{{ url_for('export_file', fmt='xlsx', snapshot=m.id) }}">Excel</a> · <a href="{{ url_for('index', tab='sledovani', audit=1, snapshot=m.id) }}">Audit měření</a></div>{% else %}<div class="muted">Zatím žádný snapshot – výstupy čtou živou databázi.</div>{% endfor %}</div>
 {% if ex.error %}<div class="card neg">Export se nepodařil: {{ ex.error }}</div>{% else %}
 <div class="card"><div class="muted">{% for l in ex.meta %}{{ l }}<br>{% endfor %}</div>
 <div class="muted" style="margin-top:6px">Excel: souhrn s grafy, všechny tipy, kombi tikety a nohy, kurzová pásma, soutěže a sporty, vývoj bankrollu, metodika. Soubor se vytvoří při každém kliknutí znovu z aktuálních dat.</div></div>
@@ -1701,6 +1705,7 @@ def create_app(database_url: str | None = None) -> Flask:
         cmpv = _cmp_view(session) if tab == "sledovani" and request.values.get("cmp") else None
         freshv = _fresh_view() if tab == "sledovani" and request.values.get("fresh") else None
         auditv = _audit_view(session, all_picks) if tab == "sledovani" and request.values.get("audit") else None
+        snaps = _snapshots() if tab == "export" else []
         prof = paper.profile(request.values.get("profile"))
         picks = paper.of_profile(all_picks, prof.key)  # rohy a karty zvlast (i vybery puvodniho spolecneho profilu)
         p2 = profile2.load(led)
@@ -1838,6 +1843,7 @@ def create_app(database_url: str | None = None) -> Flask:
             p2st=type("P", (), paper.stats([p for p in all_picks if p.profile == "profil2"])),
             p4=_p4_view(led) if tab == "profil4" else {},
             ex=_export_view(session) if tab == "export" else None,
+            snaps=snaps,
             quota=_quota_view(led) if tab == "prehled" else None,
             goalies=_goalie_view(led) if tab == "nastaveni" else None,
             mq=json.loads(led._get("model_quality", "") or "null") if tab == "overeni" else None,
@@ -1946,21 +1952,52 @@ def create_app(database_url: str | None = None) -> Flask:
         except Exception as e:  # noqa: BLE001
             return {"error": str(e), "rows": [], "bad": []}
 
-    def _audit_view(session, picks) -> dict:
-        """Audit mereni (Faze 3.2.3) – stejne tabulky jako listy Excelu (export.audit_tables), jen cteni."""
-        from . import export, freshness, profil5
-        from .profil4.config import P4
+    def _snapshots() -> list[dict]:
+        from . import snapshot
 
         try:
+            return snapshot.items(snapshot.root())[:10]
+        except OSError:
+            return []
+
+    def _source():
+        """Zdroj dat vystupu: snapshot z parametru `snapshot` (jen ID ze seznamu), jinak ziva databaze.
+        Vraci (meta nebo None, session factory nebo None = ziva, cesta Profilu 4, cas dat)."""
+        from . import snapshot
+        from .profil4.config import P4
+
+        sid = request.values.get("snapshot")
+        if not sid:
+            return None, None, P4.db_path, utcnow()
+        meta = snapshot.get(snapshot.root(), sid)
+        if meta is None:
+            raise ValueError(f"snapshot {sid} neexistuje")
+        url, p4, at = snapshot.paths(snapshot.root(), meta)
+        return meta, make_session_factory(url), p4, at
+
+    def _audit_view(session, picks) -> dict:
+        """Audit mereni (Faze 3.2.3) – stejne tabulky jako listy Excelu (export.audit_tables), jen cteni.
+        S parametrem `snapshot` cte ulozeny snapshot (stejna data jako Excel a CLI se stejnym ID)."""
+        from . import export, freshness, profil5, snapshot
+
+        try:
+            meta, fac, p4, at = _source()
+            s2 = fac() if fac else session
             try:
-                p5rep = profil5.report(session)
-            except Exception:  # noqa: BLE001 - starsi databaze bez tabulky Profilu 5
-                p5rep = None
-            a = export.measure_audit(picks, p5rep, P4.db_path, freshness.report(P4.db_path, utcnow()))
+                if fac:
+                    picks = paper.load(Ledger(s2))
+                try:
+                    p5rep = profil5.report(s2)
+                except Exception:  # noqa: BLE001 - starsi databaze bez tabulky Profilu 5
+                    p5rep = None
+                a = export.measure_audit(picks, p5rep, p4, freshness.report(p4, at))
+            finally:
+                if fac:
+                    s2.close()
             return {"tables": export.audit_tables(a), "titles": export.AUDIT_TITLES, "fmt": export.AUDIT_FMT,
-                    "reconcile": export.clv_reconcile(a)}
+                    "reconcile": export.clv_reconcile(a), "source": snapshot.label(meta, at)}
         except Exception as e:  # noqa: BLE001 - diagnostika nesmi shodit panel
-            return {"tables": {}, "titles": {}, "fmt": {}, "reconcile": "", "error": str(e)}
+            return {"tables": {}, "titles": {}, "fmt": {}, "reconcile": "", "error": str(e), "source": ""}
 
     def _fresh_view() -> dict:
         """Odds Freshness – stejne tabulky jako list Excelu (export.freshness_tables), jen ulozena data."""
@@ -2012,15 +2049,33 @@ def create_app(database_url: str | None = None) -> Flask:
                  "csv": (export.to_csv, "text/csv"), "pdf": (export.to_pdf, "application/pdf")}
         if fmt not in kinds:
             return redirect(url_for("index", tab="export"))
-        with factory() as session:  # jen cteni: nic se necommituje
-            d = _export_data(session)
+        try:
+            meta, fac, p4, at = _source()
+        except ValueError as e:
+            flash(str(e))
+            return redirect(url_for("index", tab="export"))
+        with (fac or factory)() as session:  # jen cteni: nic se necommituje
+            d = export.collect(session, p4, at, snapshot=meta) if meta else _export_data(session)
             fn, mime = kinds[fmt]
             body = fn(d)
             session.rollback()
         import io as _io
 
-        name = f"tipsbot-vysledky-{d.created:%Y-%m-%d-%H%M}.{fmt}"
+        name = (f"tipsbot-vysledky-{meta['id']}.{fmt}" if meta else f"tipsbot-vysledky-{d.created:%Y-%m-%d-%H%M}.{fmt}")
         return send_file(_io.BytesIO(body), mimetype=mime, as_attachment=True, download_name=name)
+
+    @app.post("/snapshot")
+    def snapshot_create():
+        """Novy datovy snapshot (kopie obou databazi jen pro cteni) – Excel, Audit mereni i CLI z nej ctou stejna data."""
+        from . import snapshot
+        from .profil4.config import P4
+
+        try:
+            m = snapshot.create(snapshot.db_file(database_url), P4.db_path, snapshot.root())
+            flash(f"Snapshot {m['id']} vytvořen.")
+        except Exception as e:  # noqa: BLE001
+            flash(f"Snapshot se nepodařil: {e}")
+        return redirect(url_for("index", tab="export"))
 
     P4_DETAILS = "web_p4_details"  # rozbory jednotlivych zapasu {fixture_id: karty}; prehled skenu zustava zvlast
 

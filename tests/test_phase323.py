@@ -469,6 +469,50 @@ def test_snapshot_is_opened_read_only_and_stays_unchanged(world, tmp_path, monke
     assert digest() == before
 
 
+def test_old_meta_v1_snapshot_works_in_cli_panel_excel_and_failed_is_never_published(world, tmp_path, monkeypatch):
+    """Snapshot ve formatu do 25. 11. (meta.json bez auditnich poli) funguje v CLI, panelu i Excelu; zaznam
+    neuspechu ve failed/ se nikde nevystavi jako snapshot."""
+    import json
+
+    from tipsbot import snapshot
+    from tipsbot.profilecli import run
+    from tipsbot.web import create_app
+
+    monkeypatch.setattr(freshness, "report", _REAL_REPORT)
+    monkeypatch.setenv("TIPSBOT_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    meta = snapshot.create(tmp_path / "w.db", world.db, snapshot.root())
+    old = {k: meta[k] for k in ("id", "created", "copied_until", "files", "attempts", "sizes")}
+    (snapshot.root() / meta["id"] / "meta.json").write_text(json.dumps(old), encoding="utf-8")
+    with pytest.raises(snapshot.SnapshotBusy):  # neuspesny pokus -> failed/F*.json
+        snapshot.create(tmp_path / "w.db", world.db, snapshot.root(), deadline_s=-1, chunk=1)
+    (fail,) = (snapshot.root() / snapshot.FAILED_DIR).glob("F*.json")
+    assert [m["id"] for m in snapshot.items(snapshot.root())] == [old["id"]]
+    for sid in (snapshot.FAILED_DIR, fail.stem, fail.name, f"{snapshot.FAILED_DIR}/{fail.name}"):
+        assert snapshot.get(snapshot.root(), sid) is None
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert run(Namespace(what="snapshot", action="list", db=world.url)) == 0
+        assert run(Namespace(what="measure", action="report", db=world.url, snapshot=old["id"])) == 0
+    cli = buf.getvalue()
+    assert f"{old['id']}  data k" in cli and "starší snapshot bez auditních metadat" in cli
+    assert "Zdroj dat: Snapshot " + old["id"] in cli and fail.stem not in cli
+
+    client = create_app(world.url).test_client()
+    resp = client.get(f"/export/xlsx?snapshot={old['id']}")
+    assert resp.status_code == 200 and old["id"] in resp.headers["Content-Disposition"]
+    assert old["id"] in str(openpyxl.load_workbook(io.BytesIO(resp.data))["Souhrn"]["A2"].value)
+    assert old["id"] in client.get(f"/?tab=sledovani&audit=1&snapshot={old['id']}").get_data(as_text=True)
+    tab = client.get("/?tab=export").get_data(as_text=True)
+    assert old["id"] in tab and fail.stem not in tab
+    for sid in (snapshot.FAILED_DIR, fail.stem):  # zaznam neuspechu nejde pouzit jako zdroj dat
+        r = client.get(f"/export/xlsx?snapshot={sid}", follow_redirects=True)  # zpet na panel se zpravou
+        assert r.headers["Content-Type"].startswith("text/html") and "Content-Disposition" not in r.headers
+        assert f"snapshot {sid} neexistuje" in r.get_data(as_text=True)
+        html = client.get(f"/?tab=sledovani&audit=1&snapshot={sid}", follow_redirects=True).get_data(as_text=True)
+        assert "neexistuje" in html
+
+
 def _big_db(path, rows=20000):
     import sqlite3
 

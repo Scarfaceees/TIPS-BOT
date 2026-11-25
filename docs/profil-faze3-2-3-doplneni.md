@@ -209,3 +209,65 @@ databází ze zálohy 25. 11., 175 MB + 45 MB):
 | stará verze, zápis každých 90 s | 0 | 2 | 357 s (limit 300) | – | – | 0 | 1,31 s |
 | **nová verze, zápis každých 60 s** | **8** | **0** | **~59 s (2 pokusy)** | **8/8** | **8/8** | **0** | **3,43 s** |
 | nová verze, nepřetržité zápisy, limit 45 s | 0 | 2 | 45,1 s | – | – | 0 | 0,62 s |
+
+## 8. Ostré nasazení 11c37a7 – průběh kopírování snapshotu S20261125-102857-6aeeaa
+
+**Oprava reportu z 25. 11.:** v reportu stálo „kopírování skončilo v 10:29:21“. To bylo chybně.
+`copied_until` v `meta.json` je čas konce **celého** snapshotu, tedy včetně otisku, přesunu do `data/snapshots`
+a jeho ověření. Kopírování přes SQLite Backup API skončilo dříve, nejpozději v 10:29:15,39. Zápis automatu
+s časem 10:29:17 proto přišel až po skončení kopírování a závěr reportu platí, jen byl špatně doložen.
+
+**Co snapshot zaznamenává a co ne:** `meta.json` ukládá `created`, `copied_until` a `attempts`. Časy začátku a
+konce Backup API pro jednotlivé databáze ani hodnoty `PRAGMA data_version` se nezapisují do metadat ani do
+logu, takže je zpětně doložit nejde. Průběh níže je odvozen z metadat, časů souborů snapshotu, logu panelu
+a obsahu kopií.
+
+**Pořadí kroků** (`snapshot.create`):
+1. čas `created`;
+2. otevření obou zdrojů jen pro čtení a `data_version` obou;
+3. Backup API `tipsbot.db`, pak `profil4.db` do `/tmp` kontejneru;
+4. znovu `data_version` obou a zavření spojení;
+5. SHA-256 lokálních kopií;
+6. kopie `tipsbot.db`, pak `profil4.db` do `data/snapshots/.tmp-*`;
+7. kontrola SHA-256, čas `copied_until`, `meta.json`, přejmenování na ID.
+
+**Časová osa (UTC):**
+
+| Čas | Událost | Zdroj |
+|---|---|---|
+| 10:28:13 | poslední zápis automatu před snapshotem | `auto_tick_at` v kopii `profil4.db` |
+| 10:28:57 | start snapshotu (krok 1) | `created` |
+| 10:28:57 – nejpozději 10:29:15,39 | kroky 2–5: Backup API obou databází, `data_version`, otisk | odvozeno |
+| do 10:29:15,39 | `tipsbot.db` zapsaná do `data/snapshots` (krok 6) | čas změny souboru |
+| 10:29:15,39 – 10:29:18,79 | `profil4.db` zapsaná do `data/snapshots` (krok 6) | čas změny souboru |
+| 10:29:17 | další zápis automatu, jen do `profil4.db` (`auto_tick_at`) | sledování v kontejneru |
+| 10:29:21,37 | `meta.json`, odpověď panelu 302 (krok 7) | čas souboru, log panelu |
+
+`auto_tick_at` je čas začátku ticku a commit přijde až po něm, tedy po 10:29:17. Oba kontejnery běží ve
+stejném virtuálním stroji Docker Desktop se společnými hodinami.
+
+**Odpovědi auditu:**
+
+1. **Časy Backup API:** pro jednotlivé databáze nejsou zaznamenány. Obě kopie proběhly mezi 10:28:57 a
+   10:29:15,39 (nejvýš ~18 s), nejdřív `tipsbot.db`, pak `profil4.db`.
+2. **`data_version`:** absolutní hodnoty nejsou zaznamenány. Ani nemají samostatný význam, protože jde o
+   čítač daného spojení. Zaznamenaný výsledek porovnání je `attempts = 1`: hodnoty před kopírováním a po něm
+   byly u obou databází shodné.
+3. **Restarty:**
+   - Opakování celého pokusu: 0 (`attempts = 1`).
+   - Vnitřní restart Backup API: 0. Nastal by jen při commitu jiného spojení do zdroje během kopírování. Takový
+     commit by změnil `data_version` a vynutil 2. pokus.
+   - Log restartu proto neexistuje, protože žádný restart nebyl.
+4. **Zápis z 10:29:17:** není v **žádné** kopii.
+   - Kopie `profil4.db` obsahuje `auto_tick_at = 10:28:13`.
+   - `tipsbot.db` tento údaj neobsahuje a nejnovější časový údaj v její kopii je z 06:08:50.
+   - Žádný časový údaj v kopiích není novější než 10:28:57 (kromě budoucích `expires_at` cache).
+5. **Změna jedné databáze:** vede k novému kopírování **obou** databází. Smyčka v `create` vždy kopíruje obě;
+   ověřuje to test `test_write_between_the_two_copies_forces_a_new_attempt`. U tohoto snapshotu k tomu
+   nedošlo.
+6. **Konzistence:** mezi dvěma čteními `data_version` (10:28:57 až nejpozději 10:29:15,39) nebyl do žádné
+   z databází proveden commit. Obě kopie proto odpovídají jednomu okamžiku a žádná část nepochází z jiného
+   okamžiku. Potvrzují to i obsah kopií (bod 4) a `integrity_check ok` obou kopií.
+
+**Možné doplnění (není implementováno):** zapisovat do `meta.json` časy Backup API každé databáze, hodnoty
+`data_version` a počet pokusů s důvodem. Další audit by pak šel doložit přímo z metadat.

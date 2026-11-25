@@ -271,3 +271,39 @@ stejném virtuálním stroji Docker Desktop se společnými hodinami.
 
 **Možné doplnění (není implementováno):** zapisovat do `meta.json` časy Backup API každé databáze, hodnoty
 `data_version` a počet pokusů s důvodem. Další audit by pak šel doložit přímo z metadat.
+
+## 9. Auditní metadata snapshotu (meta.json verze 2) – jen dev, nenasazeno
+
+Snapshot je auditní záznam, ne jen kopie. Ukázka: `docs/snapshot-meta-v2-ukazka.json`, vytvořená z kopií
+předprodukčních záloh z 25. 11.; produkční databáze se nečetly.
+
+| Pole | Obsah |
+|---|---|
+| `started`, `finished` | začátek a dokončení celého snapshotu (UTC, ms) |
+| `databases.<db>` | `copy_started`/`copy_finished` Backup API, `data_version_before`/`_after` a časy jejich čtení, `backup_restarts`, `integrity_check`, `foreign_key_violations`, `sha256`, `size` |
+| `attempts`, `restarts`, `attempt_log` | počet pokusů, opakované pokusy, vnitřní restarty Backup API; u každého pokusu `result` a `reason` |
+| `consistency.per_database` | výsledek kontroly každé databáze zvlášť (`UNCHANGED_DURING_COPY` / `CHANGED_DURING_COPY`) |
+| `consistency.snapshot` | společná konzistence: `status`, `checks`, `common_window`, `meaning`, `limits` |
+| `id`, `created`, `copied_until`, `files`, `sizes` | jako ve verzi 1 (`copied_until` = konec celého snapshotu) |
+
+**Společná konzistence:** `CONSISTENT` jen při splnění všech `checks`:
+- obě databáze beze změny `data_version` a bez vnitřního restartu Backup API v posledním pokusu;
+- neprázdné společné okno (od posledního čtení `data_version` před kopírováním do prvního čtení po něm);
+- `integrity_check ok` obou kopií.
+
+`limits` výslovně uvádí, že `data_version` sama není absolutní důkaz. Například nezachytí nahrazení souboru mimo
+SQLite.
+
+**Vnitřní restart Backup API** se pozná podle nárůstu zbývajících stránek mezi kroky. Je to orientační údaj,
+protože restart hned po prvním kroku se takto nepozná. Rozhodující je `data_version`.
+
+**Neúspěch:**
+- Snapshot se nevystaví.
+- Rozpracovaná kopie se smaže.
+- Diagnostika (`status FAILED`, `published false`, důvod, `attempt_log`) se uloží do `data/snapshots/failed/F*.json`.
+- Seznam snapshotů ji ignoruje a nic se automaticky nemaže.
+- Kopie, která neprojde `integrity_check`, se nikdy nevystaví. Porušení cizích klíčů se jen zaznamená, protože
+  kopie věrně odpovídá zdroji.
+
+**Kompatibilita:** starší snapshoty (verze 1, např. S20261125-102857-6aeeaa) fungují beze změny. `tipsbot profile
+snapshot list` u nich píše „starší snapshot bez auditních metadat“.

@@ -525,4 +525,5 @@ def test_snapshot_gives_up_after_deadline_and_cleans_up(tmp_path):
     _big_db(a)
     with pytest.raises(snapshot.SnapshotBusy):
         snapshot.create(a, None, tmp_path / "snaps", deadline_s=-1, chunk=1)
-    assert list((tmp_path / "snaps").iterdir()) == []
+    assert [x.name for x in (tmp_path / "snaps").iterdir()] == [snapshot.FAILED_DIR]  # jen diagnostika
+    assert snapshot.items(tmp_path / "snaps") == []

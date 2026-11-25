@@ -1,0 +1,113 @@
+{
+ "id": "S20261125-114638-59920e",
+ "created": "2026-11-25T11:46:38+00:00",
+ "copied_until": "2026-11-25T11:46:46+00:00",
+ "files": [
+  "tipsbot.db",
+  "profil4.db"
+ ],
+ "attempts": 1,
+ "sizes": {
+  "tipsbot.db": 23990272,
+  "profil4.db": 157372416
+ },
+ "meta_version": 2,
+ "status": "PUBLISHED",
+ "started": "2026-11-25T11:46:38.779+00:00",
+ "finished": "2026-11-25T11:46:46.435+00:00",
+ "restarts": {
+  "repeated_attempts": 0,
+  "backup_internal": 0
+ },
+ "databases": {
+  "tipsbot.db": {
+   "data_version_before": 1,
+   "data_version_read_before": "2026-11-25T11:46:38.785+00:00",
+   "copy_started": "2026-11-25T11:46:38.785+00:00",
+   "backup_restarts": 0,
+   "copy_finished": "2026-11-25T11:46:39.229+00:00",
+   "data_version_after": 1,
+   "data_version_read_after": "2026-11-25T11:46:42.057+00:00",
+   "data_version_unchanged": true,
+   "integrity_check": "ok",
+   "foreign_key_violations": 0,
+   "sha256": "9fb26bc8e5e3bb08dba62759d1e98351ab1d34055cb38189d624a2c5b2bd6647",
+   "size": 23990272
+  },
+  "profil4.db": {
+   "data_version_before": 1,
+   "data_version_read_before": "2026-11-25T11:46:38.785+00:00",
+   "copy_started": "2026-11-25T11:46:39.229+00:00",
+   "backup_restarts": 0,
+   "copy_finished": "2026-11-25T11:46:42.057+00:00",
+   "data_version_after": 1,
+   "data_version_read_after": "2026-11-25T11:46:42.058+00:00",
+   "data_version_unchanged": true,
+   "integrity_check": "ok",
+   "foreign_key_violations": 0,
+   "sha256": "009178a884b2d8b5d398deebf45cdd6fb9062d651266cd05471c303857e4186c",
+   "size": 157372416
+  }
+ },
+ "consistency": {
+  "per_database": {
+   "tipsbot.db": {
+    "data_version_unchanged": true,
+    "backup_restarts": 0,
+    "integrity_check": "ok",
+    "status": "UNCHANGED_DURING_COPY"
+   },
+   "profil4.db": {
+    "data_version_unchanged": true,
+    "backup_restarts": 0,
+    "integrity_check": "ok",
+    "status": "UNCHANGED_DURING_COPY"
+   }
+  },
+  "snapshot": {
+   "status": "CONSISTENT",
+   "checks": {
+    "all_databases_unchanged": true,
+    "common_window_not_empty": true,
+    "all_integrity_ok": true
+   },
+   "common_window": {
+    "from": "2026-11-25T11:46:38.785+00:00",
+    "until": "2026-11-25T11:46:42.057+00:00"
+   },
+   "meaning": "obě kopie odpovídají stavu databází v kterémkoli okamžiku společného okna – v tomto intervalu nebyl do žádné z nich zapsán commit",
+   "limits": "PRAGMA data_version téhož spojení zůstane stejná, jen když do databáze mezi dvěma čteními nezapsalo žádné jiné spojení. Nezachytí změnu souboru mimo SQLite (např. jeho nahrazení nebo obnovu ze zálohy) a sama o sobě není absolutní důkaz; společný okamžik je doložen kombinací všech kontrol v `checks`."
+  }
+ },
+ "attempt_log": [
+  {
+   "attempt": 1,
+   "started": "2026-11-25T11:46:38.784+00:00",
+   "databases": {
+    "tipsbot.db": {
+     "data_version_before": 1,
+     "data_version_read_before": "2026-11-25T11:46:38.785+00:00",
+     "copy_started": "2026-11-25T11:46:38.785+00:00",
+     "backup_restarts": 0,
+     "copy_finished": "2026-11-25T11:46:39.229+00:00",
+     "data_version_after": 1,
+     "data_version_read_after": "2026-11-25T11:46:42.057+00:00",
+     "data_version_unchanged": true
+    },
+    "profil4.db": {
+     "data_version_before": 1,
+     "data_version_read_before": "2026-11-25T11:46:38.785+00:00",
+     "copy_started": "2026-11-25T11:46:39.229+00:00",
+     "backup_restarts": 0,
+     "copy_finished": "2026-11-25T11:46:42.057+00:00",
+     "data_version_after": 1,
+     "data_version_read_after": "2026-11-25T11:46:42.058+00:00",
+     "data_version_unchanged": true
+    }
+   },
+   "finished": "2026-11-25T11:46:42.059+00:00",
+   "result": "stable",
+   "reason": null
+  }
+ ]
+}

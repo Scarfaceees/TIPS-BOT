@@ -54,7 +54,7 @@ def run(args) -> int:
             m = snapshot.create(snapshot.db_file(args.db), P4.db_path, snapshot.root())
             print(f"Snapshot {m['id']} vytvořen ({m['created']} UTC)")
         for m in snapshot.items(snapshot.root()):
-            print(f"{m['id']}  data k {m['created']} UTC")
+            print(f"{m['id']}  data k {m['created']} UTC  ({snapshot.audit_summary(m)})")
         return 0
     meta, at, p4_path = None, None, P4.db_path
     sid = getattr(args, "snapshot", None)

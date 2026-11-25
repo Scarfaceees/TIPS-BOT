@@ -9,6 +9,7 @@ Kopie, ktera by vznikla smichanim stavu z ruznych okamziku, porusi aspon jeden i
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 import time
@@ -98,6 +99,10 @@ class Writer(threading.Thread):
             cb.close()
 
 
+def _failures(root):
+    return [json.loads(p.read_text(encoding="utf-8")) for p in sorted((root / snapshot.FAILED_DIR).glob("F*.json"))]
+
+
 def _copies(root, meta):
     d = root / meta["id"]
     return d / "tipsbot.db", d / "profil4.db"
@@ -136,7 +141,7 @@ def test_write_between_the_two_copies_forces_a_new_attempt(dbs, tmp_path, monkey
     real, calls = snapshot._copy, []
 
     def copy(con, dst, deadline, chunk):
-        real(con, dst, deadline, chunk)
+        r = real(con, dst, deadline, chunk)
         calls.append(dst.name)
         if len(calls) == 1:  # po prvni kopii (tipsbot) prijde sken: A i B dostanou nove transakce
             for p in (a, b):
@@ -144,6 +149,7 @@ def test_write_between_the_two_copies_forces_a_new_attempt(dbs, tmp_path, monkey
                 for s in (1, 2):
                     _step(c, s)
                 c.close()
+        return r
 
     monkeypatch.setattr(snapshot, "_copy", copy)
     m = snapshot.create(a, b, tmp_path / "s1")
@@ -159,7 +165,7 @@ def test_without_data_version_check_the_mixed_copy_would_be_detected(dbs, tmp_pa
     real, calls = snapshot._copy, []
 
     def copy(con, dst, deadline, chunk):
-        real(con, dst, deadline, chunk)
+        r = real(con, dst, deadline, chunk)
         calls.append(1)
         if len(calls) == 1:
             for p in (a, b):
@@ -167,6 +173,7 @@ def test_without_data_version_check_the_mixed_copy_would_be_detected(dbs, tmp_pa
                 for s in (1, 2):
                     _step(c, s)
                 c.close()
+        return r
 
     monkeypatch.setattr(snapshot, "_copy", copy)
     monkeypatch.setattr(snapshot, "_version", lambda con: 0)
@@ -200,8 +207,11 @@ def test_timeout_gives_up_cleans_its_temp_and_leaves_sources_intact(dbs, tmp_pat
     src = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (a, b)}
     with pytest.raises(snapshot.SnapshotBusy):
         snapshot.create(a, b, tmp_path / "s4", deadline_s=-1, chunk=1)
-    assert list((tmp_path / "s4").iterdir()) == []
+    assert [x.name for x in (tmp_path / "s4").iterdir()] == ["failed"]  # jen diagnostika, zadny snapshot
     assert snapshot.items(tmp_path / "s4") == []
+    (fail,) = _failures(tmp_path / "s4")
+    assert fail["status"] == "FAILED" and fail["published"] is False and fail["error"] == "SnapshotBusy"
+    assert "stále mění" in fail["reason"] and fail["attempts"] == 1
     assert {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in (a, b)} == src
 
 
@@ -219,7 +229,9 @@ def test_continuous_writes_end_in_busy_not_in_blocked_writer(dbs, tmp_path):
         w.stop.set()
         w.join()
     assert w.errors == [] and w.seq > 0
-    assert list((tmp_path / "s5").iterdir()) == []
+    assert [x.name for x in (tmp_path / "s5").iterdir()] == ["failed"]
+    (fail,) = _failures(tmp_path / "s5")
+    assert fail["error"] == "SnapshotBusy" and fail["attempt_log"]  # diagnostika s prubehem pokusu
 
 
 def test_interrupted_snapshot_leaves_nothing_listed_and_next_one_works(dbs, tmp_path, monkeypatch):
@@ -229,12 +241,13 @@ def test_interrupted_snapshot_leaves_nothing_listed_and_next_one_works(dbs, tmp_
     def boom(con, dst, deadline, chunk):
         if dst.name == "profil4.db":
             raise KeyboardInterrupt  # preruseni uprostred (napr. Ctrl+C, zastaveni pozadavku)
-        real(con, dst, deadline, chunk)
+        return real(con, dst, deadline, chunk)
 
     monkeypatch.setattr(snapshot, "_copy", boom)
     with pytest.raises(KeyboardInterrupt):
         snapshot.create(a, b, tmp_path / "s6")
-    assert list((tmp_path / "s6").iterdir()) == []
+    assert [x.name for x in (tmp_path / "s6").iterdir()] == ["failed"]
+    assert _failures(tmp_path / "s6")[0]["error"] == "KeyboardInterrupt"
     monkeypatch.setattr(snapshot, "_copy", real)
     # tvrde zabiti procesu (jako 25. 11. v Dockeru): zustane cizi .tmp slozka – seznam ji ignoruje, nic ji nemaze
     left = tmp_path / "s6" / ".tmp-20261125090042"
@@ -273,4 +286,157 @@ def test_local_work_copy_is_removed_and_damaged_transfer_is_rejected(dbs, tmp_pa
     monkeypatch.setattr(snapshot.shutil, "copyfile", damaged)
     with pytest.raises(RuntimeError):
         snapshot.create(a, b, tmp_path / "s9", work_dir=work)
-    assert list((tmp_path / "s9").iterdir()) == [] and list(work.iterdir()) == []
+    assert [x.name for x in (tmp_path / "s9").iterdir()] == ["failed"] and list(work.iterdir()) == []
+    assert "poškodila" in _failures(tmp_path / "s9")[0]["reason"]
+
+
+# --- auditni metadata meta.json (META_VERSION 2) --------------------------------------------------------------------
+DB_KEYS = {"data_version_before", "data_version_read_before", "copy_started", "backup_restarts", "copy_finished",
+           "data_version_after", "data_version_read_after", "data_version_unchanged"}
+
+
+def _saved(root, meta):
+    return json.loads((root / meta["id"] / "meta.json").read_text(encoding="utf-8"))
+
+
+def test_audit_meta_without_writes(dbs, tmp_path):
+    a, b = dbs
+    m = snapshot.create(a, b, tmp_path / "m1", chunk=8)
+    assert _saved(tmp_path / "m1", m) == m  # meta.json = vracena metadata
+    assert m["meta_version"] == 2 and m["status"] == "PUBLISHED" and m["attempts"] == 1
+    assert m["restarts"] == {"repeated_attempts": 0, "backup_internal": 0}
+    assert m["started"] <= m["finished"]
+    (rec,) = m["attempt_log"]
+    assert rec["result"] == "stable" and rec["reason"] is None
+    t, p = m["databases"]["tipsbot.db"], m["databases"]["profil4.db"]
+    for d, path in ((t, a), (p, b)):
+        assert DB_KEYS <= d.keys()
+        assert d["data_version_before"] == d["data_version_after"] and d["data_version_unchanged"]
+        assert d["data_version_read_before"] <= d["copy_started"] <= d["copy_finished"] <= d["data_version_read_after"]
+        assert d["integrity_check"] == "ok" and d["foreign_key_violations"] == 0
+        copy = tmp_path / "m1" / m["id"] / path.name
+        assert d["sha256"] == hashlib.sha256(copy.read_bytes()).hexdigest() and d["size"] == copy.stat().st_size
+    assert t["copy_finished"] <= p["copy_started"]  # nejdriv tipsbot.db, pak profil4.db
+    c = m["consistency"]
+    assert {x["status"] for x in c["per_database"].values()} == {"UNCHANGED_DURING_COPY"}
+    assert c["snapshot"]["status"] == "CONSISTENT" and all(c["snapshot"]["checks"].values())
+    w = c["snapshot"]["common_window"]
+    assert m["started"] <= w["from"] <= w["until"] <= m["finished"]
+    assert c["snapshot"]["limits"]  # data_version neni prezentovana jako absolutni dukaz
+    assert not (tmp_path / "m1" / snapshot.FAILED_DIR).exists()
+    assert "CONSISTENT" in snapshot.audit_summary(m)
+
+
+def test_audit_meta_with_concurrent_writes(dbs, tmp_path):
+    a, b = dbs
+    w = Writer(a, b, burst=15, pause=0.3)
+    w.start()
+    try:
+        time.sleep(0.2)
+        m = snapshot.create(a, b, tmp_path / "m2", deadline_s=60, chunk=8)
+    finally:
+        w.stop.set()
+        w.join()
+    assert w.errors == []
+    assert len(m["attempt_log"]) == m["attempts"] == m["restarts"]["repeated_attempts"] + 1
+    for rec in m["attempt_log"][:-1]:  # kazde opakovani ma duvod a uplny zaznam obou databazi
+        assert rec["result"] == "repeat" and "znovu se kopírují obě databáze" in rec["reason"]
+        assert set(rec["databases"]) == {"tipsbot.db", "profil4.db"}
+    assert m["attempt_log"][-1]["result"] == "stable"
+    assert m["consistency"]["snapshot"]["status"] == "CONSISTENT"
+    _check_pair(*(_state(p) for p in _copies(tmp_path / "m2", m)))
+
+
+def test_change_of_one_database_between_copies_repeats_both(dbs, tmp_path, monkeypatch):
+    a, b = dbs
+    real, calls = snapshot._copy, []
+
+    def copy(con, dst, deadline, chunk):
+        r = real(con, dst, deadline, chunk)
+        calls.append(dst.name)
+        if len(calls) == 1:  # po kopii tipsbot.db zapise automat JEN do tipsbot.db
+            c = sqlite3.connect(a)
+            _step(c, 1)
+            c.close()
+        return r
+
+    monkeypatch.setattr(snapshot, "_copy", copy)
+    m = snapshot.create(a, b, tmp_path / "m3")
+    first, second = m["attempt_log"]
+    assert first["databases"]["tipsbot.db"]["data_version_unchanged"] is False
+    assert first["databases"]["profil4.db"]["data_version_unchanged"] is True
+    assert first["result"] == "repeat" and first["reason"].startswith("data_version se změnila: tipsbot.db –")
+    assert calls == ["tipsbot.db", "profil4.db"] * 2  # opakuje se kopie OBOU databazi
+    assert second["result"] == "stable"
+    assert m["consistency"]["per_database"]["tipsbot.db"]["status"] == "UNCHANGED_DURING_COPY"  # posledni pokus
+    assert _state(_copies(tmp_path / "m3", m)[0])["max"] == 1
+
+
+def test_forced_backup_restart_is_recorded(dbs, tmp_path, monkeypatch):
+    """Zapis jineho spojeni uprostred Backup API (mezi kroky): SQLite kopii restartuje, data_version se zmeni,
+    pokus se opakuje – vse s duvodem v metadatech."""
+    a, b = dbs
+    real = snapshot._copy
+
+    class Clock:  # snapshot._copy vola time.monotonic() po kazdem kroku – 5. krok kopie profil4.db = zapis automatu
+        sleep = staticmethod(time.sleep)
+        active, steps, done = False, 0, False
+
+        def monotonic(self):
+            if self.active and not self.done:
+                self.steps += 1
+                if self.steps == 5:
+                    c = sqlite3.connect(b)
+                    _step(c, 1)
+                    c.close()
+                    self.done = True
+            return time.monotonic()
+
+    clock = Clock()
+
+    def copy(con, dst, deadline, chunk):
+        clock.active = dst.name == "profil4.db"
+        try:
+            return real(con, dst, deadline, chunk)
+        finally:
+            clock.active = False
+
+    monkeypatch.setattr(snapshot, "time", clock)
+    monkeypatch.setattr(snapshot, "_copy", copy)
+    m = snapshot.create(a, b, tmp_path / "m4", chunk=8)
+    first = m["attempt_log"][0]
+    p4 = first["databases"]["profil4.db"]
+    assert p4["backup_restarts"] >= 1 and p4["data_version_unchanged"] is False
+    assert "data_version se změnila: profil4.db" in first["reason"]
+    assert "vnitřní restart Backup API: profil4.db" in first["reason"]
+    assert m["attempts"] == 2 and m["restarts"]["repeated_attempts"] == 1 and m["restarts"]["backup_internal"] >= 1
+    assert m["consistency"]["snapshot"]["status"] == "CONSISTENT"
+    assert _state(_copies(tmp_path / "m4", m)[1])["max"] == 1  # snapshot obsahuje zapis, ktery restart vyvolal
+
+
+def test_failed_integrity_is_never_published(dbs, tmp_path, monkeypatch):
+    a, b = dbs
+    monkeypatch.setattr(snapshot, "_check_copy",
+                        lambda p: {"integrity_check": "*** in database main ***", "foreign_key_violations": 0})
+    with pytest.raises(RuntimeError, match="integrity_check"):
+        snapshot.create(a, b, tmp_path / "m5")
+    assert snapshot.items(tmp_path / "m5") == []
+    assert [x.name for x in (tmp_path / "m5").iterdir()] == ["failed"]
+    (fail,) = _failures(tmp_path / "m5")
+    assert fail["published"] is False and "integrity_check" in fail["reason"] and fail["attempt_log"]
+
+
+def test_old_meta_without_audit_fields_still_works(dbs, tmp_path):
+    a, b = dbs
+    root = tmp_path / "m6"
+    m = snapshot.create(a, b, root, NOW)
+    old = {k: m[k] for k in ("id", "created", "copied_until", "files", "attempts", "sizes")}  # format do 25. 11.
+    (root / m["id"] / "meta.json").write_text(json.dumps(old), encoding="utf-8")
+    assert snapshot.items(root) == [old] and snapshot.get(root, m["id"]) == old
+    url, p4, at = snapshot.paths(root, old)
+    assert p4.name == "profil4.db" and at == NOW
+    assert snapshot.label(old, NOW).startswith(f"Snapshot {m['id']} (data k 2026-11-25 12:00")
+    assert snapshot.audit_summary(old) == "starší snapshot bez auditních metadat (pokusů 1)"
+    with snapshot.session_factory(url)() as s:
+        from sqlalchemy import text
+        assert s.execute(text("SELECT SUM(bal) FROM acct")).scalar() == 1000

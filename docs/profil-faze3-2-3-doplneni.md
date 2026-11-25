@@ -176,3 +176,36 @@ nevykazuje (test pokrývá i tento případ).
 
 Podle tvého pokynu nepovoluji nic, co by ovlivnilo výběr sázek (B, C). Doporučuji nejdřív G a D, potom A a E ve
 stínovém režimu. B a C až po tvém souhlasu.
+
+## 7. Ověření snapshotu po neúspěšném nasazení (25. 11. 2026)
+
+Nasazení c9da248 bylo vráceno na 2e04cbd. Kopie `profil4.db` v jednom kroku držela zámek pro čtení
+(`journal_mode=delete`) a automat hlásil `database is locked`.
+
+**Implementace:** SQLite Online Backup API (`sqlite3.Connection.backup` = `sqlite3_backup_init/step/finish`), ne
+kopírování souboru.
+- **Kopírování po krocích:** po 256 stránkách. Zámek pro čtení se drží jen po dobu kroku; zápis jiného spojení kopii
+  restartuje.
+- **Konzistence obou databází:** `PRAGMA data_version` obou zdrojů se kontroluje před kopírováním a po něm. Při
+  změně se obě kopírují znovu.
+- **Pokusy a limit:** pokusy se opakují až do limitu 180 s, pak `SnapshotBusy`.
+- **Kopie nejdřív lokálně:** do lokální dočasné složky (v Dockeru `/tmp`), teprve potom se hotová kopie přesune do
+  `data/snapshots` a ověří se její SHA-256.
+- **Proč lokálně:** automat zapisuje do `profil4.db` každou minutu (`auto_tick_at`, změřeno 10 min: interval
+  ~63 s). Kopie přímo do připojené složky trvá ~67 s, takže by se nikdy nedokončila.
+
+**Testy** (`tests/test_snapshot.py`, 10): souběžné zápisy s invarianty (součet účtů, log bez mezer, rozdíl
+pořadových čísel obou databází 0 nebo 1), shoda obsahu se zdrojem, vynucený zápis mezi kopiemi (2. pokus),
+kontrolní test bez `data_version` (smíchaná kopie se odhalí), přesná logická kopie a nezměněný zdroj, timeout,
+nepřetržité zápisy (Busy v limitu), přerušení, cizí `.tmp` složka po tvrdém zabití, opakování ve stejné sekundě,
+úklid pracovní složky a poškozený přesun.
+
+**Docker zátěžový test** (`scripts/snapshot_loadtest.py`, samostatný image `tipsbot-loadtest`, kopie produkčních
+databází ze zálohy 25. 11., 175 MB + 45 MB):
+
+| Varianta | Snapshotů | Busy | Doba | Konzistentní | Produkční tabulky = zdroj | Chyby zámku automatu | Max. čekání automatu |
+|---|---:|---:|---|---:|---:|---:|---:|
+| stará verze, zápis každé 3 s | 0 | 2 | 180 s | – | – | 0 | 0,79 s |
+| stará verze, zápis každých 90 s | 0 | 2 | 357 s (limit 300) | – | – | 0 | 1,31 s |
+| **nová verze, zápis každých 60 s** | **8** | **0** | **~59 s (2 pokusy)** | **8/8** | **8/8** | **0** | **3,43 s** |
+| nová verze, nepřetržité zápisy, limit 45 s | 0 | 2 | 45,1 s | – | – | 0 | 0,62 s |

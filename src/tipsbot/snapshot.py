@@ -4,8 +4,14 @@ Automat muze mezi dvema vystupy udelat novy sken (napr. 24. 11. 2026: report z 1
 nimi sken 18:44–18:53 pridal 24 vyberu). Snapshot = konzistentni kopie obou databazi (panel + Profil 4) v jednom
 okamziku; Excel, panel (Audit mereni) i CLI z nej ctou stejna data a uvadeji jeho ID a cas.
 
-- kopie pres SQLite backup API ze zdroje otevreneho JEN PRO CTENI; zdrojove databaze se nemeni;
-- konzistence: obe kopie se udelaji znovu, kdyz se behem kopirovani zmenila kterakoli databaze (PRAGMA data_version);
+- kopie pres SQLite Online Backup API (sqlite3.Connection.backup = sqlite3_backup_init/step/finish), NE kopirovani
+  souboru: zdroj otevreny JEN PRO CTENI, po krocich `CHUNK_PAGES` stranek, zamek pro cteni jen po dobu kroku;
+  zapis jineho spojeni do zdroje SQLite sam pozna a kopii restartuje od zacatku (kopie je vzdy jeden stav databaze);
+- konzistence obou databazi navzajem: PRAGMA data_version obou zdroju pred a po kopirovani; kdyz se kterakoli
+  zmenila, kopiruji se obe znovu – vysledek odpovida jednomu okamziku, kdy se nemenila ani jedna;
+- casovy limit: pri neustalych zapisech se snapshot vzda (SnapshotBusy), zapisy automatu maji prednost;
+- rozpracovana kopie je v unikatni skryte slozce `.tmp-*`, do seznamu se nedostane; po chybe ji snapshot smaze
+  (po tvrdem zabiti procesu zustane – nic ji automaticky nemaze);
 - ID = S<cas UTC>-<6 znaku SHA-256 obsahu obou kopii> – stejna data = stejny otisk;
 - snapshot se vytvari jen na vyzadani (tlacitko v panelu / `tipsbot snapshot create`), nic se automaticky nemaze.
 """
@@ -15,7 +21,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -78,47 +86,82 @@ def _copy(con: sqlite3.Connection, dst_path: Path, deadline: float, chunk: int) 
         dst.close()
 
 
-def create(tipsbot_db: Path, p4_db: Path | None, root: Path, now: datetime | None = None, tries: int = 3,
-           deadline_s: float = DEADLINE_S, chunk: int = CHUNK_PAGES) -> dict:
+RETRY_PAUSE_S = 0.5  # pauza mezi pokusy, at automat dokonci davku zapisu
+
+
+def _rmtree_own(d: Path) -> None:
+    """Smaze jen vlastni docasnou slozku tohoto snapshotu (soubory primo v ni)."""
+    if d.exists():
+        for f in d.iterdir():
+            f.unlink()
+        d.rmdir()
+
+
+def create(tipsbot_db: Path, p4_db: Path | None, root: Path, now: datetime | None = None,
+           deadline_s: float = DEADLINE_S, chunk: int = CHUNK_PAGES, work_dir: Path | None = None) -> dict:
     """Konzistentni kopie obou databazi do `root/<ID>/`. Vraci metadata (ulozena i jako meta.json).
 
     Kopiruje se po malych krocich (`chunk` stranek): zdroj je zamceny jen po dobu jednoho kroku, takze automat muze
     mezi kroky zapisovat (databaze jsou v rezimu journal_mode=delete – dlouhy zamek pro cteni by zapis zablokoval).
     Zapis jineho spojeni kopii restartuje; po `deadline_s` sekundach se snapshot vzda (SnapshotBusy) a rozpracovanou
-    vlastni docasnou kopii smaze. Konzistence obou databazi: PRAGMA data_version pred a po kopirovani."""
+    vlastni docasnou kopii smaze. Konzistence obou databazi: PRAGMA data_version pred a po kopirovani.
+
+    Backup jde nejdriv do LOKALNI docasne slozky (`work_dir`, vychozi systemovy temp – v Dockeru /tmp kontejneru):
+    zapis do pripojene slozky data/ je v Dockeru Desktop ~4× pomalejsi (profil4.db 67 s proti 15 s) a automat zapisuje
+    do profil4.db kazdou minutu (auto_tick_at), takze by kopii stale restartoval. Hotova a overena soukroma kopie se
+    pak bez jakehokoli zamku na zdroji zkopiruje do `root` a otisk se zkontroluje."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
-    tmp = Path(root) / f".tmp-{now:%Y%m%d%H%M%S}"
-    tmp.mkdir(parents=True, exist_ok=False)
+    Path(root).mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".tmp-{now:%Y%m%d%H%M%S}-", dir=root))  # unikatni i pri soubehu
+    work = Path(tempfile.mkdtemp(prefix="tipsbot-snapshot-", dir=work_dir))
     sources = [Path(tipsbot_db)] + ([Path(p4_db)] if p4_db and Path(p4_db).exists() else [])
     deadline = time.monotonic() + deadline_s
     try:
-        for attempt in range(1, tries + 1):
+        attempt = 0
+        while True:  # pokusy az do casoveho limitu; kazdy pokus kopiruje obe databaze znovu
+            attempt += 1
             cons = [_ro(p) for p in sources]
             try:
                 before = [_version(c) for c in cons]
                 for c, name in zip(cons, FILES):
-                    _copy(c, tmp / name, deadline, chunk)
+                    (work / name).unlink(missing_ok=True)
+                    _copy(c, work / name, deadline, chunk)
                 stable = [_version(c) for c in cons] == before
             finally:
                 for c in cons:
                     c.close()
             if stable:
                 break
-        else:
-            raise SnapshotBusy("databáze se během kopírování opakovaně měnila (běží sken) – zkus snapshot za chvíli")
+            if time.monotonic() + RETRY_PAUSE_S > deadline:
+                raise SnapshotBusy("databáze se během kopírování opakovaně měnila (běží sken) – zkus snapshot za chvíli")
+            time.sleep(RETRY_PAUSE_S)
+        names = FILES[:len(sources)]
+        digest = _sha([work / n for n in names])
+        for n in names:  # hotova soukroma kopie -> snapshot (zdroj uz neni potreba, zadny zamek)
+            shutil.copyfile(work / n, tmp / n)
+        if _sha([tmp / n for n in names]) != digest:
+            raise RuntimeError("kopie snapshotu se při přesunu poškodila – snapshot zahozen")
     except BaseException:
-        for f in tmp.iterdir():  # jen vlastni rozpracovana kopie tohoto snapshotu
-            f.unlink()
-        tmp.rmdir()
+        _rmtree_own(tmp)  # jen vlastni rozpracovana kopie tohoto snapshotu
         raise
-    copies = [tmp / n for n in FILES[:len(sources)]]
-    sid = f"S{now:%Y%m%d-%H%M%S}-{_sha(copies)[:6]}"
-    meta = {"id": sid, "created": now.isoformat(), "files": [p.name for p in copies], "attempts": attempt,
+    finally:
+        _rmtree_own(work)
+    copies = [tmp / n for n in names]
+    base = f"S{now:%Y%m%d-%H%M%S}-{digest[:6]}"
+    meta = {"id": base, "created": now.isoformat(),
+            "copied_until": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "files": [p.name for p in copies], "attempts": attempt,
             "sizes": {p.name: p.stat().st_size for p in copies}}
-    (tmp / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
-    final = Path(root) / sid
-    tmp.rename(final)
-    return meta
+    for n in range(100):  # opakovany snapshot ve stejne sekunde se stejnymi daty: -1, -2…
+        meta["id"] = base if n == 0 else f"{base}-{n}"
+        (tmp / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+        try:
+            tmp.rename(Path(root) / meta["id"])
+            return meta
+        except OSError:
+            if not (Path(root) / meta["id"]).exists():
+                raise
+    raise RuntimeError("nepodařilo se přidělit ID snapshotu")
 
 
 def items(root: Path) -> list[dict]:

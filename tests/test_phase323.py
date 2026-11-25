@@ -467,3 +467,62 @@ def test_snapshot_is_opened_read_only_and_stays_unchanged(world, tmp_path, monke
     with contextlib.redirect_stdout(io.StringIO()):
         run(Namespace(what="measure", action="report", db=world.url, snapshot=meta["id"]))
     assert digest() == before
+
+
+def _big_db(path, rows=20000):
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)")
+    con.executemany("INSERT INTO t(v) VALUES(?)", (("x" * 200,) for _ in range(rows)))
+    con.commit()
+    con.close()
+
+
+def test_snapshot_does_not_block_writer(tmp_path):
+    """Automat zapisuje behem snapshotu: zapisovac s kratkym timeoutem nesmi dostat „database is locked“
+    (24. 11. 2026 v Dockeru: kopie v jednom kroku drzela zamek a Profil 4 selhal)."""
+    import sqlite3
+    import threading
+    import time as _t
+
+    from tipsbot import snapshot
+
+    a, b = tmp_path / "a.db", tmp_path / "b.db"
+    _big_db(a)
+    _big_db(b)
+    errors, done = [], threading.Event()
+
+    def writer():
+        con = sqlite3.connect(b, timeout=1.0)
+        while not done.is_set():
+            try:
+                con.execute("INSERT INTO t(v) VALUES('w')")
+                con.commit()
+            except sqlite3.OperationalError as e:
+                errors.append(str(e))
+            _t.sleep(0.02)
+        con.close()
+
+    th = threading.Thread(target=writer)
+    th.start()
+    try:
+        try:
+            snapshot.create(a, b, tmp_path / "snaps", deadline_s=5, chunk=16)
+        except snapshot.SnapshotBusy:
+            pass  # povoleny vysledek pri neustalych zapisech: snapshot se vzda, zapisy maji prednost
+    finally:
+        done.set()
+        th.join()
+    assert errors == []
+    assert not list((tmp_path / "snaps").glob(".tmp-*"))  # rozpracovana kopie se nenechava
+
+
+def test_snapshot_gives_up_after_deadline_and_cleans_up(tmp_path):
+    from tipsbot import snapshot
+
+    a = tmp_path / "a.db"
+    _big_db(a)
+    with pytest.raises(snapshot.SnapshotBusy):
+        snapshot.create(a, None, tmp_path / "snaps", deadline_s=-1, chunk=1)
+    assert list((tmp_path / "snaps").iterdir()) == []

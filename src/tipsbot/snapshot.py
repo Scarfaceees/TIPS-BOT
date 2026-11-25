@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,30 +58,59 @@ def _sha(paths: list[Path]) -> str:
     return h.hexdigest()
 
 
-def create(tipsbot_db: Path, p4_db: Path | None, root: Path, now: datetime | None = None, tries: int = 3) -> dict:
-    """Konzistentni kopie obou databazi do `root/<ID>/`. Vraci metadata (ulozena i jako meta.json)."""
+CHUNK_PAGES = 256  # ~1 MB na krok: zamek pro cteni se drzi jen milisekundy, automat mezi kroky zapisuje
+DEADLINE_S = 180  # kdyz se kopie nestihne (bezi sken a databaze se stale meni), snapshot se vzda – zapisy maji prednost
+
+
+class SnapshotBusy(RuntimeError):
+    """Snapshot se nepodaril, protoze se databaze behem kopirovani menila (bezi sken)."""
+
+
+def _copy(con: sqlite3.Connection, dst_path: Path, deadline: float, chunk: int) -> None:
+    def progress(status, remaining, total):
+        if time.monotonic() > deadline:
+            raise SnapshotBusy("databáze se během kopírování stále mění (běží sken) – zkus snapshot za chvíli")
+
+    dst = sqlite3.connect(dst_path)
+    try:
+        con.backup(dst, pages=chunk, progress=progress, sleep=0.05)
+    finally:
+        dst.close()
+
+
+def create(tipsbot_db: Path, p4_db: Path | None, root: Path, now: datetime | None = None, tries: int = 3,
+           deadline_s: float = DEADLINE_S, chunk: int = CHUNK_PAGES) -> dict:
+    """Konzistentni kopie obou databazi do `root/<ID>/`. Vraci metadata (ulozena i jako meta.json).
+
+    Kopiruje se po malych krocich (`chunk` stranek): zdroj je zamceny jen po dobu jednoho kroku, takze automat muze
+    mezi kroky zapisovat (databaze jsou v rezimu journal_mode=delete – dlouhy zamek pro cteni by zapis zablokoval).
+    Zapis jineho spojeni kopii restartuje; po `deadline_s` sekundach se snapshot vzda (SnapshotBusy) a rozpracovanou
+    vlastni docasnou kopii smaze. Konzistence obou databazi: PRAGMA data_version pred a po kopirovani."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
     tmp = Path(root) / f".tmp-{now:%Y%m%d%H%M%S}"
     tmp.mkdir(parents=True, exist_ok=False)
     sources = [Path(tipsbot_db)] + ([Path(p4_db)] if p4_db and Path(p4_db).exists() else [])
-    for attempt in range(1, tries + 1):
-        cons = [_ro(p) for p in sources]
-        try:
-            before = [_version(c) for c in cons]
-            for c, name in zip(cons, FILES):
-                dst = sqlite3.connect(tmp / name)
-                try:
-                    c.backup(dst)
-                finally:
-                    dst.close()
-            stable = [_version(c) for c in cons] == before
-        finally:
-            for c in cons:
-                c.close()
-        if stable:
-            break
-    else:
-        raise RuntimeError("databáze se během kopírování opakovaně měnila (běží sken) – zkus snapshot za chvíli")
+    deadline = time.monotonic() + deadline_s
+    try:
+        for attempt in range(1, tries + 1):
+            cons = [_ro(p) for p in sources]
+            try:
+                before = [_version(c) for c in cons]
+                for c, name in zip(cons, FILES):
+                    _copy(c, tmp / name, deadline, chunk)
+                stable = [_version(c) for c in cons] == before
+            finally:
+                for c in cons:
+                    c.close()
+            if stable:
+                break
+        else:
+            raise SnapshotBusy("databáze se během kopírování opakovaně měnila (běží sken) – zkus snapshot za chvíli")
+    except BaseException:
+        for f in tmp.iterdir():  # jen vlastni rozpracovana kopie tohoto snapshotu
+            f.unlink()
+        tmp.rmdir()
+        raise
     copies = [tmp / n for n in FILES[:len(sources)]]
     sid = f"S{now:%Y%m%d-%H%M%S}-{_sha(copies)[:6]}"
     meta = {"id": sid, "created": now.isoformat(), "files": [p.name for p in copies], "attempts": attempt,

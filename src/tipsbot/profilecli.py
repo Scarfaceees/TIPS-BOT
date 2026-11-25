@@ -63,8 +63,9 @@ def run(args) -> int:
         if meta is None:
             print(f"Snapshot {sid} neexistuje (tipsbot profile snapshot list)")
             return 1
-        args.db, p4_path, at = snapshot.paths(snapshot.root(), meta)
-    with make_session_factory(args.db)() as session:
+        url, p4_path, at = snapshot.paths(snapshot.root(), meta)
+    factory = snapshot.session_factory(url) if meta else make_session_factory(args.db)  # snapshot jen pro cteni
+    with factory() as session:
         led = Ledger(session)
         picks = paper.load(led)
         if args.what == "audit":

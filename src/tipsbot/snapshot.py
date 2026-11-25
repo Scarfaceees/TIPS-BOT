@@ -115,6 +115,16 @@ def paths(root: Path, meta: dict) -> tuple[str, Path | None, datetime]:
         datetime.fromisoformat(meta["created"])
 
 
+def session_factory(url: str):
+    """Session nad snapshotem JEN PRO CTENI (SQLite mode=ro, bez create_all) – snapshot se nikdy nezmeni."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    path = url[len("sqlite:///"):]
+    engine = create_engine(f"sqlite:///file:{path}?mode=ro&uri=true")
+    return sessionmaker(engine, expire_on_commit=False)
+
+
 def label(meta: dict | None, read_at: datetime) -> str:
     if meta:
         return f"Snapshot {meta['id']} (data k {meta['created'][:16].replace('T', ' ')} UTC)"

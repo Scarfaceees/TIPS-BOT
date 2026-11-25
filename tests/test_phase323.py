@@ -440,3 +440,30 @@ def test_snapshot_of_same_data_has_same_fingerprint(db, tmp_path):  # noqa: F811
     b = snapshot.create(tmp_path / "a.db", db, tmp_path / "snaps", datetime(2026, 11, 24, 18, 1, tzinfo=UTC))
     assert a["id"][-6:] == b["id"][-6:] and a["id"] != b["id"]
     assert [m["id"] for m in snapshot.items(tmp_path / "snaps")] == [b["id"], a["id"]]
+
+
+def test_snapshot_is_opened_read_only_and_stays_unchanged(world, tmp_path, monkeypatch):
+    import hashlib
+
+    from sqlalchemy.exc import OperationalError
+
+    from tipsbot import snapshot
+    from tipsbot.profilecli import run
+    from tipsbot.web import create_app
+
+    monkeypatch.setattr(freshness, "report", _REAL_REPORT)
+    monkeypatch.setenv("TIPSBOT_SNAPSHOT_DIR", str(tmp_path / "snaps"))
+    meta = snapshot.create(tmp_path / "w.db", world.db, snapshot.root())
+    d = snapshot.root() / meta["id"]
+    digest = lambda: {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in d.glob("*.db")}  # noqa: E731
+    before = digest()
+    url, _, _ = snapshot.paths(snapshot.root(), meta)
+    with snapshot.session_factory(url)() as s:  # zapis do snapshotu selze
+        with pytest.raises(OperationalError):
+            s.execute(__import__("sqlalchemy").text("CREATE TABLE x(a)"))
+    client = create_app(world.url).test_client()
+    assert client.get(f"/export/xlsx?snapshot={meta['id']}").status_code == 200
+    client.get(f"/?tab=sledovani&audit=1&snapshot={meta['id']}")
+    with contextlib.redirect_stdout(io.StringIO()):
+        run(Namespace(what="measure", action="report", db=world.url, snapshot=meta["id"]))
+    assert digest() == before

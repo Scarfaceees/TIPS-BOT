@@ -1973,7 +1973,7 @@ def create_app(database_url: str | None = None) -> Flask:
         if meta is None:
             raise ValueError(f"snapshot {sid} neexistuje")
         url, p4, at = snapshot.paths(snapshot.root(), meta)
-        return meta, make_session_factory(url), p4, at
+        return meta, snapshot.session_factory(url), p4, at
 
     def _audit_view(session, picks) -> dict:
         """Audit mereni (Faze 3.2.3) – stejne tabulky jako listy Excelu (export.audit_tables), jen cteni.

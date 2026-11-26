@@ -1,6 +1,25 @@
 # Phase 3.4 / B1 – předprodukční kontrola a postup nasazení
 
-Stav k 26. 11. 2026. Nasazení **neproběhlo** a čeká na výslovné potvrzení.
+## Záznam o nasazení – 26. 11. 2026, 17:15–17:32 UTC (schváleno uživatelem)
+
+- **Okno:** 17:15 UTC, `auto:running` prázdné, žádný tip ani sledovaný zápas s výkopem v příštích 4 h.
+- **Kód:** `dev` = `e7e2a85`, ve `src/`, Dockerfile, compose ani pyproject žádné necommitnuté změny.
+- **Rollback image:** `tipsbot-local:rollback-8e3033d` = `ace23bdde102` (původní image zachován).
+- **Zálohy:** `backups/predB1-20261126-1715/`
+  - `tipsbot.db` 27 930 624 B, integrity ok, obnova shodná (9 tabulek, 1 072 řádků), obsahuje testovací řádek id 1;
+  - `profil4.db` 198 828 032 B, integrity ok, obnova shodná (15 tabulek, 270 162 řádků);
+  - `VERIFY OK`.
+- **Smazání řádku id 1 (volba a):** podmíněná transakce z bodu 0, `rowcount` = 1 → COMMIT. Poté `odds_api_calls` 0 řádků, `integrity_check` ok, `odds_api_quota` beze změny (239/261).
+- **Nový image:** `tipsbot-local:latest` = `tipsbot-local:e7e2a85` = `sha256:30c74eb85cb576d9e536b6ba7d0ab286310314c04a4878eb6b377a4836562b6c`.
+- **Restart postupně:** panel 17:20:04 (HTTP 200 po 4 s), automat 17:20:15. Oba kontejnery na `30c74eb85cb5…`, `running`, RestartCount 0. V obou `oddsapi.request` a `storage.OddsApiCall` existují.
+- **První průchod automatu po startu** (17:20–17:31, běžné chování při startu): všechny ligy z cache, **0 požadavků na The Odds API**, `odds_api_calls` dál 0 řádků, kredity 239/261. Vyhodnoceny dohrané výběry a tikety (Kairat – Mjällby).
+- **Logy:** bez chyb, výjimek i varování evidence.
+- **Zatím neověřeno:** první přirozený záznam evidence – čeká na první průchod, který kurzy skutečně stáhne (nebo měření zavíracího kurzu Profilu 4).
+- Poznámka: kontrolní čtení s `mode=ro` bez timeoutu jednou narazilo na `database is locked` během zápisu automatu. Šlo jen o moje čtení; automat chybu nehlásil.
+
+---
+
+Stav k 26. 11. 2026 před nasazením (původní text checklistu):
 
 - **Image před nasazením:**
   - `tipsbot-local:latest` = `tipsbot-local:8e3033d` = `sha256:ace23bdde10216f4fbdb88291135f464c863ce5dedbb07fc7becee38436712a8`;

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
@@ -28,7 +29,7 @@ import requests
 
 from .. import analysis as bot_analysis
 from . import integrity as IN
-from . import mathcore
+from . import mathcore, nhl_measure
 from .config import P4, Profil4Config
 from .coverage import CoverageReport
 from .decision import APPROVED, Candidate, Selection, decide, select
@@ -324,6 +325,7 @@ def run(ledger, store, now: datetime, cfg: Profil4Config = P4, schedule=fetch_sc
     overrides = ledger.goalie_overrides()
     weight = float(SETTINGS.value.league_model_weight.get(LEAGUE, cfg.model.model_weight))
     events = {e.match_id: e for e in oddsapi.parse_events(raw, LEAGUE)}
+    t0, scan_id, cfg_hash = time.monotonic(), iso(now), cfg.config_hash()  # mereni: cas vypoctu = now + uplynuly cas
     out = []
     for ev in raw:
         home, away = ev.get("home_team", ""), ev.get("away_team", "")
@@ -343,6 +345,10 @@ def run(ledger, store, now: datetime, cfg: Profil4Config = P4, schedule=fetch_sc
             t in overrides for t in (h, a)) else "podle podílu odchytaných zápasů"
         an = analyse(fx, model, quotes, now, cfg, weight, injuries, gnote, known)
         history.record(store, an, cfg)  # tipy i predikce (record_predictions) pro kalibraci
+        # Phase 3.5.1 – merici evidence AZ PO rozhodnuti a ulozeni, ze stejnych objektu; chyba jen do logu
+        nhl_measure.measure_scan(store, fx=fx, ev=parsed, quotes=quotes, provider=provider, model_used=model,
+                                 now=now + timedelta(seconds=time.monotonic() - t0), odds_fetched_at=odds_time,
+                                 scan_id=scan_id, weight_p4=weight, config_hash=cfg_hash, overrides=overrides)
         out.append(an)
     return NHLScan(now, out, notes, odds_time)
 
@@ -479,6 +485,7 @@ def settle(store, now: datetime, fetch=None) -> list[str]:
             if out is not None:
                 store.execute("UPDATE predictions SET result=?, outcome=?, score=?, settled_at=? WHERE id=?",
                               (out, history.outcome_value(out), score, iso(now), p["id"]))
+    nhl_measure.measure_results(store, games, now)  # Phase 3.5.1: z uz stazenych vysledku, zadny dalsi dotaz
     return msgs
 
 

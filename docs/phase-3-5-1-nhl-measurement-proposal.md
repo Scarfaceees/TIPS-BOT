@@ -357,3 +357,43 @@ Pro B je rozumné δ 0,0005–0,001: 0,0005 vyžaduje ~8 500 zápasů, 0,001 ~2 
   - srovnatelnost se ukládá zvlášť pro ostrou referenci a pro referenci Profilu 4 (`comparable_sharp`, `comparable_p4`);
   - pravidlo S6 (výsledek) se vyhodnotí až při vyhodnocení (M3).
 - **Existující nález mimo M1:** při souběžném otevření **úplně nové** `profil4.db` může `Store._migrate` selhat na `duplicate column name` (`LATER_COLUMNS`). Ve výchozí verzi i s M1 to nastalo ve 2 z 20 pokusů. Produkční DB tyto sloupce už má, takže se jí to netýká. Neopravováno.
+
+## Stav implementace – M2 (26. 11. 2026, jen `dev`, nenasazeno)
+
+**Zapojení:**
+- `profil4/nhl.run`: po `analyse` a `history.record` (rozhodnutí je už uložené) se volá `nhl_measure.measure_scan` se stejnými objekty (`fx`, `parsed`, `quotes`, `provider`, `model`).
+  - `computed_at` = `now` skenu + skutečně uplynulý čas (`time.monotonic`);
+  - `odds_fetched_at` = čas cache hlavního bota;
+  - `scan_id` = `now` skenu.
+- `profil4/nhl.settle`: na konci se volá `nhl_measure.measure_results(store, games, now)` nad **už staženými** výsledky. Dotazy se nemění: dny i jejich počet zůstávají stejné.
+- Obě volání chytají každou výjimku. Chyba se zapíše do logu jako varování (`měření NHL selhalo…`, `měření NHL: ukládání výsledků selhalo…`) a sken i vyhodnocení pokračují beze změny.
+
+**Duplicity:**
+- `nhl_snapshots.input_hash` je otisk vstupů bez času výpočtu. Sken se stejnými vstupy jako poslední snímek zápasu nic nepřidá;
+- unikátní index `(scan_id, fixture_id)`;
+- nový snímek vzniká jen při změně vstupů (nové stažení kurzů, nová data MoneyPuck, brankáři, verze).
+
+**Výsledky:**
+- ukládá se jen potvrzený konečný výsledek: `parse_scores` bere jen `OFF` / `FINAL`, `_check_result` kontroluje konzistenci (REG: skóre po 60 min = konečné; OT/SO: po 60 min remíza, konečné o 1 gól);
+- přiřazení přes id zápasu NHL API, kontrolu týmů a čas začátku ± 6 h;
+- `INSERT OR IGNORE`: první výsledek platí.
+
+**Oprava chybného výsledku – postup:**
+1. Jiný výsledek ze zdroje se **nepřepíše**. Zapíše se do `nhl_result_corrections` jako `konflikt` (jednou) a do logu.
+2. Opravu lze provést jen výslovně `nhl_measure.correct_result(store, fixture_id, final, reg, end, reason, now)`:
+   - důvod je povinný;
+   - skóre se kontroluje stejně jako při ukládání;
+   - zapíše se `oprava` s původní hodnotou, důvodem, zdrojem a časem;
+   - původní řádek v `nhl_results` zůstává.
+3. Vyhodnocení (M3) bude číst `effective_result`: poslední oprava, jinak první výsledek. Konflikty se nepoužijí nikdy.
+
+**Databázové změny proti M1** (M1 nebylo nikde nasazeno, proto přímo ve `SCHEMA`, bez `ALTER`):
+- `nhl_snapshots.input_hash`;
+- unikátní index `nhl_snapshots_scan`;
+- tabulka `nhl_result_corrections`.
+
+**Regrese:** na čtyřech scénářích (kotva, bez totalu, měkký kurz, sken + vyhodnocení) jsou výstupy rozhodování Profilu 4 a hlavního bota bitově shodné s M1 `6034048` (179 KB JSON).
+
+**Omezení:**
+- výsledek se uloží jen pro zápasy, které vyhodnocení už samo stahuje (zápasy s tipem nebo predikcí). Měřený zápas bez obojího výsledek nedostane, a to záměrně kvůli nula dotazům navíc;
+- `code_rev` je `unknown`, dokud build nenastaví `TIPSBOT_CODE_REV`.

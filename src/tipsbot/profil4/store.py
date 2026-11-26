@@ -108,9 +108,10 @@ CREATE TABLE IF NOT EXISTS nhl_snapshots (
     lambda_raw_h REAL, lambda_raw_a REAL, anchored INTEGER, anchor_market TEXT, anchor_target REAL, anchor_k REAL,
     lambda_used_h REAL, lambda_used_a REAL, model_weight_main REAL, model_weight_p4 REAL,
     missing TEXT NOT NULL, comparable INTEGER NOT NULL, exclusion TEXT NOT NULL,
-    model_version TEXT, config_hash TEXT, code_rev TEXT, measure_version TEXT NOT NULL
+    model_version TEXT, config_hash TEXT, code_rev TEXT, measure_version TEXT NOT NULL, input_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS nhl_snapshots_fixture ON nhl_snapshots(fixture_id);
+CREATE UNIQUE INDEX IF NOT EXISTS nhl_snapshots_scan ON nhl_snapshots(scan_id, fixture_id);
 CREATE TABLE IF NOT EXISTS nhl_measurements (
     id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_id INTEGER NOT NULL, fixture_id INTEGER NOT NULL,
     market TEXT NOT NULL, selection TEXT NOT NULL, market_family TEXT NOT NULL,
@@ -126,6 +127,11 @@ CREATE INDEX IF NOT EXISTS nhl_measurements_fixture ON nhl_measurements(fixture_
 CREATE TABLE IF NOT EXISTS nhl_results (
     fixture_id INTEGER PRIMARY KEY, final_h INTEGER, final_a INTEGER, reg_h INTEGER, reg_a INTEGER, "end" TEXT,
     source TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
+-- konflikt = zdroj pozdeji hlasi jiny vysledek (nic se neprepisuje); oprava = vyslovna rucni oprava s duvodem
+CREATE TABLE IF NOT EXISTS nhl_result_corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, fixture_id INTEGER NOT NULL, kind TEXT NOT NULL, old TEXT, new TEXT NOT NULL,
+    reason TEXT NOT NULL, source TEXT, created_at TEXT NOT NULL, UNIQUE(fixture_id, kind, new)
 );
 """
 

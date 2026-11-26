@@ -271,7 +271,8 @@ def test_record_is_append_only_and_results_first_write_wins(st):
     snap, rows, *_ = snapshot(st)
     sid1 = M.record(store, snap, list(rows.values()))
     before = [tuple(r) for r in store.query("SELECT * FROM nhl_measurements WHERE snapshot_id=?", (sid1,))]
-    sid2 = M.record(store, {**snap, "scan_id": "t2"}, list(rows.values()))
+    assert M.record(store, {**snap, "scan_id": "t2"}, list(rows.values())) is None  # stejne vstupy = zadny duplikat
+    sid2 = M.record(store, {**snap, "scan_id": "t2", "input_hash": "jiny"}, list(rows.values()))
     assert sid2 != sid1 and [tuple(r) for r in store.query("SELECT * FROM nhl_measurements WHERE snapshot_id=?", (sid1,))] == before
     assert store.query("SELECT COUNT(*) n FROM nhl_snapshots")[0]["n"] == 2
     got = dict(store.query("SELECT * FROM nhl_snapshots WHERE id=?", (sid1,))[0])
@@ -297,7 +298,7 @@ def test_failed_record_leaves_nothing_half_written(st):
 def _pre_m1_db(path):
     """Databaze ve stavu pred M1: cele dosavadni schema bez novych tabulek a s daty."""
     s = Store(path)
-    for t in ("nhl_snapshots", "nhl_measurements", "nhl_results"):
+    for t in ("nhl_snapshots", "nhl_measurements", "nhl_results", "nhl_result_corrections"):
         s.execute(f"DROP TABLE {t}")
     s.execute("INSERT INTO kv(key, value) VALUES('stary', 'zaznam')")
     s.execute("INSERT INTO predictions(fixture_id, market, selection, market_type, model, p, predicted_at, model_version, "
@@ -309,7 +310,7 @@ def _dump(path):
     c = sqlite3.connect(path)
     out = {t: c.execute(f'SELECT * FROM "{t}"').fetchall() for (t,) in
            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'nhl_%'")}
-    schema = sorted(c.execute("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'nhl_%'").fetchall(), key=str)
+    schema = sorted(c.execute("SELECT name, sql FROM sqlite_master WHERE tbl_name NOT LIKE 'nhl_%'").fetchall(), key=str)
     c.close()
     return out, schema
 
@@ -342,7 +343,7 @@ def test_concurrent_open_of_existing_database_creates_tables_once(tmp_path):
         [t.join() for t in ts]
     assert not errors
     assert {r[0] for r in sqlite3.connect(p).execute("SELECT name FROM sqlite_master WHERE name LIKE 'nhl_%' AND type='table'")} == {
-        "nhl_snapshots", "nhl_measurements", "nhl_results"}
+        "nhl_snapshots", "nhl_measurements", "nhl_results", "nhl_result_corrections"}
 
 
 # --- zadne API pozadavky -------------------------------------------------------------------------------------

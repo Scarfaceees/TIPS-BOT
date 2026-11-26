@@ -18,7 +18,9 @@ Pravidla (Phase 3.5.1, docs/phase-3-5-1-nhl-measurement-proposal.md):
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import zlib
 from datetime import datetime, timezone
@@ -26,7 +28,9 @@ from typing import Any
 
 import numpy as np
 
-MEASURE_VERSION = "m1-1"
+log = logging.getLogger(__name__)
+
+MEASURE_VERSION = "m2-1"
 # Pravidla srovnatelnosti (kap. 5 navrhu). Patri mereni, ne rozhodovaci konfiguraci (config_hash se nemeni).
 REF_MAX_AGE_MIN = 180.0  # S3: referencni trh nejvys tolik minut stary v okamziku vypoctu
 DATA_MAX_LAG_DAYS = 3  # S5: posledni zapas v datech MoneyPuck nejvys tolik dni pred dnem zapasu
@@ -274,7 +278,24 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
     snap["missing"] = json.dumps(missing, ensure_ascii=False)
     snap["comparable"] = int(not snap_excl)
     snap["exclusion"] = json.dumps(snap_excl, ensure_ascii=False)
+    snap["input_hash"] = input_hash(snap, rows)
     return snap, rows
+
+
+# Vstupy snimku (bez casu vypoctu a z nej odvozeneho stari/srovnatelnosti): stejny otisk = stejne meritelne vstupy.
+_HASH_SNAP = ("fixture_id", "kickoff", "odds_fetched_at", "ref_sharp_books", "ref_sharp_stamp_max", "ref_p4_books",
+              "ref_p4_stamp_max", "data_last_game", "data_file_mtime", "goalie_home_src", "goalie_away_src", "seed",
+              "lambda_raw_h", "lambda_raw_a", "anchored", "anchor_market", "anchor_target", "lambda_used_h",
+              "lambda_used_a", "model_weight_main", "model_weight_p4", "missing", "model_version", "config_hash",
+              "measure_version")
+_HASH_ROW = ("market", "selection", "p_raw", "p_used", "p_mkt_sharp", "p_mkt_p4", "mkt_p4_books", "p_blend_main",
+             "p_blend_p4", "best_odds", "best_book", "best_stamp")
+
+
+def input_hash(snap: dict, rows: list[dict]) -> str:
+    raw = json.dumps([[snap.get(k) for k in _HASH_SNAP], [[r.get(k) for k in _HASH_ROW] for r in rows]],
+                     sort_keys=True, default=str)
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
 
 
 _SNAP_COLS = ("scan_id", "fixture_id", "match", "kickoff", "computed_at", "odds_fetched_at", "odds_cost_source",
@@ -283,15 +304,23 @@ _SNAP_COLS = ("scan_id", "fixture_id", "match", "kickoff", "computed_at", "odds_
               "cold_start_away", "goalie_home_src", "goalie_away_src", "b2b_home", "b2b_away", "seed", "lambda_raw_h",
               "lambda_raw_a", "anchored", "anchor_market", "anchor_target", "anchor_k", "lambda_used_h", "lambda_used_a",
               "model_weight_main", "model_weight_p4", "missing", "comparable", "exclusion", "model_version",
-              "config_hash", "code_rev", "measure_version")
+              "config_hash", "code_rev", "measure_version", "input_hash")
 _ROW_COLS = ("fixture_id", "market", "selection", "market_family", "p_raw", "p_used", "independence_used",
              "p_mkt_sharp", "mkt_sharp_sources", "mkt_sharp_stamp", "p_mkt_p4", "mkt_p4_source", "mkt_p4_books",
              "mkt_p4_stamp", "p_blend_main", "blend_main_kind", "p_blend_p4", "p_cons_p4", "blend_p4_kind", "best_odds",
              "best_book", "best_stamp", "in_main", "in_p4", "comparable_sharp", "comparable_p4", "exclusion")
 
 
-def record(store, snap: dict, rows: list[dict]) -> int:
-    """Ulozi snimek a jeho radky v jedne transakci (jen INSERT). Vraci id snimku."""
+def record(store, snap: dict, rows: list[dict]) -> int | None:
+    """Ulozi snimek a jeho radky v jedne transakci (jen INSERT). Vraci id snimku, nebo None, kdyz se nic neulozilo:
+    - opakovany sken se stejnymi vstupy (stejny otisk jako posledni snimek zapasu) – zadne duplicitni mereni;
+    - stejny sken (scan_id) uz zapas zapsal."""
+    last = store.query("SELECT input_hash FROM nhl_snapshots WHERE fixture_id=? ORDER BY id DESC LIMIT 1",
+                       (snap["fixture_id"],))
+    if last and snap.get("input_hash") and last[0]["input_hash"] == snap["input_hash"]:
+        return None
+    if store.query("SELECT 1 FROM nhl_snapshots WHERE scan_id=? AND fixture_id=?", (snap["scan_id"], snap["fixture_id"])):
+        return None
     with store.batch():
         cur = store.execute(f"INSERT INTO nhl_snapshots({', '.join(_SNAP_COLS)}) VALUES({', '.join('?' * len(_SNAP_COLS))})",
                             [snap.get(c) for c in _SNAP_COLS])
@@ -302,10 +331,137 @@ def record(store, snap: dict, rows: list[dict]) -> int:
     return sid
 
 
+CONFLICT, CORRECTION = "konflikt", "oprava"
+
+
+def _check_result(g: dict) -> list[str]:
+    """Potvrzeny konecny vysledek? Vraci duvody, proc ho NEULOZIT (prazdne = v poradku)."""
+    final, reg, end = g.get("final"), g.get("reg"), g.get("end")
+    if not final or not reg or None in (*final, *reg):
+        return ["chybí konečné skóre nebo skóre po 60 min"]
+    if end not in ("REG", "OT", "SO"):
+        return [f"neznámý konec zápasu {end!r}"]
+    if end == "REG" and (tuple(reg) != tuple(final) or final[0] == final[1]):
+        return [f"konec v základní době, ale po 60 min {tuple(reg)} a konečné {tuple(final)} nesedí"]
+    if end in ("OT", "SO") and (reg[0] != reg[1] or abs(final[0] - final[1]) != 1 or sum(final) != sum(reg) + 1):
+        return [f"prodloužení/nájezdy: po 60 min {tuple(reg)}, konečné {tuple(final)} – nesedí"]
+    return []
+
+
+def stored_result(store, fixture_id: int) -> dict | None:
+    rows = store.query('SELECT final_h, final_a, reg_h, reg_a, "end", source, fetched_at FROM nhl_results WHERE fixture_id=?',
+                       (fixture_id,))
+    if not rows:
+        return None
+    r = rows[0]
+    return {"final": [r["final_h"], r["final_a"]], "reg": [r["reg_h"], r["reg_a"]], "end": r["end"],
+            "source": r["source"], "fetched_at": r["fetched_at"]}
+
+
+def _core(res: dict) -> dict:
+    return {"final": list(res["final"]), "reg": list(res["reg"]), "end": res["end"]}
+
+
 def record_result(store, fixture_id: int, g: dict, now: datetime, source: str = "NHL API (nhl_settle)") -> bool:
-    """Vysledek zapasu jednou provzdy (INSERT OR IGNORE – prvni zapis plati). `g` = nhl_settle.parse_scores."""
-    final, reg = g.get("final") or (None, None), g.get("reg") or (None, None)
+    """Vysledek zapasu jednou provzdy (INSERT OR IGNORE – prvni zapis plati). `g` = nhl_settle.parse_scores.
+
+    Ulozi jen potvrzeny konecny vysledek (_check_result). Jiny vysledek nez ulozeny se NEPREPISE – zapise se jako
+    konflikt do nhl_result_corrections a do logu; opravit lze jen vyslovne (correct_result)."""
+    bad = _check_result(g)
+    if bad:
+        log.warning("měření NHL: výsledek zápasu %s neuložen (%s)", fixture_id, "; ".join(bad))
+        return False
+    new = _core(g)
     cur = store.execute('INSERT OR IGNORE INTO nhl_results(fixture_id, final_h, final_a, reg_h, reg_a, "end", source, '
                         "fetched_at) VALUES(?,?,?,?,?,?,?,?)",
-                        (fixture_id, final[0], final[1], reg[0], reg[1], g.get("end"), source, _iso(_aware(now))))
+                        (fixture_id, new["final"][0], new["final"][1], new["reg"][0], new["reg"][1], new["end"], source,
+                         _iso(_aware(now))))
+    if cur.rowcount == 1:
+        return True
+    old = _core(stored_result(store, fixture_id))
+    if old != new:
+        c = store.execute("INSERT OR IGNORE INTO nhl_result_corrections(fixture_id, kind, old, new, reason, source, created_at) "
+                          "VALUES(?,?,?,?,?,?,?)", (fixture_id, CONFLICT, json.dumps(old), json.dumps(new),
+                                                    "zdroj nyní hlásí jiný výsledek", source, _iso(_aware(now))))
+        if c.rowcount == 1:
+            log.warning("měření NHL: zápas %s – zdroj hlásí %s, uloženo %s; nepřepsáno (konflikt k ručnímu ověření)",
+                        fixture_id, new, old)
+    return False
+
+
+def correct_result(store, fixture_id: int, final: tuple[int, int], reg: tuple[int, int], end: str, reason: str,
+                   now: datetime, source: str = "ručně") -> bool:
+    """Bezpecna oprava chybneho vysledku: puvodni zaznam v nhl_results zustava, oprava se PRIDA s duvodem, zdrojem
+    a casem. Vyhodnoceni pouzije effective_result (posledni oprava, jinak puvodni). Neplatna oprava se odmitne."""
+    if not reason.strip():
+        raise ValueError("oprava výsledku musí mít důvod")
+    old = stored_result(store, fixture_id)
+    if old is None:
+        raise ValueError(f"zápas {fixture_id} nemá uložený výsledek – opravovat není co")
+    new = {"final": list(final), "reg": list(reg), "end": end}
+    bad = _check_result(new)
+    if bad:
+        raise ValueError("; ".join(bad))
+    cur = store.execute("INSERT OR IGNORE INTO nhl_result_corrections(fixture_id, kind, old, new, reason, source, created_at) "
+                        "VALUES(?,?,?,?,?,?,?)", (fixture_id, CORRECTION, json.dumps(_core(effective_result(store, fixture_id))),
+                                                  json.dumps(new), reason, source, _iso(_aware(now))))
     return cur.rowcount == 1
+
+
+def effective_result(store, fixture_id: int) -> dict | None:
+    """Vysledek pro vyhodnoceni: posledni vyslovna oprava, jinak prvni ulozeny (konflikty se nikdy nepouziji)."""
+    fix = store.query("SELECT new, reason, created_at FROM nhl_result_corrections WHERE fixture_id=? AND kind=? "
+                      "ORDER BY id DESC LIMIT 1", (fixture_id, CORRECTION))
+    if fix:
+        return {**json.loads(fix[0]["new"]), "source": "oprava: " + fix[0]["reason"], "fetched_at": fix[0]["created_at"]}
+    return stored_result(store, fixture_id)
+
+
+def record_results(store, games: dict, now: datetime) -> int:
+    """Vysledky merenych zapasu z UZ STAZENYCH dat vyhodnoceni (nhl.settle: {id zapasu NHL API: zapas}). Zadny dotaz.
+
+    Prirazeni pres id zapasu NHL API + kontrola tymu a casu zacatku; pri neshode se nic neulozi (varovani v logu)."""
+    from ..names import nhl_abbr
+
+    n = 0
+    for r in store.query("SELECT fixture_id, match, kickoff FROM nhl_snapshots WHERE id IN "
+                         "(SELECT MAX(id) FROM nhl_snapshots GROUP BY fixture_id)"):
+        g = games.get(r["fixture_id"])
+        if g is None:
+            continue
+        home, _, away = (r["match"] or "").partition(" - ")
+        ko = datetime.fromisoformat(r["kickoff"])
+        start = g.get("start")
+        if (nhl_abbr(home), nhl_abbr(away)) != (g.get("home"), g.get("away")) or (
+                start is not None and abs((_aware(start) - ko).total_seconds()) > 6 * 3600):
+            log.warning("měření NHL: výsledek %s nepřiřazen – měřený zápas %s (%s) neodpovídá %s-%s (%s)", r["fixture_id"],
+                        r["match"], r["kickoff"], g.get("home"), g.get("away"), start)
+            continue
+        n += int(record_result(store, r["fixture_id"], g, now))
+    return n
+
+
+def measure_scan(store, *, fx, ev, quotes, provider, model_used, now: datetime, odds_fetched_at, scan_id: str,
+                 weight_p4: float, config_hash: str, overrides: dict | None) -> int | None:
+    """Napojeni na sken (nhl.run): sestavi a ulozi mereni. NIKDY nevyhodi vyjimku – chyba jde jen do logu, sken
+    a rozhodovani pokracuji beze zmeny. Vraci id snimku (None = nic neulozeno)."""
+    try:
+        if ev is None:
+            log.warning("měření NHL: zápas %s (%s) bez rozparsované události kurzového API – neměřeno", fx.id, fx.name)
+            return None
+        snap, rows = build(fx, ev, quotes, provider, model_used, now=now, odds_fetched_at=odds_fetched_at,
+                           scan_id=scan_id, weight_p4=weight_p4, config_hash=config_hash, overrides=overrides)
+        return record(store, snap, rows)
+    except Exception as e:  # noqa: BLE001 - evidence nesmi shodit ani zmenit sken
+        log.warning("měření NHL selhalo u zápasu %s (%s): %s: %s", getattr(fx, "id", "?"), getattr(fx, "name", "?"),
+                    type(e).__name__, e)
+        return None
+
+
+def measure_results(store, games: dict, now: datetime) -> int:
+    """Napojeni na vyhodnoceni (nhl.settle). NIKDY nevyhodi vyjimku – chyba jen do logu."""
+    try:
+        return record_results(store, games, now)
+    except Exception as e:  # noqa: BLE001
+        log.warning("měření NHL: ukládání výsledků selhalo: %s: %s", type(e).__name__, e)
+        return 0

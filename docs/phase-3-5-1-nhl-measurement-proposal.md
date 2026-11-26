@@ -340,3 +340,20 @@ Pro B je rozumné δ 0,0005–0,001: 0,0005 vyžaduje ~8 500 zápasů, 0,001 ~2 
 **Mimo tento návrh** (samostatná témata):
 - Pinnacle u NHL > 36 h před zápasem chybí (audit F1). Měření to jen zaznamená (`missing`, S2), nic nestahuje navíc;
 - váha 0,15 zůstává; žádné zvýšení vlivu modelu jen proto, že počítá vlastní čísla.
+
+---
+
+## Stav implementace – M1 (26. 11. 2026, jen `dev`, nenasazeno)
+
+- **Hotovo:**
+  - tabulky `nhl_snapshots`, `nhl_measurements`, `nhl_results` v `profil4/store.py` (`SCHEMA`);
+  - modul `profil4/nhl_measure.py`: `build`, `record`, `record_result`;
+  - testy `tests/test_nhl_measure.py`.
+- **Nenapojeno:** `nhl.run` ani `nhl.settle` modul zatím nevolají (to je M2). V provozu proto nevzniká žádný záznam.
+- **Čistý model OU jde získat bez zásahu do modelu:** `simulate(expected_goals(ctx))` se stejným seedem. Ukládá se jako `p_raw`, se třídou `nezávislý`. Ukotvený výstup je `p_used` se třídou `ukotveno na tržní total`. Žádná náhradní hodnota se nevytváří.
+- **Regrese:** výstupy rozhodování (Profil 4 `tips`, `predictions`, `rankings`, kandidáti a směs hlavního bota) jsou na třech scénářích bitově shodné s výchozí verzí `d1d3012`.
+- **Rozdíly proti návrhu:**
+  - `independence` se ukládá jen pro `p_used` (`independence_used`). `p_raw` je nezávislý vždy;
+  - srovnatelnost se ukládá zvlášť pro ostrou referenci a pro referenci Profilu 4 (`comparable_sharp`, `comparable_p4`);
+  - pravidlo S6 (výsledek) se vyhodnotí až při vyhodnocení (M3).
+- **Existující nález mimo M1:** při souběžném otevření **úplně nové** `profil4.db` může `Store._migrate` selhat na `duplicate column name` (`LATER_COLUMNS`). Ve výchozí verzi i s M1 to nastalo ve 2 z 20 pokusů. Produkční DB tyto sloupce už má, takže se jí to netýká. Neopravováno.

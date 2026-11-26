@@ -96,6 +96,37 @@ CREATE TABLE IF NOT EXISTS settlement_audit_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, run_at TEXT NOT NULL, check_version TEXT, checked INTEGER, matched INTEGER,
     mismatched INTEGER, unverifiable INTEGER, detail TEXT
 );
+-- Phase 3.5.1 / M1 – merici evidence NHL modelu (nhl_measure.py). Jen pribyva, rozhodovani ji necte.
+CREATE TABLE IF NOT EXISTS nhl_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, scan_id TEXT NOT NULL, fixture_id INTEGER NOT NULL, match TEXT,
+    kickoff TEXT NOT NULL, computed_at TEXT NOT NULL, odds_fetched_at TEXT, odds_cost_source TEXT,
+    ref_sharp_books TEXT, ref_sharp_stamp_min TEXT, ref_sharp_stamp_max TEXT,
+    ref_p4_books TEXT, ref_p4_stamp_max TEXT, ref_age_min REAL,
+    data_last_game TEXT, data_file_mtime TEXT, home_games INTEGER, away_games INTEGER,
+    cold_start_home INTEGER, cold_start_away INTEGER, goalie_home_src TEXT, goalie_away_src TEXT,
+    b2b_home INTEGER, b2b_away INTEGER, seed INTEGER,
+    lambda_raw_h REAL, lambda_raw_a REAL, anchored INTEGER, anchor_market TEXT, anchor_target REAL, anchor_k REAL,
+    lambda_used_h REAL, lambda_used_a REAL, model_weight_main REAL, model_weight_p4 REAL,
+    missing TEXT NOT NULL, comparable INTEGER NOT NULL, exclusion TEXT NOT NULL,
+    model_version TEXT, config_hash TEXT, code_rev TEXT, measure_version TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nhl_snapshots_fixture ON nhl_snapshots(fixture_id);
+CREATE TABLE IF NOT EXISTS nhl_measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, snapshot_id INTEGER NOT NULL, fixture_id INTEGER NOT NULL,
+    market TEXT NOT NULL, selection TEXT NOT NULL, market_family TEXT NOT NULL,
+    p_raw REAL, p_used REAL, independence_used TEXT NOT NULL,
+    p_mkt_sharp REAL, mkt_sharp_sources TEXT, mkt_sharp_stamp TEXT,
+    p_mkt_p4 REAL, mkt_p4_source TEXT, mkt_p4_books TEXT, mkt_p4_stamp TEXT,
+    p_blend_main REAL, blend_main_kind TEXT NOT NULL, p_blend_p4 REAL, p_cons_p4 REAL, blend_p4_kind TEXT NOT NULL,
+    best_odds REAL, best_book TEXT, best_stamp TEXT, in_main INTEGER NOT NULL, in_p4 INTEGER NOT NULL,
+    comparable_sharp INTEGER NOT NULL, comparable_p4 INTEGER NOT NULL, exclusion TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nhl_measurements_snapshot ON nhl_measurements(snapshot_id);
+CREATE INDEX IF NOT EXISTS nhl_measurements_fixture ON nhl_measurements(fixture_id);
+CREATE TABLE IF NOT EXISTS nhl_results (
+    fixture_id INTEGER PRIMARY KEY, final_h INTEGER, final_a INTEGER, reg_h INTEGER, reg_a INTEGER, "end" TEXT,
+    source TEXT NOT NULL, fetched_at TEXT NOT NULL
+);
 """
 
 # sloupce pridane pozdeji (ALTER TABLE u existujicich databazi)

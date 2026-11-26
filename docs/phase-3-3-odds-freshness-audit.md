@@ -62,7 +62,7 @@ Reprodukce:
 
 - **P0:** žádné.
 - **P1:**
-  1. Zjistit datum resetu kreditů a zavést tempo čerpání (pacing).
+  1. Zavést tempo čerpání (pacing) podle známého resetu (1. den kalendářního měsíce, kap. 8.1).
   2. Teprve potom zvážit jedno podmíněné obnovení NHL před večerním programem (varianta E): +3 kredity za herní den a rozhodnutí z čerstvých kurzů u přibližně 84–88 % zápasů (ODHAD).
 - **Nedoporučuji:**
   - varianty B, C a D – nevejdou se do 500 kreditů;
@@ -366,13 +366,37 @@ Výklad pro jednotlivé scénáře:
 
 - **Konzervativní:**
   - Přínos: žádný nový.
-  - Riziko: při dnešním tempu dojde k rezervě 50 přibližně za (239 − 50) / 21,6 ≈ 8,7 dne, tedy kolem 4.–5. 12., pokud se počítadlo dřív nevynuluje.
+  - Riziko: při dnešním tempu dojde k rezervě 50 přibližně za (239 − 50) / 21,6 ≈ 8,7 dne, tedy kolem 4.–5. 12., pokud se počítadlo dřív nevynuluje. **Doplněno (kap. 8.1):** reset je 1. 12., takže v listopadu k rezervě nedojde; při stejném tempu by ale v prosinci došlo k rezervě kolem 21. 12.
   - Pod rezervou automat přepne všechny ligy na `cache_only`. Kurzy pak stárnou a Profil 4 nic neschválí.
 - **Vyvážený:**
   - Přínos: u NHL rozhodnutí z čerstvých dat (84 %).
   - Náklad: přibližně +3 kredity za herní den.
-  - Proveditelný, jen když se jinde ušetří aspoň stejně (například vynechání obnov soutěží bez zápasu) nebo když měsíční reset nastane brzy.
+  - Proveditelný, jen když se jinde ušetří aspoň stejně (například vynechání obnov soutěží bez zápasu) (reset 1. dne měsíce nic neušetří, jen určí, kdy počítadlo začne znovu).
 - **Agresivní:** s limitem 500 neproveditelný.
+
+### 8.1 Měsíční reset kreditů (doplněno 26. 11. 2026)
+
+**Zdroj:** oficiální FAQ The Odds API (https://the-odds-api.com/manage/faqs.html), ověřil uživatel.
+
+- Kredity se automaticky resetují **první den každého kalendářního měsíce**.
+- Fakturace je samostatná a probíhá v den výročí založení předplatného; s resetem kreditů nesouvisí.
+- Přesnou hodinu a časové pásmo resetu dokumentace neuvádí.
+- **Očekávané datum resetu: 1. 12. 2026.**
+
+**Dopad na odhady (ODHAD nad NAMĚŘENÝMI daty):**
+
+- 26. 11. 06:00 UTC: remaining 239, used 261, součet 500 = plánovaný limit (NAMĚŘENO z uložených hlaviček).
+- Do 1. 12. zbývá přibližně 4,7 dne × 21,6 ≈ 100 kreditů → k resetu zůstane zhruba 130–140 kreditů. **V listopadu k rezervě 50 nedojde**, riziko „4.–5. 12.“ z první verze auditu odpadá.
+- **Prosinec:** (500 − 50) / 21,6 ≈ 20,8 dne → při dnešním tempu by se rezerva 50 dosáhla kolem **21. 12.** a zbytek měsíce by automat jel jen z cache. R1 (tempo čerpání) proto zůstává P1, jen s menší naléhavostí.
+- Denní strop pro R1 lze počítat jako (remaining − rezerva) / dny do 1. dne dalšího měsíce.
+
+**Ověření po resetu (jen čtení, žádné testovací volání, žádné kredity navíc):**
+
+1. Počkat na první běžné volání automatu po resetu. Průchody jsou zhruba v 00, 06, 12 a 18 UTC; protože hodina a pásmo resetu nejsou známé, průchod v 00 UTC 1. 12. může ještě proběhnout před resetem.
+2. Spustit `docker exec -i tipsbot python - < scripts/phase33_quota_check.py` (DB `mode=ro`, ověří, že zápis selže). Skript vypíše poslední hlavičky `x-requests-remaining` / `x-requests-used`, `used` po dnech a zbytek uložený u každé ligy v okamžiku jejího stažení.
+3. Hodnoty prvního volání po resetu: `docker logs -t tipsbot-auto | grep "zbyva kreditu"` (zbytek po každém volání s časem). Stav `odds_api_quota` drží jen poslední hodnotu, ne první.
+4. **Očekávání:** `remaining + used = 500`, `used` po resetu malé (náklad volání od resetu, liga 2–3 kredity), `used` za 1. 12. nižší než za 30. 11.
+5. **Pokud nesouhlasí:** nic neopravovat. Diagnostika (skript ji vypíše): jiný součet než 500 (jiný tarif nebo klíč), `used` neklesl (reset ještě neproběhl, jiné časové pásmo – zkontrolovat znovu po 06 UTC a 2. 12.), nečekaně vysoké `used` (spotřeba mimo bota nebo sdílený klíč).
 
 ---
 
@@ -444,7 +468,7 @@ Výsledky (6 výher, 1 prohra) jsou **bez statistické váhy** a nesmí sloužit
 
 | ID | Priorita | Doporučení | Důkaz | Dotčené soubory | Přínos | Riziko | Náklad | Rollback |
 |---|---|---|---|---|---|---|---|---|
-| R1 | **P1** | Zjistit datum měsíčního resetu kreditů kurzového API (účet The Odds API) a zavést **tempo čerpání**: denní strop = (zbytek − rezerva) / dny do resetu. Pod stropem obnovovat jen soutěže se zápasem do 24 h. | 21,6 kreditu denně proti tempu 16,7; rezerva 50 vypne všechny ligy (`auto.py:41`) | `auto.py` (`wants_fresh_odds`), `config.py` (`TimingConfig`), `storage.py` (`odds_api_quota`) | Brání výpadku kurzů koncem měsíce | Méně častá obnova některých lig | 0 kreditů navíc | Vrátit commit; konfigurace |
+| R1 | **P1** | Zavést **tempo čerpání**: denní strop = (zbytek − rezerva) / dny do resetu (reset = 1. den kalendářního měsíce, kap. 8.1). Pod stropem obnovovat jen soutěže se zápasem do 24 h. | 21,6 kreditu denně proti tempu 16,7; rezerva 50 vypne všechny ligy (`auto.py:41`) | `auto.py` (`wants_fresh_odds`), `config.py` (`TimingConfig`), `storage.py` (`odds_api_quota`) | Brání výpadku kurzů koncem měsíce | Méně častá obnova některých lig | 0 kreditů navíc | Vrátit commit; konfigurace |
 | R2 | **P1** (po R1) | **Varianta E pro NHL:** podmíněná obnova ligy přibližně 90 min před prvním zápasem herního dne a nový rozbor. | Kap. 6.3 a 7: 9 % → 84 % zápasů s rozhodnutím z aktuálních kurzů do 6 h | `auto.py` (`run_forever`), `profil4/nhl.py` (`run_and_store`), `config.py` | Rozhodnutí blíž zápasu; zachytí pohyb kurzu i zprávy o brankářích | +3 kredity za herní den; nové APPROVED pozdě večer (upozornění) | ~170 kreditů měsíčně bez podmínky, méně s podmínkou | Vypínač v konfiguraci |
 | R3 | P2 | Neobnovovat soutěž, jejíž uložené `next_kickoff` už proběhlo a nemá otevřený tip. Nejdřív zjistit rozpis levně (API-Football fixtures, nebo stav z poslední cache). | 26. 11. 06:00: UCL za 2 kredity, 0 zápasů | `pipeline.py:284–288` | Přibližně 2 kredity po každém kole soutěže | Nový první zápas soutěže by se načetl o průchod později | Úspora | Vrátit commit |
 | R4 | P2 | Evidovat spotřebu kurzového API po volání (účel, liga, kredity podle rozdílu `x-requests-used`). | Kap. 8: 11 kreditů nejde rozepsat | `storage.py`, `oddsapi.py`, `profil4/nhl.py`, `profil4/closing.py` | Přesný rozpočet a kontrola | Žádné | 0 kreditů | Vrátit commit |
@@ -524,7 +548,7 @@ Všechny testy offline, s falešným transportem nebo funkcí `fetch` (vzor `tes
 
 ## 12. Otevřené otázky a chybějící data
 
-1. **Datum měsíčního resetu kreditů kurzového API** není v datech. Bez něj nejde spočítat tempo čerpání (R1). Ověř prosím v účtu The Odds API.
+1. ~~Datum měsíčního resetu kreditů~~ **Vyřešeno (kap. 8.1):** 1. den kalendářního měsíce, další 1. 12. 2026. Otevřená zůstává jen hodina a časové pásmo resetu; ověří se read-only po resetu.
 2. **Spotřebu po voláních** nelze rozepsat, protože kredity se evidují jen jako stav počítadla.
 3. **Skutečná frekvence aktualizací API-Football** je jen horní odhad: verze mezi stáhnutími nevidíme. Přesnější obraz by dal jen častější stahovací test, a ten tato fáze zakazuje.
 4. **Důvody rozhodnutí** se neukládají, takže dopad zastarání na WATCH je jen aproximace (kap. 9.3).

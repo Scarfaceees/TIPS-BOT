@@ -165,14 +165,18 @@ def test_stale_market_is_marked_not_comparable(st):
 
 
 def test_quotes_newer_than_fetch_mean_mixed_moments(st):
+    """F3: kurz po case stazeni je anomalie KANCELARE (zapsana u ni) a vyradi radky, jejichz reference ji pouziva."""
     snap, rows, *_ = snapshot(st, fetched=datetime(2026, 11, 21, 11, 0, tzinfo=timezone.utc))
-    assert any("nejsou z jednoho okamžiku" in m for m in json.loads(snap["missing"]))
-    assert snap["comparable"] == 0 and all(r["comparable_sharp"] == 0 for r in rows.values())
+    anomalies = json.loads(snap["book_time_anomalies"])
+    assert set(anomalies) == {"pinnacle", "williamhill", "unibet_nl"}  # vsechny maji 11:30 > 11:00 + 60 s
+    assert all("je po stažení" in why for per in anomalies.values() for why in per.values())
+    assert all(r["comparable_sharp"] == 0 and r["comparable_p4"] == 0 for r in rows.values())
+    assert any(e.startswith("S3: ostrá kancelář pinnacle") for e in json.loads(rows[("MONEYLINE", "home")]["exclusion"])["sharp"])
 
 
 def test_missing_fetch_time_and_after_kickoff_are_excluded(st):
     snap, *_ = snapshot(st, fetched=None)
-    assert "chybí čas stažení kurzů" in json.loads(snap["missing"]) and snap["comparable"] == 0
+    assert any(m.startswith("S0: čas stažení kurzů neprokázán") for m in json.loads(snap["missing"])) and snap["comparable"] == 0
     late = KO + timedelta(minutes=5)
     snap, *_ = snapshot(st, now=late, fetched=late - timedelta(minutes=1))
     assert any(e.startswith("S1") for e in json.loads(snap["exclusion"]))

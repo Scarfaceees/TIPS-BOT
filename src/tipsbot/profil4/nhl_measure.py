@@ -23,18 +23,24 @@ import json
 import logging
 import os
 import zlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 
-MEASURE_VERSION = "m2-1"
+MEASURE_VERSION = "m2-2"
 # Pravidla srovnatelnosti (kap. 5 navrhu). Patri mereni, ne rozhodovaci konfiguraci (config_hash se nemeni).
 REF_MAX_AGE_MIN = 180.0  # S3: referencni trh nejvys tolik minut stary v okamziku vypoctu
 DATA_MAX_LAG_DAYS = 3  # S5: posledni zapas v datech MoneyPuck nejvys tolik dni pred dnem zapasu
-P4_MIN_BOOKS = 3  # S2 (varianta Profil 4): median aspon 3 kancelari, jinak jen Pinnacle
+P4_MIN_BOOKS = 3
+# F1: The Odds API – evidence B1 (odds_api_calls) pro skutecny cas stazeni kurzu NHL
+NHL_ODDS_ENDPOINT = "/sports/icehockey_nhl/odds"
+FETCH_WINDOW_H = 3  # pozadavek musi lezet mezi zacatkem pruchodu (cas cache) a +3 h
+# CallRecord.ts = ZACATEK pozadavku oriznuty na sekundy; data odpovidaji stavu pri odpovedi. Cas poskytovatele smi
+# proto byt o dobu pozadavku pozdeji (requests timeout 30 s na spojeni/cteni + oriznuti) – nad tuto mez je to anomalie.
+STAMP_TOLERANCE_S = 60  # S2 (varianta Profil 4): median aspon 3 kancelari, jinak jen Pinnacle
 
 FAMILIES = ("MONEYLINE", "PUCKLINE", "OU")
 
@@ -100,7 +106,8 @@ def _p4_reference(quotes, exchanges) -> dict[str, tuple[list[str], datetime | No
 
 def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, odds_fetched_at: datetime | None,
           scan_id: str, weight_p4: float, config_hash: str = "", overrides: dict[str, str] | None = None,
-          odds_cost_source: str = "cache", settings=None) -> tuple[dict, list[dict]]:
+          odds_cost_source: str = "cache", settings=None, odds_pass_started_at: datetime | None = None,
+          fetch_evidence: dict | None = None) -> tuple[dict, list[dict]]:
     """Snimek a radky mereni pro jeden zapas. Cista funkce: nic nezapisuje, nemeni `provider` ani `model_used`.
 
     `ev` = oddsapi.Event ze stejneho stazeni jako `quotes`; `model_used` = presne to, co dostalo rozhodovani."""
@@ -124,6 +131,9 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
         "code_rev": os.environ.get("TIPSBOT_CODE_REV", "unknown"), "measure_version": MEASURE_VERSION,
         "model_weight_main": settings.value.for_league(LEAGUE).model_weight, "model_weight_p4": weight_p4,
         "data_file_mtime": json.dumps(_file_mtimes()),
+        "odds_pass_started_at": _iso(odds_pass_started_at),
+        "odds_call_id": (fetch_evidence or {}).get("call_id"),
+        "odds_fetch_evidence": json.dumps(_public_evidence(fetch_evidence), ensure_ascii=False) if fetch_evidence else None,
     }
 
     # --- model: kontext, cisty vypocet, ukotveni --------------------------------------------------------------
@@ -169,16 +179,26 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
         missing.append("rozhodování nedostalo model, přestože kontext existuje")
 
     # --- trh: ostre kancelare (hlavni bot) a trh B Profilu 4, vse z tehoz stazeni ------------------------------
+    # F3: casy poskytovatele se sbiraji u VSECH kancelari (zadny predcasny konec); chybejici nebo nemozny cas jedne
+    # kancelare se zapise k ni (book_time_anomalies) a vyradi jen radky, jejichz reference tu kancelar pouziva.
+    fetched = _aware(odds_fetched_at) if odds_fetched_at is not None else None
     stamps_by_book: dict[tuple[str, str], datetime] = {}
+    anomalies: dict[str, dict[str, str]] = {}
     for q in quotes:
         k = (q.bookmaker, q.market)
-        stamps_by_book[k] = max(stamps_by_book.get(k, q.stamp), q.stamp)
-        if odds_fetched_at is not None and q.stamp > _aware(odds_fetched_at):
-            missing.append(f"kurz {q.bookmaker} {q.market} má čas poskytovatele po čase stažení – kurzy nejsou z jednoho okamžiku")
-            break
+        if q.source_time is None:  # OddsQuote.stamp by tu vratil cas skenu – to neni cas poskytovatele
+            anomalies.setdefault(q.bookmaker, {})[q.market] = "chybí čas poskytovatele"
+            continue
+        st_q = _aware(q.source_time)
+        stamps_by_book[k] = max(stamps_by_book.get(k, st_q), st_q)
+        if fetched is not None and (st_q - fetched).total_seconds() > STAMP_TOLERANCE_S:
+            anomalies.setdefault(q.bookmaker, {})[q.market] = (
+                f"čas poskytovatele {_iso(st_q)} je po stažení {_iso(fetched)} (víc než {STAMP_TOLERANCE_S} s)")
+    snap["book_time_anomalies"] = json.dumps(anomalies, ensure_ascii=False, sort_keys=True)
     if odds_fetched_at is None:
-        missing.append("chybí čas stažení kurzů")
-    elif _aware(odds_fetched_at) > computed_at:
+        why = (fetch_evidence or {}).get("reason") or "evidence B1 nepředána"
+        missing.append(f"S0: čas stažení kurzů neprokázán ({why})")
+    elif fetched > computed_at:
         missing.append("kurzy stažené až po výpočtu modelu")
     sharp_keys = settings.odds_api.sharp_keys
     sharp: dict[str, dict] = {}
@@ -193,8 +213,9 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
             continue
         books = [b for b in mo.books if b in sharp_keys]
         st = [stamps_by_book[(b, mo.market)] for b in books if (b, mo.market) in stamps_by_book]
+        bad = {b: anomalies[b][mo.market] for b in books if mo.market in anomalies.get(b, {})}
         sharp[mo.market] = {"probs": dict(zip(sels, line.probs)), "sources": dict(zip(line.sources, line.weights)),
-                            "books": books, "stamp": max(st) if st else None}
+                            "books": books, "stamp": max(st) if st and not bad else None, "bad": bad}
     p4 = market_b(quotes)
     p4_ref = _p4_reference(quotes, EXCHANGES)
     all_sharp_st = [s["stamp"] for s in sharp.values() if s["stamp"] is not None]
@@ -225,6 +246,9 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
             p_sh = sh["probs"].get(sel) if sh else None
             pb, src = p4.get(key, (None, ""))
             books_p4, st_p4 = p4_ref.get(mk, ([], None))
+            if src.startswith("Pinnacle"):  # market_b bere Pinnacle prednostne – ostatni kancelare trh B netvori
+                books_p4 = ["pinnacle"]
+                st_p4 = stamps_by_book.get(("pinnacle", mk))
             # hlavni bot: bez ostre linie trh nehodnoti; bez modelu bere p_model = p_market (build_candidates)
             if p_sh is None:
                 pbm, kind_m = None, "bez ostré linie – hlavní bot trh nehodnotí"
@@ -249,6 +273,8 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
                 excl_p.append("chybí čistý model")
             if p_sh is None:
                 excl_s.append("S2: chybí ostrá férová linie")
+            elif sh["bad"]:
+                excl_s.extend(f"S3: ostrá kancelář {b}: {why}" for b, why in sorted(sh["bad"].items()))
             elif sh["stamp"] is None:
                 excl_s.append("S3: neznámý čas poskytovatele ostré linie")
             elif (computed_at - _aware(sh["stamp"])).total_seconds() / 60 > REF_MAX_AGE_MIN:
@@ -257,7 +283,10 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
                 excl_p.append("S2: chybí trh B")
             elif not src.startswith("Pinnacle") and len(books_p4) < P4_MIN_BOOKS:
                 excl_p.append(f"S2: trh B jen z {len(books_p4)} kanceláří (min. {P4_MIN_BOOKS})")
-            if pb is not None and st_p4 is not None and (computed_at - _aware(st_p4)).total_seconds() / 60 > REF_MAX_AGE_MIN:
+            bad_p4 = sorted(b for b in books_p4 if mk in anomalies.get(b, {}))
+            if pb is not None and bad_p4:
+                excl_p.extend(f"S3: kancelář trhu B {b}: {anomalies[b][mk]}" for b in bad_p4)
+            elif pb is not None and st_p4 is not None and (computed_at - _aware(st_p4)).total_seconds() / 60 > REF_MAX_AGE_MIN:
                 excl_p.append(f"S3: trh B starší než {REF_MAX_AGE_MIN:.0f} min")
             rows.append({
                 "fixture_id": fx.id, "market": mk, "selection": sel, "market_family": family(mk),
@@ -283,7 +312,7 @@ def build(fx, ev, quotes, provider, model_used: dict | None, *, now: datetime, o
 
 
 # Vstupy snimku (bez casu vypoctu a z nej odvozeneho stari/srovnatelnosti): stejny otisk = stejne meritelne vstupy.
-_HASH_SNAP = ("fixture_id", "kickoff", "odds_fetched_at", "ref_sharp_books", "ref_sharp_stamp_max", "ref_p4_books",
+_HASH_SNAP = ("fixture_id", "kickoff", "odds_fetched_at", "odds_pass_started_at", "odds_call_id", "ref_sharp_books", "ref_sharp_stamp_max", "ref_p4_books",
               "ref_p4_stamp_max", "data_last_game", "data_file_mtime", "goalie_home_src", "goalie_away_src", "seed",
               "lambda_raw_h", "lambda_raw_a", "anchored", "anchor_market", "anchor_target", "lambda_used_h",
               "lambda_used_a", "model_weight_main", "model_weight_p4", "missing", "model_version", "config_hash",
@@ -304,7 +333,8 @@ _SNAP_COLS = ("scan_id", "fixture_id", "match", "kickoff", "computed_at", "odds_
               "cold_start_away", "goalie_home_src", "goalie_away_src", "b2b_home", "b2b_away", "seed", "lambda_raw_h",
               "lambda_raw_a", "anchored", "anchor_market", "anchor_target", "anchor_k", "lambda_used_h", "lambda_used_a",
               "model_weight_main", "model_weight_p4", "missing", "comparable", "exclusion", "model_version",
-              "config_hash", "code_rev", "measure_version", "input_hash")
+              "config_hash", "code_rev", "measure_version", "input_hash", "odds_pass_started_at", "odds_call_id",
+              "odds_fetch_evidence", "book_time_anomalies")
 _ROW_COLS = ("fixture_id", "market", "selection", "market_family", "p_raw", "p_used", "independence_used",
              "p_mkt_sharp", "mkt_sharp_sources", "mkt_sharp_stamp", "p_mkt_p4", "mkt_p4_source", "mkt_p4_books",
              "mkt_p4_stamp", "p_blend_main", "blend_main_kind", "p_blend_p4", "p_cons_p4", "blend_p4_kind", "best_odds",
@@ -442,7 +472,8 @@ def record_results(store, games: dict, now: datetime) -> int:
 
 
 def measure_scan(store, *, fx, ev, quotes, provider, model_used, now: datetime, odds_fetched_at, scan_id: str,
-                 weight_p4: float, config_hash: str, overrides: dict | None) -> int | None:
+                 weight_p4: float, config_hash: str, overrides: dict | None, odds_pass_started_at=None,
+                 fetch_evidence: dict | None = None) -> int | None:
     """Napojeni na sken (nhl.run): sestavi a ulozi mereni. NIKDY nevyhodi vyjimku – chyba jde jen do logu, sken
     a rozhodovani pokracuji beze zmeny. Vraci id snimku (None = nic neulozeno)."""
     try:
@@ -450,7 +481,8 @@ def measure_scan(store, *, fx, ev, quotes, provider, model_used, now: datetime, 
             log.warning("měření NHL: zápas %s (%s) bez rozparsované události kurzového API – neměřeno", fx.id, fx.name)
             return None
         snap, rows = build(fx, ev, quotes, provider, model_used, now=now, odds_fetched_at=odds_fetched_at,
-                           scan_id=scan_id, weight_p4=weight_p4, config_hash=config_hash, overrides=overrides)
+                           scan_id=scan_id, weight_p4=weight_p4, config_hash=config_hash, overrides=overrides,
+                           odds_pass_started_at=odds_pass_started_at, fetch_evidence=fetch_evidence)
         return record(store, snap, rows)
     except Exception as e:  # noqa: BLE001 - evidence nesmi shodit ani zmenit sken
         log.warning("měření NHL selhalo u zápasu %s (%s): %s: %s", getattr(fx, "id", "?"), getattr(fx, "name", "?"),
@@ -465,3 +497,59 @@ def measure_results(store, games: dict, now: datetime) -> int:
     except Exception as e:  # noqa: BLE001
         log.warning("měření NHL: ukládání výsledků selhalo: %s: %s", type(e).__name__, e)
         return 0
+
+
+def _public_evidence(ev: dict | None) -> dict | None:
+    if ev is None:
+        return None
+    return {k: (_iso(v) if isinstance(v, datetime) else v) for k, v in ev.items()}
+
+
+def _naive_utc(t: datetime) -> datetime:
+    return t.astimezone(timezone.utc).replace(tzinfo=None) if t.tzinfo else t
+
+
+def fetch_evidence(ledger, cache_t: datetime | None, cache_credits: int | None) -> dict:
+    """F1: skutecny cas stazeni kurzu NHL v cache – prirazeni pozadavku z evidence B1 (odds_api_calls, jen cteni).
+
+    PROKAZANE prirazeni = presne jeden kandidat:
+    - purpose refresh_league, liga NHL, endpoint /sports/icehockey_nhl/odds, HTTP 200 a ok;
+    - cas pozadavku v intervalu <cas cache (zacatek pruchodu, na sekundy), + FETCH_WINDOW_H>;
+    - zbyvajici kredity z hlavicky pozadavku = kredity ulozene s cache (tataz odpoved);
+    jinak `fetched_at` = None s duvodem (chybi / nejednoznacne / jen neuspesne pozadavky). Zadny odhad casu."""
+    base = {"fetched_at": None, "call_id": None, "pass_started_at": cache_t, "cache_credits": cache_credits}
+    if cache_t is None:
+        return {**base, "reason": "chybí čas cache kurzů"}
+    t0 = _naive_utc(cache_t).replace(microsecond=0)  # CallRecord.ts je na cele sekundy
+    calls = [c for c in ledger.odds_api_calls(since=t0)
+             if c.purpose == "refresh_league" and c.league == "NHL" and c.endpoint == NHL_ODDS_ENDPOINT
+             and t0 <= c.ts <= t0 + timedelta(hours=FETCH_WINDOW_H)]
+    good = [c for c in calls if c.ok and c.http == 200]
+    info = {**base, "candidates": [c.id for c in good], "failed": len(calls) - len(good)}
+    if not good:
+        return {**info, "reason": ("evidence B1: jen neúspěšné požadavky na kurzy NHL" if calls else
+                                   "evidence B1: žádný požadavek na kurzy NHL od času cache")}
+    if cache_credits is None:
+        if len(good) != 1:
+            return {**info, "reason": f"evidence B1: {len(good)} požadavků a cache nemá kredity – nejednoznačné"}
+        match = good
+    else:
+        match = [c for c in good if c.remaining == cache_credits]
+        if not match:
+            return {**info, "reason": f"evidence B1: žádný požadavek nemá zbývající kredity {cache_credits} jako cache"}
+    if len(match) > 1:
+        return {**info, "reason": f"evidence B1: {len(match)} požadavky odpovídají cache – nejednoznačné"}
+    c = match[0]
+    return {**info, "fetched_at": c.ts.replace(tzinfo=timezone.utc), "call_id": c.id, "remaining": c.remaining,
+            "reason": "prokázáno: jediný úspěšný požadavek se stejnými kredity jako cache"}
+
+
+def fetch_evidence_safe(ledger, cached) -> dict:
+    """Napojeni na nhl.run: NIKDY nevyhodi vyjimku (chyba = neprokazany cas a varovani v logu)."""
+    t = cached[0] if cached else None
+    try:
+        return fetch_evidence(ledger, t, cached[2] if cached else None)
+    except Exception as e:  # noqa: BLE001 - evidence nesmi shodit sken
+        log.warning("měření NHL: evidenci B1 nelze přečíst: %s: %s", type(e).__name__, e)
+        return {"fetched_at": None, "call_id": None, "pass_started_at": t,
+                "reason": f"evidence B1 nečitelná ({type(e).__name__})"}

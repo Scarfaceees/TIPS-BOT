@@ -1,6 +1,11 @@
 services:
   tipsbot:
-    build: .
+    build:
+      context: .
+      args:
+        # Phase 3.5.2 / F2: commit buildu nastavuje scripts/build_release.py (overi cisty strom). Bez nej selze build
+        # v Dockerfile; ostatni prikazy (up, ps, logs, rollback) promennou nepotrebuji.
+        TIPSBOT_CODE_REV: ${TIPSBOT_CODE_REV:-}
     image: tipsbot-local
     container_name: tipsbot
     restart: always
@@ -13,7 +18,10 @@ services:
 
   # automat: kazdych 6 h data, kurzy na 48 h dopredu, vsechny profily, vyhodnoceni
   tipsbot-auto:
-    build: .
+    build:
+      context: .
+      args:
+        TIPSBOT_CODE_REV: ${TIPSBOT_CODE_REV:-}
     image: tipsbot-local
     container_name: tipsbot-auto
     restart: always

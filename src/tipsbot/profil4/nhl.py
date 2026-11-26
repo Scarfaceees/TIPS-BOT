@@ -326,6 +326,7 @@ def run(ledger, store, now: datetime, cfg: Profil4Config = P4, schedule=fetch_sc
     weight = float(SETTINGS.value.league_model_weight.get(LEAGUE, cfg.model.model_weight))
     events = {e.match_id: e for e in oddsapi.parse_events(raw, LEAGUE)}
     t0, scan_id, cfg_hash = time.monotonic(), iso(now), cfg.config_hash()  # mereni: cas vypoctu = now + uplynuly cas
+    fetch_ev = nhl_measure.fetch_evidence_safe(ledger, cached)  # F1: skutecny cas stazeni z evidence B1 (jen cteni)
     out = []
     for ev in raw:
         home, away = ev.get("home_team", ""), ev.get("away_team", "")
@@ -347,8 +348,10 @@ def run(ledger, store, now: datetime, cfg: Profil4Config = P4, schedule=fetch_sc
         history.record(store, an, cfg)  # tipy i predikce (record_predictions) pro kalibraci
         # Phase 3.5.1 – merici evidence AZ PO rozhodnuti a ulozeni, ze stejnych objektu; chyba jen do logu
         nhl_measure.measure_scan(store, fx=fx, ev=parsed, quotes=quotes, provider=provider, model_used=model,
-                                 now=now + timedelta(seconds=time.monotonic() - t0), odds_fetched_at=odds_time,
-                                 scan_id=scan_id, weight_p4=weight, config_hash=cfg_hash, overrides=overrides)
+                                 now=now + timedelta(seconds=time.monotonic() - t0),
+                                 odds_fetched_at=fetch_ev["fetched_at"], odds_pass_started_at=odds_time,
+                                 fetch_evidence=fetch_ev, scan_id=scan_id, weight_p4=weight, config_hash=cfg_hash,
+                                 overrides=overrides)
         out.append(an)
     return NHLScan(now, out, notes, odds_time)
 

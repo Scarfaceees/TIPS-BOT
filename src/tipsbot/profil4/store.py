@@ -108,7 +108,8 @@ CREATE TABLE IF NOT EXISTS nhl_snapshots (
     lambda_raw_h REAL, lambda_raw_a REAL, anchored INTEGER, anchor_market TEXT, anchor_target REAL, anchor_k REAL,
     lambda_used_h REAL, lambda_used_a REAL, model_weight_main REAL, model_weight_p4 REAL,
     missing TEXT NOT NULL, comparable INTEGER NOT NULL, exclusion TEXT NOT NULL,
-    model_version TEXT, config_hash TEXT, code_rev TEXT, measure_version TEXT NOT NULL, input_hash TEXT
+    model_version TEXT, config_hash TEXT, code_rev TEXT, measure_version TEXT NOT NULL, input_hash TEXT,
+    odds_pass_started_at TEXT, odds_call_id INTEGER, odds_fetch_evidence TEXT, book_time_anomalies TEXT
 );
 CREATE INDEX IF NOT EXISTS nhl_snapshots_fixture ON nhl_snapshots(fixture_id);
 CREATE UNIQUE INDEX IF NOT EXISTS nhl_snapshots_scan ON nhl_snapshots(scan_id, fixture_id);

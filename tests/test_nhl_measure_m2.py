@@ -22,8 +22,22 @@ LATER = NOW + timedelta(minutes=30)
 AFTER = KO + timedelta(hours=5)
 
 
-def _run(st, store, pl=None, now=NOW, fetched=NOW, schedule=None):
+def evidence(led, ts, remaining=400, purpose="refresh_league", league="NHL", http=200, ok=True,
+             endpoint="/sports/icehockey_nhl/odds"):
+    """Zaznam evidence B1 (odds_api_calls) tak, jak ho zapise skutecne stazeni kurzu (oddsapi.request)."""
+    from tipsbot.oddsapi import CallRecord
+
+    led.log_odds_api_call(CallRecord(ts.replace(tzinfo=None, microsecond=0), endpoint, purpose, "icehockey_nhl", league,
+                                     {"regions": "eu"}, http=http, ok=ok, remaining=remaining,
+                                     used=None if remaining is None else 500 - remaining, last=3 if ok else None))
+    led.s.commit()
+
+
+def _run(st, store, pl=None, now=NOW, fetched=NOW - timedelta(minutes=5), schedule=None, ev_at=None):
+    """Skutecny prubeh: cache nese cas ZACATKU pruchodu (`fetched`), pozadavek na kurzy NHL prisel o 20 s pozdeji."""
     led = ledger_with([pl or payload()], when=fetched)
+    if ev_at is not False:
+        evidence(led, ev_at or fetched + timedelta(seconds=20))
     return nhl.run(led, store, now, P4, schedule=schedule or (lambda d: SCHEDULE), provider=provider(st), injuries=True)
 
 
@@ -73,7 +87,9 @@ def test_scan_links_fixture_scan_market_and_stores_everything(st):
     scan = _run(st, store, fetched=NOW - timedelta(minutes=15))
     snap = dict(store.query("SELECT * FROM nhl_snapshots")[0])
     assert snap["fixture_id"] == GID and snap["scan_id"] == "2026-11-21T12:00:00+00:00" and snap["match"] == f"{HOME} - {AWAY}"
-    assert snap["odds_fetched_at"] == "2026-11-21T11:45:00+00:00" and snap["computed_at"] >= snap["scan_id"]
+    assert snap["odds_pass_started_at"] == "2026-11-21T11:45:00+00:00"  # cas cache = zacatek pruchodu
+    assert snap["odds_fetched_at"] == "2026-11-21T11:45:20+00:00" and snap["odds_call_id"] == 1  # skutecny pozadavek B1
+    assert json.loads(snap["odds_fetch_evidence"])["reason"].startswith("prokázáno") and snap["computed_at"] >= snap["scan_id"]
     assert snap["anchored"] == 1 and snap["config_hash"] == P4.config_hash() and snap["input_hash"]
     rows = {(r["market"], r["selection"]): dict(r) for r in store.query("SELECT * FROM nhl_measurements")}
     assert all(r["snapshot_id"] == snap["id"] and r["fixture_id"] == GID for r in rows.values())

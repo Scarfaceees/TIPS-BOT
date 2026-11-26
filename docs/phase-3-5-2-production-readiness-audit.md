@@ -10,6 +10,10 @@ Stav k 26. 11. 2026.
 
 **Rozdíl kódu produkce → audit:** `git diff --stat e7e2a85 HEAD -- src` mění jen `profil4/cli.py` (+11), `profil4/nhl.py` (+9/−1), `profil4/store.py` (+37) a přidává `profil4/nhl_measure.py` a `profil4/nhl_eval.py`. Mezi `e7e2a85` a `d1d3012` se `src/` nemění.
 
+> **Aktualizace 26. 11. 2026 večer – opravy F1–F3 implementovány na `dev`** (viz kap. „Stav po opravách F1–F3“ na konci).
+> - Aktualizované doporučení: **GO k samostatnému schválení deploye, s jednou podmínkou.** Před nasazením se jen čtením ověří přiřazení na prvním **skutečném** požadavku NHL v evidenci B1. Zatím v produkci žádný není, další stažení NHL přijde nejdřív s nočním průchodem.
+> - Původní nálezy níže platí pro stav `c56e91d` (před opravami).
+
 ---
 
 ## Výsledek po oblastech
@@ -222,3 +226,107 @@ Kopie produkční `profil4.db` (199 MB), skutečná data, 20 skenů s měřením
 | `pra_rollback.py` | 8 – starý kód nad zmigrovanou DB (spouští se s `PYTHONPATH` na worktree `e7e2a85`) |
 | `pra_realgolden.py` | 5 – regrese na skutečných datech (spouští se nad `e7e2a85` i nad HEAD) |
 | `m1_golden.py` | 5 – regrese na syntetických scénářích (potřebuje `tests/test_nhl_measure*.py`) |
+
+---
+
+## Stav po opravách F1–F3 (26. 11. 2026 večer, jen `dev`, nenasazeno)
+
+### F1 – skutečný čas stažení z evidence B1
+- `profil4/nhl.run` zavolá jednou za sken `nhl_measure.fetch_evidence_safe(ledger, cached)`. Evidenci `odds_api_calls` v `tipsbot.db` jen čte a nikdy nevyhodí výjimku.
+- **Přiřazení se považuje za prokázané jen při přesně jednom kandidátovi**:
+  - `purpose = refresh_league`, `league = NHL`, `endpoint = /sports/icehockey_nhl/odds`, HTTP 200, `ok`;
+  - `ts` v intervalu ⟨čas cache, čas cache + 3 h⟩;
+  - `remaining` = kredity uložené s cache (tatáž odpověď).
+- **Ostatní případy:**
+  - žádný kandidát / jen neúspěšné / víc stejných / cache bez kreditů a víc kandidátů → `odds_fetched_at = NULL`, důvod v `odds_fetch_evidence`, snímek **nesrovnatelný** (`S0: čas stažení kurzů neprokázán (…)`);
+  - neúspěšný pokus a pak úspěch → úspěch;
+  - dva úspěšné s různými kredity → ten, který odpovídá cache.
+- **Odhadovaný čas se nevytváří nikde.**
+- **Nové sloupce `nhl_snapshots`:**
+  - `odds_pass_started_at` = čas cache (začátek průchodu);
+  - `odds_fetched_at` = začátek prokázaného požadavku (B1, celé sekundy);
+  - `odds_call_id`, `odds_fetch_evidence` (JSON s kandidáty, neúspěšnými a důvodem);
+  - `book_time_anomalies`.
+- **Tolerance:** čas poskytovatele smí být nejvýš **60 s** po `odds_fetched_at`, protože B1 ukládá začátek požadavku a data odpovídají odpovědi. Nad tuto mez je to anomálie kanceláře.
+
+### F2 – `TIPSBOT_CODE_REV`
+- `Dockerfile`:
+  - `ARG TIPSBOT_CODE_REV`;
+  - kontrola, že jde o commit (jinak `exit 1`);
+  - `ENV TIPSBOT_CODE_REV`;
+  - `LABEL org.opencontainers.image.revision`.
+- `docker-compose.yml`: obě služby mají `build.args.TIPSBOT_CODE_REV: ${TIPSBOT_CODE_REV:-}`. Bez proměnné selže jen build. `up`, `ps`, `logs` a rollback ji nepotřebují (`docker compose config` bez proměnné: OK).
+- `scripts/build_release.py`:
+  - odmítne nečistý strom v `src`, `pyproject.toml`, `README.md`, `Dockerfile`, `docker-compose.yml`, `.dockerignore` (změny, staged i nesledované soubory, ignorované `__pycache__` nevadí);
+  - předá `git rev-parse HEAD` (40 znaků);
+  - po buildu ověří, že se strom ani HEAD nezměnily a že label i proměnná v image odpovídají commitu;
+  - nic nerestartuje.
+- **Ověřeno na testovacím image `tipsbot-f2test`** (potom smazán; `tipsbot-local` a kontejnery beze změny):
+  - build bez commitu → `exit 1` s hláškou;
+  - build s `08a68ce79a41…` → label i `TIPSBOT_CODE_REV` = commit;
+  - dva kontejnery ze stejného image (`--network none`) vidí stejný commit;
+  - `verify_image` s jiným commitem hlásí oba rozdíly;
+  - `docker compose config` dává oběma službám stejný argument.
+  - Test `test_measurement_stores_the_image_commit`: snímek uloží přesně hodnotu z prostředí.
+- **NEOVĚŘENO** (až při nasazení): proměnná v obou **skutečně spuštěných** kontejnerech. Je to krok kontroly po nasazení.
+
+### F3 – časy všech kanceláří
+- Žádný předčasný konec: časy se sbírají u všech kanceláří.
+- Chybějící čas poskytovatele (`source_time` je `NULL`; dříve se tiše dosazoval čas skenu) i čas víc než 60 s po stažení se zapíšou **k té kanceláři** do `book_time_anomalies`.
+- Vyřadí jen řádky, jejichž reference tu kancelář používá:
+  - ostrá linie → `S3: ostrá kancelář …`;
+  - trh B → `S3: kancelář trhu B …`.
+  - Když trh B tvoří Pinnacle, ostatní kanceláře ho neovlivní.
+
+### Testy
+- Nové testy (izolované DB, síť blokovaná):
+  - `tests/test_nhl_measure_f13.py` (18): přiřazení, chybějící, jen neúspěšné, opakování po chybě, duplicitní, nejednoznačné, okno, nečitelná evidence, reálný průběh času s evidencí i bez ní, rozhodnutí nezávislá na evidenci, různé časy kanceláří, kancelář bez času, tolerance;
+  - `tests/test_build_release.py` (10).
+- Upravené testy M1/M2 odpovídají novému chování: anomálie u kanceláře místo celého snímku, čas stažení z evidence.
+- **Celá sada 2× po sobě: 906 z 906 a 906 z 906** (izolované DB, `_no_network`, `_no_paid_api`). Produkční `profil4.db` měřicí tabulky nemá, testy ji tedy neotevřely.
+
+### Regrese proti `e7e2a85` (worktree, stejná data)
+- syntetické scénáře včetně vyhodnocení (`m1_golden.py`): **bitově shodné**, 179 216 B;
+- skutečná cache, MoneyPuck a kopie produkční `profil4.db` (`pra_realgolden.py`): **bitově shodné**, 500 848 B (kandidáti, tipy, predikce Profilu 4, kandidáti a směs hlavního bota).
+
+### Přiřazení časů na skutečných datech (`scripts/audit_352/pra_evidence.py`)
+Skutečná cache z 06:00:37 a **simulovaný** záznam B1 06:11:40 (skutečný požadavek NHL v evidenci zatím není):
+
+| Varianta | `odds_fetched_at` | srovnatelné snímky | řádky srovnatelné ostrá / P4 |
+|---|---|---|---|
+| skutečná cache, evidence ano | 06:11:40 (průchod 06:00:37) | 12 / 15 | 0 / 74 z 108 (ostrá linie chybí: bez Pinnacle) |
+| skutečná cache, evidence ne | NULL | 0 / 15 (S0) | 0 / 0 |
+| s Pinnacle, evidence ano | 06:11:40 | 12 / 15 | 44 / 76 z 108 |
+
+- Anomálie kanceláří: žádné.
+- Zbylé 3 snímky vyřadilo S5 (MoneyPuck končí 24. 11., zápasy 28. 11.).
+
+### Zámek DB (`scripts/audit_352/pra_lock.py`, kopie DB, timeout beze změny)
+
+| Scénář | bez měření | s měřením |
+|---|---|---|
+| bez zámku, 15 zápasů | 7,0 s | 7,1 s |
+| zámek 2 s každé 3 s, 15 zápasů | 16,8 s | 23,6 s (+6,8 s: 15 zápisů navíc, každý může čekat) |
+| zámek 70 s (> 60 s), 3 zápasy | 66,7 s, `database is locked` | 66,7 s, `database is locked` (stejně) |
+
+- Měření při trvalém zámku nic nemění: sken selže už na existujících zápisech.
+- Při častém krátkém zámku sken prodlouží úměrně počtu zápasů.
+- Timeout ani chování se neměnily.
+
+### Aktualizované problémy
+- P1-1 a P1-2: **opraveno** (F1, F2).
+- P2-1: **opraveno** (F3).
+- Trvá:
+  - P2-2 (růst ≈ 55 MiB za sezónu, F4 neschváleno);
+  - P2-3 (S5 MoneyPuck);
+  - P2-4 (zámek, změřeno výše);
+  - P2-5 (oprava výsledku jen v Pythonu);
+  - P3.
+- **Nové P2-6:** F1 závisí na evidenci B1. Selhání evidence (zalogované varování B1) způsobí, že snímky toho stažení budou nesrovnatelné. Je to záměrné (žádný odhad).
+
+### GO / NO-GO
+**GO k samostatnému schválení deploye**, za podmínek:
+1. **před deployem** jen čtením ověřit na produkční `tipsbot.db` první skutečný řádek `refresh_league` NHL (endpoint, `remaining` = `odds_cache:NHL.credits`, `ts` ≥ čas cache). Stačí `fetch_evidence` nad kopií DB;
+2. build **jen** přes `python scripts/build_release.py` z čistého stromu na schváleném commitu;
+3. **po deployi** ověřit `printenv TIPSBOT_CODE_REV` v obou kontejnerech = commit = label image a `code_rev` prvních snímků;
+4. postup kap. 10 (zálohy obou DB, rollback image, postupný restart).

@@ -123,6 +123,34 @@ class State(Base):
     value: Mapped[str] = mapped_column(String)
 
 
+class OddsApiCall(Base):
+    """Jeden skutecny pozadavek na The Odds API (Phase 3.4 / B1). Jen pribyva, nikdy se neprepisuje.
+
+    Naklad: `cost` + `cost_kind` = "header" (hlavicka x-requests-last, zname), "delta" (rozdil x-requests-used proti
+    predchozimu evidovanemu pozadavku v mesici – odhad, mezi tim mohl byt pozadavek mimo evidenci) nebo "unknown".
+    `cost_expected` = naklad podle dokumentace a parametru (trhy x regiony), jen pro srovnani."""
+
+    __tablename__ = "odds_api_calls"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, index=True)
+    endpoint: Mapped[str] = mapped_column(String)
+    purpose: Mapped[str] = mapped_column(String)
+    sport: Mapped[str] = mapped_column(String)
+    league: Mapped[str | None] = mapped_column(String, nullable=True)
+    params: Mapped[str] = mapped_column(String, default="")
+    fixture_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    http: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ok: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    remaining: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    used: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_kind: Mapped[str] = mapped_column(String, default="unknown")
+    cost_expected: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class P5Candidate(Base):
     """Profil 5 – Market Value, stinovy rezim (profil5.py). Nova tabulka (Faze 3.2.1), vznika sama pri startu;
     stavajici tabulky se nemeni. Kandidat se zapise pri prvnim zjisteni a jeho vstupy se uz nemeni – pozdejsi skeny
@@ -298,6 +326,36 @@ class Ledger:
         days = dict(sorted(days.items())[-40:])
         self._set("odds_api_quota", json.dumps({"t": when.isoformat(), "remaining": remaining if remaining is not None else q.get("remaining"),
                                                 "used": used if used is not None else q.get("used"), "days": days}))
+
+    def log_odds_api_call(self, rec) -> OddsApiCall:
+        """Zapise pozadavek kurzoveho API (oddsapi.CallRecord) do odds_api_calls v ramci teto session.
+        Commit dela volajici spolu se stavem kreditu. Nic nestahuje."""
+        import json
+
+        from .oddsapi import expected_cost
+
+        cost, kind = None, "unknown"
+        if rec.last is not None:
+            cost, kind = rec.last, "header"
+        elif rec.used is not None:
+            month = rec.ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            prev = self.s.scalars(select(OddsApiCall.used).where(OddsApiCall.used.is_not(None), OddsApiCall.ts >= month)
+                                  .order_by(OddsApiCall.id.desc()).limit(1)).first()
+            if prev is not None and rec.used >= prev:
+                cost, kind = rec.used - prev, "delta"
+        row = OddsApiCall(ts=rec.ts, endpoint=rec.endpoint, purpose=rec.purpose, sport=rec.sport, league=rec.league,
+                          params=json.dumps(rec.params, sort_keys=True, default=str), fixture_id=rec.fixture_id,
+                          event_id=rec.event_id, http=rec.http, ok=rec.ok, error=rec.error, remaining=rec.remaining,
+                          used=rec.used, cost=cost, cost_kind=kind, cost_expected=expected_cost(rec))
+        self.s.add(row)
+        self.s.flush()
+        return row
+
+    def odds_api_calls(self, since: datetime | None = None) -> list[OddsApiCall]:
+        q = select(OddsApiCall).order_by(OddsApiCall.id)
+        if since is not None:
+            q = q.where(OddsApiCall.ts >= since)
+        return list(self.s.scalars(q))
 
     def odds_api_quota(self) -> dict:
         """{'t', 'remaining', 'used', 'days', 'today'}: today = kredity spotrebovane dnes (UTC), kdyz to jde spocitat."""

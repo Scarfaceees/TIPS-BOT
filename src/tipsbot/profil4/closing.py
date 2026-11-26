@@ -146,8 +146,11 @@ def verify_foreign(st, r: dict, now: datetime, ko: datetime, latest: datetime | 
         if left is not None and left - len(markets) < SETTINGS.timing.auto_credit_reserve:
             return f"zahraniční ověření vynecháno: zbývá {left} kreditů kurzového API (rezerva {SETTINGS.timing.auto_credit_reserve})"
         home, _, away = (r["match"] or "").partition(" - ")
-        got, quota, note = (fetch or foreign.fetch)(sport, key, home, away, ko, markets, r["fixture_id"], r["match"], now,
-                                                    SETTINGS.odds_api.base_url)
+        from .. import oddsapi
+
+        with oddsapi.recording(led.log_odds_api_call):  # evidence pozadavku (Phase 3.4 / B1)
+            got, quota, note = (fetch or foreign.fetch)(sport, key, home, away, ko, markets, r["fixture_id"], r["match"],
+                                                        now, SETTINGS.odds_api.base_url)
         led.set_odds_api_quota(quota.get("remaining"), quota.get("used"), now.replace(tzinfo=None))
         session.commit()
     n = O.save(st, got)

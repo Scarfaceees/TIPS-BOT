@@ -88,15 +88,19 @@ def find_event(events: list[dict], home: str, away: str, kickoff: datetime) -> d
 def fetch(sport: str, key: str, home: str, away: str, kickoff: datetime, markets: list[str], fixture_id: int,
           match: str, now: datetime, base_url: str, timeout: int = 20, get=requests.get) -> tuple[list[OddsQuote], dict, str]:
     """(kurzy, kvota {'remaining','used'}, poznamka). Chyba = prazdny seznam a duvod v poznamce."""
-    r = get(f"{base_url}/sports/{sport}/events", params={"apiKey": key, "dateFormat": "iso"}, timeout=timeout)
+    from .. import oddsapi
+
+    r = oddsapi.request(base_url, f"/sports/{sport}/events", {"apiKey": key, "dateFormat": "iso"}, purpose="foreign_events",
+                        sport=sport, timeout=timeout, fixture_id=fixture_id, get=get)
     if r.status_code != 200:
         return [], {}, f"kurzové API (seznam zápasů) vrátilo {r.status_code}"
     ev = find_event(r.json(), home, away, kickoff)
     if ev is None:
         return [], {}, "zápas v kurzovém API nenalezen"
-    r = get(f"{base_url}/sports/{sport}/events/{ev['id']}/odds",
-            params={"apiKey": key, "regions": "eu", "markets": ",".join(markets), "oddsFormat": "decimal",
-                    "dateFormat": "iso"}, timeout=timeout)
+    r = oddsapi.request(base_url, f"/sports/{sport}/events/{ev['id']}/odds",
+                        {"apiKey": key, "regions": "eu", "markets": ",".join(markets), "oddsFormat": "decimal",
+                         "dateFormat": "iso"}, purpose="foreign_clv", sport=sport, timeout=timeout,
+                        fixture_id=fixture_id, event_id=str(ev["id"]), get=get)
 
     def num(h: str) -> int | None:
         try:

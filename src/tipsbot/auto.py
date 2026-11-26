@@ -82,7 +82,8 @@ def settle_from_scores(ledger: Ledger, now: datetime, settings: Settings = SETTI
             continue
         ledger._set(SCORES_KEY + lg, now.isoformat())
         try:
-            df, left = oddsapi.fetch_scores(lg, key, settings=settings)
+            with oddsapi.recording(ledger.log_odds_api_call):  # evidence pozadavku (Phase 3.4 / B1)
+                df, left = oddsapi.fetch_scores(lg, key, settings=settings)
         except Exception as e:  # noqa: BLE001
             notes.append(oddsapi.redact(f"výsledky {lg} z kurzového API: chyba ({e})"))
             continue

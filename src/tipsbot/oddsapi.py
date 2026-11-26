@@ -2,19 +2,122 @@
 
 from __future__ import annotations
 
+import logging
+import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-
-import re
+from typing import Callable
 
 import pandas as pd
 import requests
 
 from .config import SETTINGS, Settings
 
+log = logging.getLogger(__name__)
+
 
 class OddsApiError(RuntimeError):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Evidence jednotlivych pozadavku (Phase 3.4 / B1)
+# ---------------------------------------------------------------------------
+# Kazdy skutecny HTTP pozadavek na The Odds API jde pres `request()`. Ta po odpovedi (nebo chybe site) preda
+# zaznam `CallRecord` prijemci nastavenemu pres `recording(sink)` – typicky Ledger.log_odds_api_call, ktery ho
+# zapise do tabulky odds_api_calls. Bez prijemce se nic nezapisuje a chovani je stejne jako drive. Evidence sama
+# nikdy neposila zadny dalsi pozadavek a jeji chyba nikdy neprerusi stahovani.
+
+_SINK: ContextVar[Callable[["CallRecord"], None] | None] = ContextVar("odds_api_call_sink", default=None)
+
+
+@dataclass
+class CallRecord:
+    ts: datetime  # UTC bez tzinfo, cas odeslani pozadavku
+    endpoint: str  # cesta bez zakladni adresy a bez klice, napr. /sports/icehockey_nhl/odds
+    purpose: str  # refresh_league | scores | foreign_events | foreign_clv | nhl_clv
+    sport: str
+    league: str | None
+    params: dict  # parametry bez apiKey
+    http: int | None = None  # None = odpoved neprisla (chyba site)
+    ok: bool = False
+    error: str | None = None
+    remaining: int | None = None  # x-requests-remaining
+    used: int | None = None  # x-requests-used
+    last: int | None = None  # x-requests-last = naklad tohoto pozadavku podle API
+    fixture_id: int | None = None
+    event_id: str | None = None
+
+
+@contextmanager
+def recording(sink: Callable[[CallRecord], None] | None):
+    """Pozadavky uvnitr bloku se predaji prijemci `sink` (None = neevidovat)."""
+    token = _SINK.set(sink)
+    try:
+        yield
+    finally:
+        _SINK.reset(token)
+
+
+def _header_int(headers, name: str) -> int | None:
+    try:
+        return int(float((headers or {}).get(name, "")))
+    except (TypeError, ValueError):
+        return None
+
+
+def league_of(sport: str, settings: Settings = SETTINGS) -> str | None:
+    return next((lg for lg, sk in settings.odds_api.sport_keys.items() if sk == sport), None)
+
+
+def request(base_url: str, path: str, params: dict, *, purpose: str, sport: str, timeout: int = 30,
+            league: str | None = None, fixture_id: int | None = None, event_id: str | None = None, get=None):
+    """requests.get na The Odds API s evidenci pozadavku. Vraci odpoved nebo vyhodi puvodni vyjimku."""
+    get = get or requests.get
+    rec = CallRecord(datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0), path, purpose, sport,
+                     league or league_of(sport), {k: v for k, v in params.items() if k.lower() != "apikey"},
+                     fixture_id=fixture_id, event_id=event_id)
+    try:
+        resp = get(f"{base_url}{path}", params=params, timeout=timeout)
+    except Exception as e:
+        rec.error = redact(f"{type(e).__name__}: {e}")[:300]
+        _emit(rec)
+        raise
+    rec.http = resp.status_code
+    rec.ok = resp.status_code == 200
+    headers = getattr(resp, "headers", None) or {}
+    rec.remaining, rec.used, rec.last = (_header_int(headers, h) for h in
+                                         ("x-requests-remaining", "x-requests-used", "x-requests-last"))
+    if not rec.ok:
+        rec.error = redact(str(getattr(resp, "text", "") or "")[:300]) or None
+    _emit(rec)
+    return resp
+
+
+def expected_cost(rec: CallRecord) -> int | None:
+    """Naklad podle dokumentace The Odds API: kurzy = trhy x regiony, /events zdarma, scores s daysFrom 2, jinak 1."""
+    p = rec.params
+    if rec.purpose == "foreign_events":
+        return 0
+    if rec.purpose == "scores":
+        return 2 if p.get("daysFrom") else 1
+    if "markets" in p:
+        markets = [m for m in str(p["markets"]).split(",") if m]
+        regions = [r for r in str(p.get("regions", "")).split(",") if r] or [""]
+        return len(markets) * len(regions)
+    return None
+
+
+def _emit(rec: CallRecord) -> None:
+    sink = _SINK.get()
+    if sink is None:
+        return
+    try:
+        sink(rec)
+    except Exception as e:  # noqa: BLE001 - evidence nesmi shodit stahovani kurzu
+        log.warning("evidence pozadavku kurzoveho API selhala: %s", redact(str(e)))
 
 
 @dataclass(frozen=True)
@@ -58,8 +161,8 @@ def fetch_raw(
     sport = cfg.sport_keys.get(league)
     if sport is None:
         raise OddsApiError(f"Liga {league} neni v kurzovem API dostupna.")
-    resp = requests.get(
-        f"{cfg.base_url}/sports/{sport}/odds",
+    resp = request(
+        cfg.base_url, f"/sports/{sport}/odds", purpose="refresh_league", sport=sport, league=league, timeout=timeout,
         params={
             "apiKey": key,
             "regions": cfg.regions,
@@ -67,7 +170,6 @@ def fetch_raw(
             "oddsFormat": "decimal",
             "dateFormat": "iso",
         },
-        timeout=timeout,
     )
     if resp.status_code != 200:
         raise OddsApiError(f"Kurzove API vratilo {resp.status_code}: {resp.text[:200]}")
@@ -88,8 +190,9 @@ def fetch_scores(league: str, api_key: str, days: int = 3, settings: Settings = 
     sport = settings.odds_api.sport_keys.get(league)
     if sport is None or not api_key:
         raise OddsApiError(f"Výsledky {league} z kurzového API nejsou dostupné.")
-    resp = requests.get(f"{settings.odds_api.base_url}/sports/{sport}/scores",
-                        params={"apiKey": api_key, "daysFrom": days, "dateFormat": "iso"}, timeout=timeout)
+    resp = request(settings.odds_api.base_url, f"/sports/{sport}/scores",
+                   {"apiKey": api_key, "daysFrom": days, "dateFormat": "iso"}, purpose="scores", sport=sport, league=league,
+                   timeout=timeout)
     if resp.status_code != 200:
         raise OddsApiError(f"Kurzove API vratilo {resp.status_code}: {resp.text[:200]}")
     rows = []

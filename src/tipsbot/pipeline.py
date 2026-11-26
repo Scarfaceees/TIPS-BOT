@@ -295,7 +295,8 @@ def scan_league(
             report.credits_remaining = cached[2]
             report.notes.append(f"kurzy z cache ({int((now - cached[0]).total_seconds() / 60)} min staré, kredity se nespotřebovaly)")
         else:
-            fetched = oddsapi.fetch_events(league, settings, api_key=ledger.api_key() or None)
+            with oddsapi.recording(ledger.log_odds_api_call):  # evidence pozadavku (Phase 3.4 / B1)
+                fetched = oddsapi.fetch_events(league, settings, api_key=ledger.api_key() or None)
             events, report.credits_remaining = fetched.events, fetched.credits_remaining
             ledger.set_odds_api_quota(fetched.credits_remaining, fetched.credits_used, now)
             if fetched.payload is not None:

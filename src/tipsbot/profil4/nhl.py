@@ -386,8 +386,11 @@ def observe(st, r: dict, now: datetime, cfg: Profil4Config, ledger_factory=None,
             elif left is not None and left - len(markets) < SETTINGS.timing.auto_credit_reserve:
                 status, note = "SKIPPED_BUDGET", f"zbývá {left} kreditů kurzového API (rezerva {SETTINGS.timing.auto_credit_reserve})"
             else:
-                got, quota, note = (fetch or _fetch_event)(SETTINGS.odds_api.sport_keys[LEAGUE], key, ev["id"], markets,
-                                                           SETTINGS.odds_api.base_url)
+                from .. import oddsapi
+
+                with oddsapi.recording(led.log_odds_api_call):  # evidence pozadavku (Phase 3.4 / B1)
+                    got, quota, note = (fetch or _fetch_event)(SETTINGS.odds_api.sport_keys[LEAGUE], key, ev["id"],
+                                                               markets, SETTINGS.odds_api.base_url)
                 led.set_odds_api_quota(quota.get("remaining"), quota.get("used"), now.replace(tzinfo=None))
                 session.commit()
                 if got is not None:
@@ -406,9 +409,12 @@ def observe(st, r: dict, now: datetime, cfg: Profil4Config, ledger_factory=None,
 
 
 def _fetch_event(sport: str, key: str, event_id: str, markets: list[str], base_url: str, timeout: int = 20):
-    r = requests.get(f"{base_url}/sports/{sport}/events/{event_id}/odds",
-                     params={"apiKey": key, "regions": "eu", "markets": ",".join(markets), "oddsFormat": "decimal",
-                             "dateFormat": "iso"}, timeout=timeout)
+    from .. import oddsapi
+
+    r = oddsapi.request(base_url, f"/sports/{sport}/events/{event_id}/odds",
+                        {"apiKey": key, "regions": "eu", "markets": ",".join(markets), "oddsFormat": "decimal",
+                         "dateFormat": "iso"}, purpose="nhl_clv", sport=sport, league=LEAGUE, timeout=timeout,
+                        event_id=str(event_id))
 
     def num(h: str) -> int | None:
         try:

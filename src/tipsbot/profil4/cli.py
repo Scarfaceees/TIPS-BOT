@@ -52,6 +52,9 @@ def add_parser(sub) -> None:
     it.add_argument("--out", help="uloží analytický report (JSON) do souboru; historii nemění")
     it.add_argument("--audit-history", action="store_true",
                     help="settlement-integrity: znovu nezávisle ověří všechna uložená vyhodnocení (nic nepřepíše)")
+    nm = s.add_parser("nhl-measure-report", help="Phase 3.5.1: výkaz měření NHL modelu A/B/C (jen čtení, bez API)")
+    nm.add_argument("--json", action="store_true", help="výstup jako JSON")
+    nm.add_argument("--p4db", default=None, help="cesta k profil4.db (výchozí z konfigurace Profilu 4)")
     b = s.add_parser("backtest", help="walk-forward backtest modelu A na výsledcích z API")
     b.add_argument("--league", type=int, required=True, help="id soutěže v API-Football (39 = Premier League)")
     b.add_argument("--season", type=int, required=True, help="testovací sezóna (rok začátku, např. 2025)")
@@ -109,6 +112,14 @@ def run(args, cfg: Profil4Config = P4) -> int:
     from .store import utcnow
 
     cmd = args.p4cmd or "status"
+    if cmd == "nhl-measure-report":  # jen cteni: DB se otevira mode=ro, Store (schema, migrace) se nevytvari
+        from . import nhl_eval
+
+        if hasattr(sys.stdout, "reconfigure"):  # konzole Windows (cp1250) neumi →, β, ≥ – radeji nahradit nez spadnout
+            sys.stdout.reconfigure(errors="replace")
+        rep = nhl_eval.report(args.p4db or cfg.db_path)
+        print(json.dumps(rep, ensure_ascii=False, indent=1, default=str) if args.json else nhl_eval.format_text(rep))
+        return 0
     store, prov = build(args.db, cfg)
     now = utcnow()
     try:

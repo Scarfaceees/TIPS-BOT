@@ -397,3 +397,46 @@ Pro B je rozumné δ 0,0005–0,001: 0,0005 vyžaduje ~8 500 zápasů, 0,001 ~2 
 **Omezení:**
 - výsledek se uloží jen pro zápasy, které vyhodnocení už samo stahuje (zápasy s tipem nebo predikcí). Měřený zápas bez obojího výsledek nedostane, a to záměrně kvůli nula dotazům navíc;
 - `code_rev` je `unknown`, dokud build nenastaví `TIPSBOT_CODE_REV`.
+
+## Stav implementace – M3: výkaz a plán vyhodnocení v1 (26. 11. 2026, jen `dev`, nenasazeno)
+
+**Výkaz:**
+- `profil4/nhl_eval.py` a příkaz `tipsbot profil4 nhl-measure-report [--p4db cesta] [--json]`;
+- čte jen `nhl_snapshots`, `nhl_measurements`, `nhl_results` a `nhl_result_corrections`;
+- databázi otevírá s `mode=ro` + `PRAGMA query_only`. Příkaz se obslouží **před** vytvořením `Store`, takže neproběhne schéma ani migrace. Neexistující soubor se nevytvoří.
+
+**Plán vyhodnocení v1 (pevný, změna jen novou verzí):**
+1. **Vzorek:**
+   - jeden řádek na zápas × trh: **poslední srovnatelný snímek před začátkem** (S1–S5 z měření);
+   - jedna strana trhu (`home` / `home-1.5` / `home+1.5` / `over`);
+   - S6 = efektivní výsledek: poslední výslovná oprava, jinak první uložený. Nevyřešený konflikt se vyřadí, vrácení (`void` / `push`) také.
+2. **Reference:**
+   - A a B (hlavní bot) a C: ostrá linie (`comparable_sharp`);
+   - B (Profil 4): trh B (`comparable_p4`).
+3. **A – čistý model:** jen `p_raw` (nikdy ukotvené `p_used`). U OU se vykazuje čistý model totalů s poznámkou, že ho systém nepoužívá.
+4. **B – hybrid:** `p_blend_main` (logit 15/85) proti ostrému trhu a `p_blend_p4` (lineární 15/85) proti trhu B. U OU jde o výstup systému s ukotveným modelem.
+5. **C – trh:**
+   - kalibrace a log loss ostrého trhu i trhu B;
+   - log loss četností jako spodní měřítko;
+   - log loss podle stáří trhu (0–60 / 60–180 / 180–360 / 360+ min), zde i nesrovnatelné snímky.
+6. **Statistika:**
+   - bootstrap po **zápasech** (cluster = zápas se všemi liniemi), 2 000 opakování, seed 7;
+   - z = odhad / směrodatná chyba z bootstrapu;
+   - kalibrace v koších po 0,1 (n, průměr p, četnost), ECE a logistická kalibrace (průsečík, sklon) od 50 bodů.
+7. **Primární testy** (jen ty dostávají verdikt):
+   - A-MONEYLINE: test vnoření `y ~ 1 + logit(trh) + logit(čistý model)`; model přidává informaci při průkazném β > 0;
+   - B-MONEYLINE: rozdíl log loss směsi hlavního bota a trhu.
+   - Ostatní jsou **sekundární**, jen popisné: PUCKLINE, OU, Brier, Profil 4, pohyb trhu.
+8. **Kontrolní body:** 300 / 600 / 950 srovnatelných zápasů, O'Brien–Fleming (Lan–DeMets) pro celkové α = 0,05 oboustranně.
+   - hranice |z| ≥ **3,488 / 2,471 / 2,006** (nominální p 0,00049 / 0,0135 / 0,0448);
+   - mezi body platí hranice posledního dosaženého bodu;
+   - **před bodem 300 je výsledek vždy NEPRŮKAZNÝ.**
+9. **Trhy se nesčítají.** Výkaz ukazuje korelaci rozdílu log loss MONEYLINE × PUCKLINE po zápasech.
+10. **Verze:** výsledky po skupinách (`measure_version`, `code_rev`). Skupina `unknown` se vykazuje samostatně a viditelně označená.
+11. **ROI, yield, CLV:** z měřicích tabulek se nepočítají, protože rozhodnutí v nich není. Zůstávají v `tips` Profilu 4 a nejsou důkazem dlouhodobé výkonnosti.
+12. **Výběrové zkreslení:** výsledek mají jen zápasy, které `nhl.settle` sám stahuje (s tipem nebo predikcí). Výkaz počítá měřené zápasy bez výsledku 12 h po začátku.
+
+**Zjištění z testů metodiky:**
+- i **dokonalý** čistý model proti trhu s šumem σ = 0,2 dosáhl na 300 zápasech jen |z| ≈ 3,0, tedy pod hranicí 3,488;
+- průkaznosti dosáhl až v bodě 600;
+- reálný efekt bude menší, takže první bod je prakticky jen kontrola dat.

@@ -77,6 +77,40 @@ def _no_paid_api(monkeypatch):
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
 
 
+LOCAL_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    """Zadny test nesmi navazat sitove spojeni mimo tento pocitac (placena ani bezplatna API). Pokus se zablokuje
+    a test na konci selze, i kdyby testovany kod chybu spojeni sam zachytil."""
+    import socket
+
+    attempts = []
+    orig = socket.socket.connect
+
+    def connect(self, address):
+        host = address[0] if isinstance(address, tuple) else address
+        if self.family in (socket.AF_INET, socket.AF_INET6) and host not in LOCAL_HOSTS:
+            attempts.append(f"{host}:{address[1]}")
+            raise ConnectionRefusedError(f"test se pokusil o síťové spojení na {host}")
+        return orig(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", _guarded_getaddrinfo(socket.getaddrinfo, attempts))
+    yield
+    assert not attempts, f"test se pokusil o síťové spojení: {sorted(set(attempts))}"
+
+
+def _guarded_getaddrinfo(orig, attempts):
+    def getaddrinfo(host, *args, **kwargs):
+        if host not in LOCAL_HOSTS and host not in (None, ""):
+            attempts.append(str(host))
+            raise OSError(f"test se pokusil přeložit adresu {host}")
+        return orig(host, *args, **kwargs)
+    return getaddrinfo
+
+
 @pytest.fixture(autouse=True)
 def _follow_redirects(monkeypatch):
     """Panel po odeslani formulare presmerovava (POST -> redirect -> GET); testy ctou vysledne stranky jako prohlizec."""

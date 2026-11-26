@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import pytest
 
-from tipsbot import nhl_data, oddsapi, pipeline
+from tipsbot import context, nhl_data, oddsapi, pipeline, teamreport
 from tipsbot.models import nhl
 from tipsbot.names import match_team, nhl_abbr, normalize
 
@@ -57,6 +57,14 @@ def test_parse_nhl_moneyline():
 def test_missing_key_raises():
     with pytest.raises(oddsapi.OddsApiError):
         oddsapi.fetch_raw("ENG1")
+
+
+@pytest.fixture(autouse=True)
+def _no_news(monkeypatch):
+    """Zivy sken stahuje titulky z Google News (pipeline.py: v.news, teamreport.collect_news). Do 26.11.2026 to tri
+    testy delaly skutecne (odhalila pojistka _no_network v conftest.py); test si muze novinky prepsat vlastnim mockem."""
+    monkeypatch.setattr(context, "fetch_news", lambda team, *a, **k: [])
+    monkeypatch.setattr(teamreport, "fetch_news", lambda team, *a, **k: [])
 
 
 class _NoModel:

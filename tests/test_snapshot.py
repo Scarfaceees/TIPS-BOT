@@ -112,7 +112,13 @@ def _copies(root, meta):
 def test_snapshot_during_concurrent_writes_is_one_consistent_state_of_both_databases(dbs, tmp_path):
     a, b = dbs
     filler = _state(a)["filler"]
-    w = Writer(a, b)
+    # Cekani zapisovace se meri v case hodin na sdilenem stroji. Puvodni mez 0,5 s pri timeoutu 1 s selhala
+    # 26.11.2026 pri behu cele sady (pod zatezi disku a CPU nasimulovano: max_wait = 1,0 s, tj. zapis ziskal zamek
+    # az na konci busy timeoutu). Snapshot drzi zamek jen po dobu kroku Backup API, ale delka kroku zavisi na zatezi
+    # disku – zadnou pevnou malou mez zarucit nelze. Proto: timeout zapisovace blize provozu (automat ma 60 s),
+    # hruba mez proti dlouhemu blokovani a vlastnost „mezi kroky zadny zamek“ deterministicky v
+    # test_source_is_not_locked_between_backup_steps.
+    w = Writer(a, b, timeout=10.0)
     w.start()
     metas = []
     try:
@@ -124,7 +130,7 @@ def test_snapshot_during_concurrent_writes_is_one_consistent_state_of_both_datab
         w.stop.set()
         w.join()
     assert w.errors == []  # automat nedostal „database is locked“
-    assert w.max_wait < 0.5  # a necekal na zamek snapshotu
+    assert w.max_wait < 5.0  # a necekal na zamek snapshotu dlouho (presna vlastnost viz test nize)
     assert len({m["id"] for m in metas}) == 3
     for m in metas:
         ca, cb = (_state(p) for p in _copies(tmp_path / "snaps", m))
@@ -132,6 +138,66 @@ def test_snapshot_during_concurrent_writes_is_one_consistent_state_of_both_datab
         assert ca["filler"] == cb["filler"] == filler  # obsah nezmenenych tabulek presne odpovida zdroji
         assert ca["max"] > 0  # snapshot opravdu vznikl uprostred zapisu
     assert not list((tmp_path / "snaps").glob(".tmp-*"))
+
+
+class _ProbeClock:
+    """Nahrada modulu `time` ve snapshot.py: pri volani monotonic() – mimo jine po kazdem kroku Backup API
+    (progress) – zkusi zapsat transakci do obou zdroju s timeoutem 0, tj. bez cekani na zamek. Kdyby snapshot drzel
+    zamek pro cteni i mezi kroky (nebo pres cele kopirovani), zapis okamzite selze."""
+
+    def __init__(self, a, b, writes=6):
+        self.a, self.b, self.writes, self.calls, self.seq, self.ok, self.fail = a, b, writes, 0, 0, 0, []
+        self.sleep = time.sleep
+
+    def monotonic(self):
+        self.calls += 1
+        if 2 <= self.calls < 2 + self.writes:
+            self.seq += 1
+            try:
+                for p in (self.a, self.b):
+                    c = sqlite3.connect(p, timeout=0)
+                    try:
+                        _step(c, self.seq)
+                    finally:
+                        c.close()
+                self.ok += 1
+            except sqlite3.OperationalError as e:
+                self.fail.append(str(e))
+        return time.monotonic()
+
+
+def test_source_is_not_locked_between_backup_steps(dbs, tmp_path, monkeypatch):
+    """Regrese (26.11.2026): automat musi moct zapsat mezi kroky kopirovani BEZ cekani. Deterministicky, bez mereni
+    casu: zapis s timeoutem 0 behem snapshotu uspeje a snapshot zustane jeden konzistentni stav obou databazi."""
+    a, b = dbs
+    clock = _ProbeClock(a, b)
+    monkeypatch.setattr(snapshot, "time", clock)
+    m = snapshot.create(a, b, tmp_path / "s", deadline_s=60, chunk=8)
+    assert clock.fail == [] and clock.ok == 6
+    ca, cb = (_state(p) for p in _copies(tmp_path / "s", m))
+    _check_pair(ca, cb)
+    assert m["attempts"] >= 2  # zapisy uprostred kopirovani snapshot poznal a kopiroval znovu
+
+
+def test_probe_detects_a_lock_held_across_steps(dbs, tmp_path, monkeypatch):
+    """Kontrola testu samotneho: kdyz zdrojove spojeni drzi otevrenou ctecí transakci, zapis s timeoutem 0 selze."""
+    a, b = dbs
+    real_ro = snapshot._ro
+
+    def ro_holding_lock(path):
+        con = real_ro(path)
+        con.execute("BEGIN")
+        con.execute("SELECT COUNT(*) FROM filler").fetchone()  # SHARED zamek az do konce pokusu
+        return con
+
+    clock = _ProbeClock(a, b, writes=1)
+    monkeypatch.setattr(snapshot, "_ro", ro_holding_lock)
+    monkeypatch.setattr(snapshot, "time", clock)
+    try:
+        snapshot.create(a, b, tmp_path / "s", deadline_s=5, chunk=8)
+    except Exception:  # noqa: BLE001 - vysledek snapshotu tady nehraje roli
+        pass
+    assert clock.fail and "locked" in clock.fail[0]
 
 
 def test_write_between_the_two_copies_forces_a_new_attempt(dbs, tmp_path, monkeypatch):

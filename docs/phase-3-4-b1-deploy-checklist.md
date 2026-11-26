@@ -2,7 +2,13 @@
 
 Stav k 26. 11. 2026. Nasazení **neproběhlo** a čeká na výslovné potvrzení.
 
-- Produkce dnes: image `tipsbot-local:latest` = `ace23bdde102` (commit 8e3033d), oba kontejnery běží od 25. 11. 13:38 UTC a neměly restart.
+- **Image před nasazením:**
+  - `tipsbot-local:latest` = `tipsbot-local:8e3033d` = `sha256:ace23bdde10216f4fbdb88291135f464c863ce5dedbb07fc7becee38436712a8`;
+  - oba kontejnery na něm běží od 25. 11. 13:38 UTC a neměly restart (ověřeno 26. 11. večer).
+- **Očekávaný nový image:**
+  - `tipsbot-local:latest` + `tipsbot-local:<commit z dev>`, sestavený z `dev` HEAD v okamžiku nasazení;
+  - jeho ID vznikne až při buildu (předem sestavovat nebudeme);
+  - po nasazení musí mít oba kontejnery **stejné** nové ID různé od `ace23bdde102`.
 - Nasazuje se kód z `dev` (B1 = 4c7d37a + oprava před nasazením). Mezi 8e3033d a `dev` se ve `src/` mění jen B1.
 
 ---
@@ -26,8 +32,34 @@ Při lokálním spuštění celé testovací sady zapsal jeden test do **produk�
 **Oprava (commit na `dev`):**
 - `conftest.py` nastavuje `TIPSBOT_DATABASE_URL` do dočasné složky.
 - Nová pojistka `_no_paid_api` zastaví v testech každý skutečný požadavek na the-odds-api.com a api-sports.io.
-- Dva nové testy hlídají obojí.
+- Pojistka `_no_network` (doplněna 26. 11. večer) zablokuje v testech **jakékoli** síťové spojení mimo tento počítač, tedy i bezplatná API. Když to testovaný kód zkusí, test na konci selže, i kdyby kód chybu spojení sám zachytil.
+- Dva nové testy hlídají izolaci DB a placená API.
+- Pojistka `_no_network` hned odhalila další dosavadní problém: 3 testy v `test_live.py` (`test_league_without_matches_is_skipped_to_save_credits`, `test_odds_cache_saves_credits_and_force_refetches`, `test_cache_only_rescan_never_spends_credits`) při živém skenu skutečně stahovaly titulky z Google News (`news.google.com`, bezplatné). Opraveno napodobenou odpovědí v `test_live.py` (fixture `_no_news`).
 - Po opravě se při testech nezměnil čas úpravy ani velikost produkční `tipsbot.db`.
+
+**Znovu ověřeno 26. 11. večer (jen čtení):**
+- tabulka má právě 1 řádek;
+- `id` 1, `ts` 2026-11-26 14:23:40, `endpoint` `/sports/soccer_epl/events`, `purpose` `foreign_events`, `league` ENG1, `fixture_id` 777, `params` `{"dateFormat": "iso"}`, HTTP 200, `remaining` 239, `used` 261, `cost` 0 (`header`);
+- `odds_api_quota` beze změny (t = 06:00:37, 239/261).
+
+**Přesný SQL příkaz (zatím NESPUŠTĚNO).** Spouští se jen po záloze z kroku 4 a jen při volbě (a). Podmínka se trefí jen do tohoto řádku; když smaže jiný počet než 1, vše se vrátí:
+
+```sql
+BEGIN IMMEDIATE;
+DELETE FROM odds_api_calls
+ WHERE id = 1 AND fixture_id = 777 AND purpose = 'foreign_events'
+   AND endpoint = '/sports/soccer_epl/events' AND ts = '2026-11-26 14:23:40.000000';
+SELECT changes();  -- musí být 1, jinak ROLLBACK
+COMMIT;
+```
+
+Provedení v kontejneru (Python, kontrola počtu a návrat při odchylce):
+
+```
+docker exec -i tipsbot python -c "import sqlite3; c=sqlite3.connect('/app/data/tipsbot.db', timeout=60); c.isolation_level=None; c.execute('BEGIN IMMEDIATE'); n=c.execute(\"DELETE FROM odds_api_calls WHERE id=1 AND fixture_id=777 AND purpose='foreign_events' AND endpoint='/sports/soccer_epl/events' AND ts='2026-11-26 14:23:40.000000'\").rowcount; (c.execute('COMMIT') if n==1 else c.execute('ROLLBACK')); print('smazano', n if n==1 else 0)"
+```
+
+**Záznam o incidentu zůstává v této dokumentaci i po smazání řádku.**
 
 **Rozhodnutí pro vás – testovací řádek `id = 1` v `odds_api_calls`:**
 - **(a) smazat** při nasazení po záloze (doporučeno, jinak zkresluje evidenci zápasem 777);
@@ -133,6 +165,29 @@ V Git Bash vždy s `MSYS_NO_PATHCONV=1`. Bez něj se cesty `/tmp/...` u `docker 
    - součet `cost` za průchod = změna `used`;
    - stav `odds_api_quota` se dál aktualizuje jako dřív.
 6. Pokud něco nesedí: nic neopravovat, zapsat diagnostiku a případně rollback.
+
+---
+
+## 5a. Test snapshotu – nález 26. 11.
+
+**Selhání v běhu celé sady:**
+- `test_snapshot_during_concurrent_writes_is_one_consistent_state_of_both_databases` (1× z 821).
+- Traceback toho běhu se **neuložil**, protože výstup byl zkrácený. Proto nelze s jistotou říct, která podmínka tehdy selhala.
+
+**Reprodukce a příčina:**
+- Bez zátěže test prošel 25 z 25 běhů.
+- Pod umělou zátěží (4 procesy zapisující na disk a 6 zatěžujících CPU) selhal 1 z 15 běhů na podmínce `w.max_wait < 0.5`: zapisovač čekal 1,0 s, tedy celý svůj busy timeout, a zámek získal až na konci.
+- Snapshot drží zámek jen po dobu kroku Backup API. Délka kroku ale závisí na zátěži disku a CPU, takže pevná mez 0,5 s není zaručitelná. Jde o **chybu testu** (měření času na sdíleném stroji), ne o regresi.
+- `snapshot.py` ani `test_snapshot.py` se od 8e3033d nezměnily a B1 je nepoužívá.
+
+**Oprava (jen `dev`, jen testy):**
+- Timeout zapisovače v testu je 10 s (automat má 60 s) a mez proti dlouhému blokování 5 s.
+- Nový deterministický test `test_source_is_not_locked_between_backup_steps` po každém kroku kopírování zapíše do obou zdrojů s **timeoutem 0**. Projde jen tehdy, když snapshot mezi kroky nedrží zámek.
+- Kontrola testu samotného: `test_probe_detects_a_lock_held_across_steps` dokazuje, že by zámek držený přes kroky odhalil.
+
+**Zbývající citlivost:**
+- Pod stejnou umělou zátěží skončily 3 z 20 opakování `SnapshotBusy`: zdroj se měnil celých 60 s a snapshot se vzdal.
+- To je navržené chování snapshotu (raději nic než smíšená kopie), ne chyba dat. Bez umělé zátěže se neobjevilo.
 
 ---
 

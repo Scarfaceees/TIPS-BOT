@@ -1,0 +1,16 @@
+# MODELOVY ODHAD (scripts/phase33_odds_audit.py simulate), ne namerene hodnoty
+# predpoklad monthly_credits = 500
+# predpoklad credit_reserve = 50
+# predpoklad nhl_league_cost = 3
+# predpoklad football_league_cost = 2
+# predpoklad event_cost_per_market = 1
+# predpoklad nhl_markets_per_event = 3
+# predpoklad passes_utc = [6, 12, 18, 0]
+# predpoklad stale_limit_min = 360
+# predpoklad days_per_month = 30
+variant,game_days,games,credits_per_game_day,credits_month_nhl_est,requests_per_game_day,age_at_kickoff_median_min,age_at_last_decision_median_min,games_decided_on_current_odds_pct,games_with_current_decision_within_6h_pct
+A,6,56,3.0,90,1.0,1080.0,720.0,9.0,9.0
+B,6,56,12.0,360,4.0,180.0,0.0,100.0,95.0
+C,6,56,24.0,720,8.0,155.0,0.0,100.0,100.0
+D,6,56,87.0,2610,29.0,10.0,10.0,84.0,80.0
+E,6,56,6.0,180,2.0,245.0,90.0,88.0,84.0

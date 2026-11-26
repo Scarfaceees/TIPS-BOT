@@ -1,0 +1,17 @@
+# MODELOVY ODHAD (scripts/phase33_odds_audit.py simulate), ne namerene hodnoty
+# predpoklad monthly_credits = 500
+# predpoklad credit_reserve = 50
+# predpoklad nhl_league_cost = 3
+# predpoklad football_league_cost = 2
+# predpoklad event_cost_per_market = 1
+# predpoklad nhl_markets_per_event = 3
+# predpoklad passes_utc = [6, 12, 18, 0]
+# predpoklad stale_limit_min = 360
+# predpoklad days_per_month = 30
+# predpoklad measured_daily_credits = [27, 19, 15, 21, 26]
+# predpoklad measured_daily_mean = 21.6
+# predpoklad other_than_nhl_daily_est = 18.6
+scenario,variant,note,credits_day_est,credits_month_est,reserve_left_month_est,fits_with_reserve
+konzervativní,A,"současný stav, NHL 1× denně",21.6,648,-148,False
+vyvážený,E,A + 1 obnova NHL před prvním zápasem dne,24.6,738,-238,False
+agresivní,B,"NHL při každém průchodu (4× denně), strop = měsíční limit − rezerva",30.6,918,-418,False

@@ -4,6 +4,10 @@ import tempfile
 # Testy nikdy nesahaji do skutecne slozky data (klice, databaze, stazena data): vychozi datovy adresar
 # bota i Profilu 4 se cte z promenne pri importu, proto se nastavuje pred importem tipsbot.
 os.environ["TIPSBOT_DATA_DIR"] = tempfile.mkdtemp(prefix="tipsbot-test-data-")
+# Databaze hlavniho bota ma vlastni promennou (vychozi je relativni "sqlite:///data/tipsbot.db"): bez tohoto radku
+# test spusteny z korene repozitare zapisoval do PRODUKCNI data/tipsbot.db a cetl z ni skutecny API klic
+# (zjisteno 26.11.2026 – closing.tick v test_profil4_calibration poslal skutecny pozadavek /events).
+os.environ["TIPSBOT_DATABASE_URL"] = "sqlite:///" + os.path.join(os.environ["TIPSBOT_DATA_DIR"], "tipsbot.db").replace("\\", "/")
 
 from datetime import date, timedelta
 
@@ -53,6 +57,24 @@ def ledger():
         led = Ledger(session)
         led.deposit(10_000)
         yield led
+
+
+PAID_API_HOSTS = ("the-odds-api.com", "api-sports.io")
+
+
+@pytest.fixture(autouse=True)
+def _no_paid_api(monkeypatch):
+    """Zadny test nesmi poslat skutecny pozadavek na placena API (kredity, kvota). Mocky requests.get funguji dal."""
+    import requests.adapters
+
+    orig = requests.adapters.HTTPAdapter.send
+
+    def send(self, request, *args, **kwargs):
+        if any(h in (request.url or "") for h in PAID_API_HOSTS):
+            raise AssertionError(f"test poslal skutečný požadavek na placené API: {request.url.split('?')[0]}")
+        return orig(self, request, *args, **kwargs)
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
 
 
 @pytest.fixture(autouse=True)

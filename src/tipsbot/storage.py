@@ -17,6 +17,7 @@ from sqlalchemy import (
     func,
     select,
 )
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 from . import risk
@@ -237,7 +238,14 @@ def make_session_factory(database_url: str | None = None) -> sessionmaker[Sessio
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
     # panel a automat pisou do stejne SQLite databaze: pri zapisu druheho radeji pockat nez spadnout
     engine = create_engine(url, connect_args={"timeout": 60} if url.startswith("sqlite") else {})
-    Base.metadata.create_all(engine)
+    try:
+        Base.metadata.create_all(engine)
+    except OperationalError as e:
+        # panel a automat startuji soucasne: oba zjisti, ze nova tabulka chybi, a druhy pak narazi na "already
+        # exists" (overeno 26.11.2026: 6 z 30 soubeznych startu). Druhy pokus tabulku uz najde a nic nevytvari.
+        if "already exists" not in str(e):
+            raise
+        Base.metadata.create_all(engine)
     return sessionmaker(engine, expire_on_commit=False)
 
 
@@ -329,7 +337,8 @@ class Ledger:
 
     def log_odds_api_call(self, rec) -> OddsApiCall:
         """Zapise pozadavek kurzoveho API (oddsapi.CallRecord) do odds_api_calls v ramci teto session.
-        Commit dela volajici spolu se stavem kreditu. Nic nestahuje."""
+        Commit dela volajici spolu se stavem kreditu. Nic nestahuje a nic neflushuje: chyba tady (zachyti ji
+        oddsapi._emit a zaloguje) nesmi uvest session do stavu, kdy by neslo ulozit stav kreditu."""
         import json
 
         from .oddsapi import expected_cost
@@ -339,8 +348,15 @@ class Ledger:
             cost, kind = rec.last, "header"
         elif rec.used is not None:
             month = rec.ts.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            prev = self.s.scalars(select(OddsApiCall.used).where(OddsApiCall.used.is_not(None), OddsApiCall.ts >= month)
-                                  .order_by(OddsApiCall.id.desc()).limit(1)).first()
+            pending = [o for o in self.s.info.get("odds_api_calls", []) if o in self.s.new and o.used is not None
+                       and o.ts >= month]
+            if pending:  # predchozi pozadavek teze transakce (napr. seznam + kurzy zapasu), jeste neulozeny
+                prev = pending[-1].used
+            else:
+                with self.s.no_autoflush:
+                    prev = self.s.scalars(select(OddsApiCall.used).where(OddsApiCall.used.is_not(None),
+                                                                         OddsApiCall.ts >= month)
+                                          .order_by(OddsApiCall.id.desc()).limit(1)).first()
             if prev is not None and rec.used >= prev:
                 cost, kind = rec.used - prev, "delta"
         row = OddsApiCall(ts=rec.ts, endpoint=rec.endpoint, purpose=rec.purpose, sport=rec.sport, league=rec.league,
@@ -348,7 +364,7 @@ class Ledger:
                           event_id=rec.event_id, http=rec.http, ok=rec.ok, error=rec.error, remaining=rec.remaining,
                           used=rec.used, cost=cost, cost_kind=kind, cost_expected=expected_cost(rec))
         self.s.add(row)
-        self.s.flush()
+        self.s.info.setdefault("odds_api_calls", []).append(row)  # poradi neulozenych zaznamu teto session
         return row
 
     def odds_api_calls(self, since: datetime | None = None) -> list[OddsApiCall]:

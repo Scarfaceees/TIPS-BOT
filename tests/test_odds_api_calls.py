@@ -242,3 +242,71 @@ def test_scores_reserve_unchanged(ledger, monkeypatch, credits, expect_calls):
     assert len(get.calls) == expect_calls and len(calls) == expect_calls
     if calls:
         assert (calls[0].purpose, calls[0].league, calls[0].cost) == ("scores", "ENG1", 2)
+
+
+# --- predprodukcni kontrola: selhani evidence, izolace testu --------------------
+
+def test_evidence_failure_is_logged_and_quota_still_saved(ledger, monkeypatch, caplog):
+    """Chyba evidence: pozadavek probehne jednou, chyba je v logu a stav kreditu se ulozi i commitne."""
+    import tipsbot.storage as storage
+
+    def broken(*a, **k):
+        raise RuntimeError("zapis evidence selhal")
+
+    monkeypatch.setattr(storage, "OddsApiCall", broken)
+    get = FakeGet(Resp(200, [], H(430, 70, 2)))
+    with caplog.at_level("WARNING", logger="tipsbot.oddsapi"), oddsapi.recording(ledger.log_odds_api_call):
+        resp = oddsapi.request("https://x", "/sports/soccer_epl/odds", {"markets": "h2h,totals"},
+                               purpose="refresh_league", sport="soccer_epl", get=get)
+    assert len(get.calls) == 1 and resp.status_code == 200
+    assert any("evidence pozadavku kurzoveho API selhala" in r.getMessage() for r in caplog.records)
+    ledger.set_odds_api_quota(430, 70, datetime(2026, 12, 1, 6))
+    ledger.s.commit()
+    assert ledger.odds_api_quota()["remaining"] == 430
+
+
+def test_two_requests_in_one_transaction_delta_uses_pending_row(ledger):
+    for used in (100, 103):
+        ledger.log_odds_api_call(oddsapi.CallRecord(datetime(2026, 12, 2, 6), "/e", "foreign_clv", "s", None, {},
+                                                    http=200, ok=True, used=used))
+    first, second = ledger.s.info["odds_api_calls"]
+    assert (second.cost, second.cost_kind) == (3, "delta")
+    ledger.s.commit()
+    assert [r.used for r in ledger.odds_api_calls()] == [100, 103]
+
+
+def test_tests_never_use_production_database():
+    assert "tipsbot-test-data-" in SETTINGS.database_url and "data/tipsbot.db" not in SETTINGS.database_url.split("tipsbot-test-data-")[0]
+
+
+def test_paid_api_hosts_are_blocked_in_tests():
+    import requests as rq
+
+    with pytest.raises(AssertionError, match="placené API"):
+        rq.Session().get("https://api.the-odds-api.com/v4/sports", timeout=1)
+
+
+def test_concurrent_start_already_exists_is_retried(monkeypatch, tmp_path):
+    """Soubezny start panelu a automatu: 'table already exists' druheho procesu se zopakuje, jina chyba projde."""
+    from sqlalchemy.exc import OperationalError
+
+    import tipsbot.storage as storage
+
+    real, calls = storage.Base.metadata.create_all, []
+
+    def flaky(engine, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise OperationalError("CREATE TABLE odds_api_calls", {}, Exception("table odds_api_calls already exists"))
+        return real(engine, **kw)
+
+    monkeypatch.setattr(storage.Base.metadata, "create_all", flaky)
+    storage.make_session_factory(f"sqlite:///{tmp_path / 'a.db'}")
+    assert len(calls) == 2
+
+    def broken(engine, **kw):
+        raise OperationalError("x", {}, Exception("disk I/O error"))
+
+    monkeypatch.setattr(storage.Base.metadata, "create_all", broken)
+    with pytest.raises(OperationalError):
+        storage.make_session_factory(f"sqlite:///{tmp_path / 'b.db'}")

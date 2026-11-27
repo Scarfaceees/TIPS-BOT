@@ -351,3 +351,18 @@ def test_panel_pages_render(tmp_path):
     assert "Srovnání strategií" in html and "Profil 5 – Market Value" in html
     for prof in ("rohy", "karty", "kombi", "zaklad"):
         assert c.get(f"/?tab=sledovani&profile={prof}").status_code == 200
+
+
+def test_kombi_uncounted_legs_only_in_skipped_tickets(led):
+    """Tiket sdilejici sazku s drivejsim se nezapocita; jeho druha sazka se do statistiky nedostane (uncounted_legs)."""
+    import copy
+
+    kombi.record(led, [_combo(target=True)], NOW)
+    (first,) = paper.load(led)
+    second = copy.deepcopy(first)
+    second.id = "kdruhy"
+    second.legs[1] = {**second.legs[1], "selection": "jina"}  # prvni noha sdilena, druha nova
+    assert kombi.overlaps([first, second]) == {"kdruhy": first.name}
+    v = kombi.verification([first, second])
+    assert v["tickets"] == 1 and v["unique_legs"] == 2 and v["uncounted_legs"] == 1
+    assert kombi.verification([first])["uncounted_legs"] == 0

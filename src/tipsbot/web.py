@@ -106,7 +106,7 @@ details.fold>summary{font-weight:600;color:var(--acc);padding:4px 0}details.fold
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}.tile{border-radius:8px;padding:8px 10px;background:#f6f8fb}.tile span{display:block;font-size:12px;color:var(--muted)}.tile b{font-size:18px}.tile.good{background:var(--okbg)}.tile.good b{color:var(--ok)}.tile.bad{background:var(--badbg)}.tile.bad b{color:var(--bad)}
 table.mkt td,table.mkt th{padding:5px 6px}.res{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:700}.res.won{background:var(--okbg);color:var(--ok)}.res.lost{background:var(--badbg);color:var(--bad)}.res.void{background:#eef1f5;color:var(--muted)}
 .edge{display:inline-block;padding:1px 8px;border-radius:99px;font-weight:700;background:var(--okbg);color:var(--ok)}.edge.hi{background:var(--warnbg);color:var(--warn)}
-tr.r-won td:first-child{box-shadow:inset 3px 0 var(--ok)}tr.r-lost td:first-child{box-shadow:inset 3px 0 var(--bad)}
+.konly:checked~.tablewrap tr.kskip{display:none}tr.r-won td:first-child{box-shadow:inset 3px 0 var(--ok)}tr.r-lost td:first-child{box-shadow:inset 3px 0 var(--bad)}
 .czgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px}
 .czgrid fieldset{border:1px solid var(--line);border-radius:8px;padding:6px 10px 10px;margin:0;display:flex;gap:8px}
 .czgrid legend{font-size:13px;font-weight:600;padding:0 4px}.czgrid label{flex:1 1 0;min-width:0}.czgrid input{padding:6px 8px}
@@ -791,7 +791,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 {% if kver %}<div class="card sec-warn" style="margin-top:8px"><b>Ověření kurzů</b> <span class="muted">(hypotetické a ověřené se nesčítají)</span>
 <div class="p4kv">plně ověřených tiketů: <b>{{ kver.fully_verified }}</b> · s neověřenou (cílovou) nohou: <b>{{ kver.with_unverified_leg }}</b></div>
 <div class="p4kv">ROI hypotetické (cílové kurzy): {{ '%+.1f %%'|format(kver.hypothetical.roi * 100) if kver.hypothetical.roi is not none else '–' }} ({{ kver.hypothetical.settled }}) · ROI ověřené ceny: {{ '%+.1f %%'|format(kver.verified.roi * 100) if kver.verified.roi is not none else '–' }} ({{ kver.verified.settled }})</div>
-<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé. Ověřený je jen tiket, kde má každá noha doložený dostupný kurz kanceláře; cílový kurz ověřený není nikdy.</div>
+<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé.{% if kver.uncounted_legs %} Sázek jen v nezapočítaných tiketech (do statistiky se nedostanou): {{ kver.uncounted_legs }}.{% endif %} Ověřený je jen tiket, kde má každá noha doložený dostupný kurz kanceláře; cílový kurz ověřený není nikdy.</div>
 <div class="p4kv">Skutečně vsazené AKU tikety (Kč, nesčítá se): {{ kver.placed.tickets }} · vyhodnoceno {{ kver.placed.settled }}{% if kver.placed.roi is not none %} · ROI {{ '%+.1f %%'|format(kver.placed.roi * 100) }}{% endif %}</div></div>{% endif %}
 
 {% if pst.rejected %}<div class="muted note-inline">Bezpečnostně odmítnuto kontrolou kurzu: {{ pst.rejected }} – zůstávají jako diagnostický záznam, do výsledků se nepočítají.</div>{% endif %}
@@ -838,9 +838,10 @@ Trhy: {{ a.markets|join(', ') }}. V pásmu kurzů posouzeno {{ a.checked }} sáz
 <br><span class="muted">rozbor {{ a.t[:16]|replace('T', ' ') }} UTC</span></div></details>
 {% else %}<div class="muted">Zatím žádný rozbor – objeví se po nejbližším skenu.</div>{% endfor %}</div>
 {% endif %}
-<details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }})</summary>
+{% set nskip = paper_done|selectattr('id', 'in', done_skip)|list|length %}<details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }}{% if nskip %}, započítáno {{ paper_done|length - nskip }}{% endif %})</summary>
+{% if nskip %}<input type="checkbox" id="konly" class="konly"><label for="konly" class="muted"> zobrazit jen započítané do statistiky</label>{% endif %}
 <div class="tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
-{% for p in paper_done %}<tr class="r-{{ p.result }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}{{ prozbor(p) }}</td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
+{% for p in paper_done %}<tr class="r-{{ p.result }}{{ ' kskip' if p.id in done_skip }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}{{ prozbor(p) }}</td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
 <td class="num {{ 'pos' if p.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p.profit) }}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div></details>
 </div></div>
@@ -1828,6 +1829,7 @@ def create_app(database_url: str | None = None) -> Flask:
             rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
             prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
             kombi_skip=kombi_skip,
+            done_skip={p.id for p in picks if p.result is not None and (p.id in kombi_skip or paper.hard_rejected(p))},
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),

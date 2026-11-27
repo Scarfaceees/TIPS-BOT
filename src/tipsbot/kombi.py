@@ -121,6 +121,8 @@ def verification(picks) -> dict:
     legs = [_leg_key(x) for p in mine for x in p.legs]
     out["legs"], out["unique_legs"] = len(legs), len(set(legs))
     out["unique_matches"] = len({(x["name"], x["day"]) for p in mine for x in p.legs})
+    every = {_leg_key(x) for p in picks if p.profile == PROFILE and not paper.hard_rejected(p) for x in p.legs}
+    out["uncounted_legs"] = len(every - set(legs))  # sazky jen v nezapocitanych tiketech (do statistiky se nedostanou)
     return out
 
 

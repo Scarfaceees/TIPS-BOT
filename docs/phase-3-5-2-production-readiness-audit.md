@@ -330,3 +330,12 @@ Skutečná cache z 06:00:37 a **simulovaný** záznam B1 06:11:40 (skutečný po
 2. build **jen** přes `python scripts/build_release.py` z čistého stromu na schváleném commitu;
 3. **po deployi** ověřit `printenv TIPSBOT_CODE_REV` v obou kontejnerech = commit = label image a `code_rev` prvních snímků;
 4. postup kap. 10 (zálohy obou DB, rollback image, postupný restart).
+
+### Podmínka 1 – skutečná evidence B1 (ověřeno 27. 11. 2026, jen čtení)
+- Produkční `tipsbot.db` (snímek přes SQLite backup z `mode=ro` do scratchpadu), kód `4c03089`, síť zablokovaná.
+- První skutečný řádek NHL: `odds_api_calls.id = 16`, `ts 2026-11-27 06:08:22`, `refresh_league`, `/sports/icehockey_nhl/odds`, HTTP 200, `remaining 215`, `cost 3` (= `cost_expected`).
+- `odds_cache:NHL`: `t 06:00:48` (začátek průchodu), `credits 215`, 15 zápasů. Časy poskytovatele 06:06:35–06:08:13 (všechny ≤ čas požadavku).
+- `fetch_evidence` → kandidáti `[16]`, neúspěšné 0, `fetched_at 06:08:22`, „prokázáno“. Kontroly: kredity +1 → „žádný požadavek nemá zbývající kredity“; cache o 4 h později → „žádný požadavek“.
+- `nhl.run` nad kopiemi DB: 15 snímků, 15 srovnatelných, `odds_call_id 16`, žádné anomálie kanceláří, řádky ostrá/P4 srovnatelné 78/100 ze 104. `code_rev` = `unknown` (lokálně bez proměnné; v image ji nastaví F2).
+- Mimo NHL: řádek 15 (UECL `refresh_league`) má `cost 0` při `cost_expected 2` (kredity se nezměnily) – evidence to zaznamenala správně, vliv na F1 žádný.
+- **Podmínka 1 splněna.** Podmínky 2–4 platí pro samostatně schválený deploy.

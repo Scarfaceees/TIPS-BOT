@@ -462,12 +462,9 @@ def hard_rejected(p: "Pick") -> bool:
 
 
 def counted(picks: list[Pick]) -> list[Pick]:
-    """Vybery, ktere jdou do statistik: kombi tiket s uz zapocitanou sazkou se nepocita (kombi.overlaps) a tvrde
-    odmitnuty vyber (PODEZŘELÉ – kontrola kurzu pred vykopem, ne podle vysledku) take ne."""
-    from . import kombi
-
-    skip = kombi.overlaps(picks)
-    return [p for p in picks if p.id not in skip and not hard_rejected(p)]
+    """Vybery, ktere jdou do statistik: bez tvrde odmitnutych (PODEZŘELÉ – kontrola kurzu pred vykopem, ne podle
+    vysledku). Kombi tikety se pocitaji vsechny (27.11.2026, nezavislost resi kombi.evaluation intervalem po zapasech)."""
+    return [p for p in picks if not hard_rejected(p)]
 
 
 def stats(picks: list[Pick]) -> dict:

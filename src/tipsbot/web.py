@@ -788,15 +788,22 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <div class="tile {{ 'good' if pst.roi >= 0 else 'bad' }}"><span>ROI</span><b>{{ '%+.1f'|format(pst.roi * 100) }} %</b></div>
 <div class="tile"><span>Model čekal</span><b>{{ '%+.1f %%'|format(pst.avg_ev * 100) if pst.avg_ev is not none else '–' }}</b></div></div>
 {% if prec.n %}<div class="muted">Největší propad {{ '%.2f'|format(prec.max_drawdown) }} j. · nejdelší série proher {{ prec.longest_losing }}{% if prec.current_losing %} (teď {{ prec.current_losing }}){% endif %}</div>{% endif %}
+{% if kev %}{% macro kci(ci) %}{% if ci %} <span class="muted">(95 % interval {{ '%+.0f'|format(ci[0] * 100) }} až {{ '%+.0f'|format(ci[1] * 100) }} %)</span>{% endif %}{% endmacro %}
+<div class="card" style="margin-top:8px"><b>Vyhodnocení kombi</b> <span class="muted">(každý tiket = 2 sázky z různých zápasů; tři pohledy, nesčítají se)</span>
+<div class="p4kv"><b>Všechny tikety</b> po 1 j.: {{ kev.all.staked }} tiketů z <b>{{ kev.all.matches }} nezávislých zápasů</b>{% if kev.all.roi is not none %} · ROI <b>{{ '%+.1f %%'|format(kev.all.roi * 100) }}</b>{{ kci(kev.all.ci) }}{% endif %}</div>
+<div class="p4kv"><b>Doporučený tiket</b> (jen ten, který bot v kole navrhl jako nejlepší): {{ kev.rec.staked }} tiketů, {{ kev.rec.matches }} zápasů{% if kev.rec.roi is not none %} · ROI <b>{{ '%+.1f %%'|format(kev.rec.roi * 100) }}</b>{{ kci(kev.rec.ci) }}{% endif %}</div>
+<div class="p4kv"><b>Sázky jednotlivě</b> (každá jednou): {{ kev.legs.settled }} sázek{% if kev.legs.hit is not none %} · vyšlo {{ '%.0f'|format(kev.legs.hit * 100) }} % (kurzy čekaly {{ '%.0f'|format(kev.legs.implied * 100) }} %) · ROI jako single <b>{{ '%+.1f %%'|format(kev.legs.roi * 100) }}</b>{{ kci(kev.legs.ci) }}{% endif %}{% if kev.legs.open %} · čeká {{ kev.legs.open }}{% endif %}{% if kev.legs.void %} · vráceno {{ kev.legs.void }}{% endif %}</div>
+<div class="muted">Tikety sdílejí sázky a zápasy, proto se počítají všechny a interval počítá se sdílenými zápasy – tiket se stejným zápasem nepřináší novou nezávislou informaci. Doporučený tiket odpovídá tomu, co by se reálně vsadilo. Sázky jednotlivě ukazují, jestli má výhodu už výběr sázek – zisk tiketu je z velké části násobení kurzů.</div>
+{% if kev.issues %}<div class="p4kv"><span class="badge bad">kontrola dat: {{ kev.issues|length }} neshod</span></div><ul class="muted">{% for n, i in kev.issues[:10] %}<li>{{ n }}: {{ i }}</li>{% endfor %}</ul>{% else %}<div class="p4kv"><span class="badge tipb">kontrola dat OK</span> <span class="muted">{{ kev.checked }} tiketů: výsledek a zisk tiketu odpovídá výsledkům obou sázek, kurz = součin kurzů, stejná sázka má všude stejný výsledek</span></div>{% endif %}</div>{% endif %}
 {% if kver %}<div class="card sec-warn" style="margin-top:8px"><b>Ověření kurzů</b> <span class="muted">(hypotetické a ověřené se nesčítají)</span>
 <div class="p4kv">plně ověřených tiketů: <b>{{ kver.fully_verified }}</b> · s neověřenou (cílovou) nohou: <b>{{ kver.with_unverified_leg }}</b></div>
 <div class="p4kv">ROI hypotetické (cílové kurzy): {{ '%+.1f %%'|format(kver.hypothetical.roi * 100) if kver.hypothetical.roi is not none else '–' }} ({{ kver.hypothetical.settled }}) · ROI ověřené ceny: {{ '%+.1f %%'|format(kver.verified.roi * 100) if kver.verified.roi is not none else '–' }} ({{ kver.verified.settled }})</div>
-<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé.{% if kver.uncounted_legs %} Sázek jen v nezapočítaných tiketech (do statistiky se nedostanou): {{ kver.uncounted_legs }}.{% endif %} Ověřený je jen tiket, kde má každá noha doložený dostupný kurz kanceláře; cílový kurz ověřený není nikdy.</div>
+<div class="muted">Nohou {{ kver.legs }}, unikátních {{ kver.unique_legs }}, zápasů {{ kver.unique_matches }} – tikety sdílejí stejné zápasy, nejsou nezávislé. Ověřený je jen tiket, kde má každá noha doložený dostupný kurz kanceláře; cílový kurz ověřený není nikdy.</div>
 <div class="p4kv">Skutečně vsazené AKU tikety (Kč, nesčítá se): {{ kver.placed.tickets }} · vyhodnoceno {{ kver.placed.settled }}{% if kver.placed.roi is not none %} · ROI {{ '%+.1f %%'|format(kver.placed.roi * 100) }}{% endif %}</div></div>{% endif %}
 
 {% if pst.rejected %}<div class="muted note-inline">Bezpečnostně odmítnuto kontrolou kurzu: {{ pst.rejected }} – zůstávají jako diagnostický záznam, do výsledků se nepočítají.</div>{% endif %}
 {% if props_split %}<div class="card" style="margin-top:8px"><b>Podle metodiky</b> <span class="muted">(stará se do nové nepočítá)</span>{% for m, st in props_split %}<div class="p4kv">{{ m }}: {{ st.settled }} vyhodnoceno{% if st.judged and st.roi is not none %} · ROI {{ '%+.1f %%'|format(st.roi * 100) }}{% elif st.settled %} · <span class="badge warn">nevyhodnocuje se ({{ st.matches }} záp., min. 30)</span>{% endif %}</div>{% endfor %}</div>{% endif %}
-{% if pst.settled < 30 %}<div class="muted note-inline">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
+{% if kev %}{% if kev.all.matches < 30 %}<div class="muted note-inline">Zatím jen {{ kev.all.matches }} nezávislých zápasů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}{% elif pst.settled < 30 %}<div class="muted note-inline">Zatím jen {{ pst.settled }} výběrů, na závěry je to málo (potřeba aspoň 30 až 100).</div>{% endif %}
 {% if pst.by_market %}<table class="mkt" style="margin-top:8px"><tr><th>Trh</th><th class="num">Výběrů</th><th class="num">Zisk (j.)</th><th class="num">ROI</th></tr>
 {% for m, v in pst.by_market.items() %}<tr><td>{{ m }}</td><td class="num">{{ v[0] }}</td><td class="num {{ 'pos' if v[1] >= 0 else 'neg' }}">{{ '%+.2f'|format(v[1]) }}</td><td class="num"><span class="res {{ 'won' if v[2] >= 0 else 'lost' }}">{{ '%+.1f'|format(v[2] * 100) }} %</span></td></tr>{% endfor %}</table>{% endif %}
 {% else %}<div class="muted" style="margin-top:6px">Zatím nic vyhodnoceno ({{ pst.open }} čeká na výsledek).</div>{% endif %}
@@ -819,7 +826,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <div class="card sec-warn tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th class="num">Model</th><th class="num" title="kolik průměrně vyděláš na každých 100 Kč vsazených, pokud odhad modelu sedí (+10 % = +10 Kč na 100 Kč)">Čekaný zisk</th><th></th></tr>
 {% macro pname(p) %}{% if p.legs %}{% for x in p.legs %}<div><b>{{ x.label }}</b> – {{ x.name }} @ {{ '%.2f'|format(x.odds) }}{% if x.result %} <span class="res {{ 'won' if x.result in ('won', 'half_won') else 'lost' if x.result in ('lost', 'half_lost') else '' }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(x.result, x.result) }}</span> <span class="muted">{{ x.score }}</span>{% endif %}</div>{% endfor %}{% else %}{{ p.name }}{% endif %}{% endmacro %}
 {% macro pboxes(secs) %}<div class="boxes">{% for sec in secs %}<div class="box"><h4>{{ sec.title }}</h4><ul>{% for l in sec.lines %}<li>{{ l }}</li>{% endfor %}</ul></div>{% endfor %}</div>{% endmacro %}{% macro prozbor(p) %}{% set legi = p.legs|selectattr('info')|list if p.legs else [] %}{% set exs = pick_extra(p) %}{% if p.detail or p.info or legi or exs %}<details class="fold"><summary>rozbor</summary>{% if p.detail %}<div class="muted">{{ p.detail }}</div>{% endif %}{% if exs %}{{ pboxes(exs) }}{% endif %}{% if p.info %}{{ pboxes(p.info) }}{% endif %}{% for x in legi %}{{ pboxes(x.info) }}{% endfor %}</details>{% else %}<div class="muted">rozbor zápasu není k dispozici</div>{% endif %}{% endmacro %}
-{% for p in paper_open %}<tr><td>{{ pname(p) }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}{% for f in p.flags %}<div><span class="badge warn">{{ f }}</span></div>{% endfor %}{% if p.integrity %}<div><span class="badge {{ 'tipb' if p.integrity.status == 'OVĚŘENO' else 'bad' if p.integrity.status == 'PODEZŘELÉ' else 'warn' }}">kurz: {{ p.integrity.status }}</span></div>{% endif %}{{ prozbor(p) }}</td><td><b>{{ p.market|bet(p.selection, p.name) }}</b><div class="muted">{{ p.book }}</div></td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td>
+{% for p in paper_open %}<tr><td>{{ pname(p) }}<div class="muted">{{ p.day }} · {{ p.source }}</div>{% for f in p.flags %}<div><span class="badge warn">{{ f }}</span></div>{% endfor %}{% if p.integrity %}<div><span class="badge {{ 'tipb' if p.integrity.status == 'OVĚŘENO' else 'bad' if p.integrity.status == 'PODEZŘELÉ' else 'warn' }}">kurz: {{ p.integrity.status }}</span></div>{% endif %}{{ prozbor(p) }}</td><td><b>{{ p.market|bet(p.selection, p.name) }}</b><div class="muted">{{ p.book }}</div></td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td>
 <td class="num" data-l="šance">{{ '%.0f %%'|format(p.p_model * 100) if p.p_model else '–' }}</td><td class="num">{% if p.ev is not none %}<span class="edge {{ 'hi' if p.ev > 0.15 }}">{{ '%+.1f %%'|format(p.ev * 100) }}</span>{% else %}–{% endif %}</td>
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('paper_result', pick_id=p.id) }}" class="row" style="margin:4px 0"><input type="hidden" name="tab" value="sledovani"><input type="hidden" name="profile" value="{{ prof.key }}">
 <select name="result"><option value="won">vyhráno</option><option value="lost">prohráno</option><option value="void">vráceno</option></select><button class="sm">Zapsat</button></form>
@@ -841,7 +848,7 @@ Trhy: {{ a.markets|join(', ') }}. V pásmu kurzů posouzeno {{ a.checked }} sáz
 {% set nskip = paper_done|selectattr('id', 'in', done_skip)|list|length %}<details class="fold card" {{ 'open' if paper_done }}><summary>Vyhodnoceno ({{ paper_done|length }}{% if nskip %}, započítáno {{ paper_done|length - nskip }}{% endif %})</summary>
 {% if nskip %}<input type="checkbox" id="konly" class="konly"><label for="konly" class="muted"> zobrazit jen započítané do statistiky</label>{% endif %}
 <div class="tablewrap"><table class="cardt"><tr><th>Zápas</th><th>Výběr</th><th class="num">Kurz</th><th>Skóre</th><th>Výsledek</th><th class="num">Zisk (j.)</th></tr>
-{% for p in paper_done %}<tr class="r-{{ p.result }}{{ ' kskip' if p.id in done_skip }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div>{% if kombi_skip.get(p.id) %}<div><span class="badge">nezapočítán – sázka už je v tiketu {{ kombi_skip[p.id] }}</span></div>{% endif %}{{ prozbor(p) }}</td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
+{% for p in paper_done %}<tr class="r-{{ p.result }}{{ ' kskip' if p.id in done_skip }}"><td>{{ pname(p) }}<div class="muted">{{ p.day }}</div>{{ prozbor(p) }}</td><td>{{ p.market|bet(p.selection, p.name) }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(p.odds) }}</td><td data-l="skóre">{{ p.score or '–' }}</td><td><span class="res {{ p.result }}">{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno'}.get(p.result, p.result) }}</span></td>
 <td class="num {{ 'pos' if p.profit >= 0 else 'neg' }}">{{ '%+.2f'|format(p.profit) }}</td></tr>
 {% else %}<tr><td colspan="6" class="muted">Zatím nic.</td></tr>{% endfor %}</table></div></details>
 </div></div>
@@ -1710,8 +1717,7 @@ def create_app(database_url: str | None = None) -> Flask:
         prof = paper.profile(request.values.get("profile"))
         picks = paper.of_profile(all_picks, prof.key)  # rohy a karty zvlast (i vybery puvodniho spolecneho profilu)
         p2 = profile2.load(led)
-        kombi_skip = kombi.overlaps(all_picks)
-        done_picks = sorted((p for p in picks if p.result is not None and p.id not in kombi_skip), key=lambda p: p.kickoff)
+        done_picks = sorted((p for p in picks if p.result is not None), key=lambda p: p.kickoff)
         settled = list(session.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN).order_by(Ticket.settled_at.desc()).limit(200)))
         s = led.summary()
         s["test_mode"] = led.test_mode()
@@ -1823,13 +1829,13 @@ def create_app(database_url: str | None = None) -> Flask:
             audit=auditv,
             kver=({**kombi.verification(all_picks), "placed": kombi.placed(session)}
                   if tab == "sledovani" and prof.key == "kombi" else None),
+            kev=kombi.evaluation(all_picks) if tab == "sledovani" and prof.key == "kombi" else None,
             p3pair=(strategy.paired(all_picks, "profil3", "profil3x")
                     if tab == "sledovani" and prof.key in ("profil3", "profil3x") else None),
             props_split=_props_split(picks) if tab == "sledovani" and prof.props else None,
             rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
             prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
-            kombi_skip=kombi_skip,
-            done_skip={p.id for p in picks if p.result is not None and (p.id in kombi_skip or paper.hard_rejected(p))},
+            done_skip={p.id for p in picks if p.result is not None and paper.hard_rejected(p)},
             paper_open=[p for p in picks if p.result is None],
             paper_done=[p for p in picks if p.result is not None][::-1],
             has_key=bool(led.api_key()),

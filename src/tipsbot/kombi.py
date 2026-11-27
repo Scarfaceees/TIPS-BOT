@@ -8,15 +8,23 @@ Vraceni vkladu nohy = kurz 1, pul vyhra / pul prohra = polovina (jako u kancelar
 Pred vykopem prvni nohy se kurz tiketu aktualizuje podle posledniho navrhu; tiket, ktery bot prestal navrhovat,
 se jen oznaci (vyhodnoti se stejne – statistika nesmi byt vylepsena vynechanim stazenych navrhu).
 
-Statistika (23.11.2026): kazda sazka (zapas + trh + vyber) se pocita jen jednou. Tiket, ktery obsahuje sazku uz
-zapocitanou v drive navrzenem tiketu, se vyhodnoti a zobrazi, ale do statistik se nepocita (`overlaps`) – jinak by
-jedna sazka ve 9 kombinacich vazila devetkrat. Poradi = poradi zapisu (prvni navrh, v kole doporuceny tiket prvni),
-takze pozdejsi navrhy uz zapocitane tikety nemeni.
+Statistika (27.11.2026, `evaluation`): pravidlo „kazda sazka jen v prvnim tiketu“ (23.11.) zruseno – vysledek
+zavisel na poradi navrhu (nahodne poradi dalo ROI od -3 % do +46 %) a 17 z 61 sazek se do statistiky nedostalo nikdy.
+Misto nej tri pohledy, ktere se nescitaji:
+- A: vsechny tikety po 1 j. (= vysledek strategie „vsadit kazdy navrzeny tiket“). Tikety sdileji sazky a zapasy,
+  proto se nezavislost neresi vyhazovanim tiketu, ale intervalem se SDILENYMI ZAPASY (rozptyl pocita kovariance
+  vsech dvojic tiketu se spolecnym zapasem, `roi_ci`) a poctem nezavislych zapasu;
+- C: jen doporuceny tiket (prvni navrh kola, ktery by se realne vsadil);
+- F: kazda sazka (zapas + trh + vyber) jednou jako single – zda ma uz vyber sazek vyhodu proti kurzu.
+Kontrola dat: vysledek a zisk tiketu se prepocita z vysledku obou noh, kurz tiketu = soucin kurzu noh a stejna sazka
+musi mit ve vsech tiketech stejny vysledek; neshoda se zobrazi, nic se neopravuje.
 """
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import math
 from datetime import date, datetime
 
 from . import paper
@@ -25,6 +33,9 @@ PROFILE = "kombi"
 MARKET = "KOMBI"
 WITHDRAWN = "návrh stažen před výkopem"
 TARGET = "cílová noha: kurz = minimální, ověř u kanceláře"
+REC = "doporučený tiket (nejlepší)"
+Z95 = 1.96
+ODDS_TOL = 0.01  # kurz tiketu je zaokrouhleny soucin kurzu noh (relativni tolerance)
 _FACTOR = {"won": None, "half_won": None, "void": 1.0, "half_lost": 0.5, "lost": 0.0}
 
 
@@ -107,7 +118,7 @@ def placed(session) -> dict:
 
 
 def verification(picks) -> dict:
-    """Statistika kombi tiketu oddelene podle overeni cen (zapocitane tikety, kazda sazka jednou).
+    """Statistika kombi tiketu oddelene podle overeni cen (vsechny tikety po 1 j., bez tvrde odmitnutych).
     Hypoteticke a overene vysledky se NIKDY nescitaji do jednoho ROI."""
     mine = paper.counted([p for p in picks if p.profile == PROFILE])
     out = {"all": paper.stats(mine), "classes": {}, "tickets": len(mine)}
@@ -121,8 +132,96 @@ def verification(picks) -> dict:
     legs = [_leg_key(x) for p in mine for x in p.legs]
     out["legs"], out["unique_legs"] = len(legs), len(set(legs))
     out["unique_matches"] = len({(x["name"], x["day"]) for p in mine for x in p.legs})
-    every = {_leg_key(x) for p in picks if p.profile == PROFILE and not paper.hard_rejected(p) for x in p.legs}
-    out["uncounted_legs"] = len(every - set(legs))  # sazky jen v nezapocitanych tiketech (do statistiky se nedostanou)
+    return out
+
+
+def _match(x: dict) -> tuple:
+    return x["name"], x["day"]
+
+
+def _leg_profit(result: str, odds: float) -> float:
+    return {"won": odds - 1, "half_won": (odds - 1) / 2, "half_lost": -0.5, "lost": -1.0}.get(result, 0.0)
+
+
+def roi_ci(items: list[tuple[list, float]]) -> tuple | None:
+    """95% interval prumerneho zisku na 1 j. pri zavislosti pres zapasy. `items` = [(zapasy polozky, zisk)].
+    Rozptyl prumeru = (sum e_i^2 + sum e_i*e_j pres dvojice polozek se spolecnym zapasem) / n^2, e = odchylka od
+    prumeru (robustni odhad pro shlukovani pres vice zapasu, jako cluster-robust SE). Nezavisle tikety -> bezny
+    interval; tikety sdilejici zapas se nepocitaji jako nova informace. Bez nahody, vzdy stejny vysledek."""
+    n = len(items)
+    if n < 2 or len({m for ms, _ in items for m in ms}) < 2:
+        return None
+    mean = sum(pr for _, pr in items) / n
+    e = [pr - mean for _, pr in items]
+    by: dict = {}
+    for i, (ms, _) in enumerate(items):
+        for m in set(ms):
+            by.setdefault(m, []).append(i)
+    pairs = {(i, j) for ix in by.values() for i in ix for j in ix if i < j}
+    diag = sum(x * x for x in e)
+    s = max(diag + 2 * sum(e[i] * e[j] for i, j in pairs), diag)  # zaporna kovariance interval nezuzi
+    se = math.sqrt(s * n / (n - 1)) / n
+    return mean - Z95 * se, mean + Z95 * se
+
+
+def _view(tickets: list) -> dict:
+    """Souhrn skupiny tiketu: paper.stats + nezavisle zapasy + interval po zapasech."""
+    from .metrics import is_staked
+
+    st = paper.stats(tickets)
+    staked = [p for p in tickets if p.result is not None and is_staked(p.result)]
+    st["matches"] = len({_match(x) for p in staked for x in p.legs})
+    st["ci"] = roi_ci([([_match(x) for x in p.legs], p.profit) for p in staked])
+    return st
+
+
+def ticket_issues(p) -> list[str]:
+    """Neshody tiketu s jeho nohama (nic se neopravuje, jen se ukaze)."""
+    out = []
+    if len(p.legs) < 2:
+        out.append(f"tiket má {len(p.legs)} nohu")
+    if len({_match(x) for x in p.legs}) < len(p.legs):
+        out.append("dvě nohy ze stejného zápasu")
+    prod = math.prod(x["odds"] for x in p.legs) if p.legs else None
+    if prod and abs(p.odds - prod) > ODDS_TOL * prod:
+        out.append(f"kurz tiketu {p.odds:.2f} ≠ součin kurzů nohou {prod:.2f}")
+    if p.result is not None:
+        q = copy.deepcopy(p)
+        if _close(q) is None:
+            out.append(f"tiket má výsledek {p.result}, ale nohy ještě nejsou rozhodnuté")
+        elif q.result != p.result or abs((q.profit or 0) - (p.profit or 0)) > 1e-3:
+            out.append(f"výsledek tiketu {p.result} {p.profit:+.2f} j. ≠ podle nohou {q.result} {q.profit:+.2f} j.")
+    return out
+
+
+def evaluation(picks) -> dict:
+    """Vyhodnoceni kombi tiketu (A / C / F + kontrola dat), viz docstring modulu. Hypoteticke a overene ceny
+    se tu nerozlisuji – to dela `verification`."""
+    mine = paper.counted([p for p in picks if p.profile == PROFILE])
+    out = {"all": _view(mine), "rec": _view([p for p in mine if REC in (p.flags or [])])}
+    legs, results = {}, {}
+    for p in mine:  # sazka jednou: kurz z prvniho tiketu, ve kterem se objevila (poradi zapisu, ne vysledek)
+        for x in p.legs:
+            k = _leg_key(x)
+            legs.setdefault(k, x)
+            if x.get("result") is not None:
+                results.setdefault(k, set()).add(x["result"])
+    staked = [(k, x) for k, x in legs.items() if len(results.get(k, ())) == 1
+              and next(iter(results[k])) in ("won", "lost", "half_won", "half_lost")]
+    res = {k: next(iter(results[k])) for k, _ in staked}
+    n = len(staked)
+    out["legs"] = {
+        "unique": len(legs), "settled": n, "open": sum(1 for k in legs if k not in results),
+        "void": sum(1 for k in legs if results.get(k) == {"void"}),
+        "hit": sum(1.0 if res[k] == "won" else 0.5 if res[k].startswith("half") else 0.0 for k, _ in staked) / n if n else None,
+        "implied": sum(1 / x["odds"] for _, x in staked) / n if n else None,
+        "roi": sum(_leg_profit(res[k], x["odds"]) for k, x in staked) / n if n else None,
+        "ci": roi_ci([([_match(x)], _leg_profit(res[k], x["odds"])) for k, x in staked]),
+        "matches": len({_match(x) for _, x in staked})}
+    issues = [(p.name, i) for p in mine for i in ticket_issues(p)]
+    issues += [(f"{k[0]} {k[2]} {k[3]}", f"stejná sázka má v tiketech různé výsledky: {', '.join(sorted(v))}")
+               for k, v in results.items() if len(v) > 1]
+    out["issues"], out["checked"] = issues, len(mine)
     return out
 
 
@@ -149,7 +248,7 @@ def record(ledger, combos, now: datetime, leagues: dict[str, str] | None = None)
         first = legs[0]["kickoff"]
         if datetime.fromisoformat(first) <= now:
             continue  # zapas uz zacal – tiket se nemeni
-        flags = (["doporučený tiket (nejlepší)"] if rank == 0 else []) + ([TARGET] if any(x["target"] for x in legs) else [])
+        flags = ([REC] if rank == 0 else []) + ([TARGET] if any(x["target"] for x in legs) else [])
         old = mine.get(pid)
         if old is not None:
             if old.result is None:
@@ -157,7 +256,7 @@ def record(ledger, combos, now: datetime, leagues: dict[str, str] | None = None)
                 for x in legs:  # prvni kurz nohy zustava (zmena kurzu pred vykopem = jina cena nez pri navrhu)
                     x["first_odds"] = prev.get(_leg_key(x), {}).get("first_odds", prev.get(_leg_key(x), {}).get("odds", x["odds"]))
                 old.legs, old.odds, old.p_model, old.detail = legs, round(c.odds, 2), round(c.prob, 4), _detail(legs)
-                old.flags = sorted(set(flags) | ({"doporučený tiket (nejlepší)"} & set(old.flags)))
+                old.flags = sorted(set(flags) | ({REC} & set(old.flags)))
             continue
         for x in legs:
             x["first_odds"] = x["odds"]
@@ -246,23 +345,6 @@ def settle_nhl(ledger, games: list[dict]) -> list[str]:
 
 def _leg_key(x: dict) -> tuple:
     return x["name"], x["day"], x["market"], x["selection"]
-
-
-def overlaps(picks) -> dict[str, str]:
-    """{id kombi tiketu: nazev drivejsiho tiketu} pro tikety, jejichz nektera sazka uz je v zapocitanem tiketu."""
-    used: dict[tuple, str] = {}
-    out = {}
-    for p in picks:
-        if p.profile != PROFILE or not p.legs:
-            continue
-        keys = [_leg_key(x) for x in p.legs]
-        hit = next((used[k] for k in keys if k in used), None)
-        if hit is not None:
-            out[p.id] = hit
-            continue
-        for k in keys:
-            used[k] = p.name
-    return out
 
 
 def open_legs(ledger) -> list[dict]:

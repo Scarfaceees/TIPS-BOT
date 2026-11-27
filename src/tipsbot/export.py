@@ -10,7 +10,7 @@ Metodika (podrobne na listu Metodika):
 - ROI na 1 j. = zisk v jednotkach / pocet vyhodnocenych sazek s vkladem (vyhry + prohry), kazdy tip 1 j.
 - Skutecne tikety navic: skutecne ROI = zisk v Kc / souctem vkladu v Kc a prumerne ROI na tiket (prumer zisk/vklad).
 - Jeden vyber jednoho zapasu se v ramci profilu pocita jen jednou (opakovane ulozeny tip = duplicita).
-- Kombi tiket, jehoz nektera sazka uz je v drive navrzenem (zapocitanem) kombi tiketu, se nepocita (kombi.overlaps).
+- Kombi tikety se pocitaji vsechny po 1 j.; nezavislost resi interval po zapasech (kombi.evaluation, list Combo).
 - CLV jen ze skutecne overenych zaviracich kurzu (Profil 4 „závěrečný kurz…“, tikety se zapsanym zaviracim kurzem).
 """
 
@@ -580,12 +580,28 @@ def _phase321_sheets(d, sheet, table, F, FB) -> None:
     ws = sheet("Combo Odds Verification")
     v = kombi.verification(d.picks)
     _note(ws, 5, "Cílová noha = jen minimální kurz („ověř u kanceláře“), ne nabídka kanceláře. Hypotetické a ověřené výsledky se "
-                 "nesčítají. Započítané tikety (každá sázka jednou); stejné nohy a zápasy se v tiketech opakují.", F)
-    srows = [["všechny započítané tikety (hypotetické ROI)", v["tickets"], v["all"]["settled"], v["all"]["profit"], v["all"]["roi"]]]
+                 "nesčítají. Všechny tikety po 1 j.; stejné nohy a zápasy se v tiketech opakují (interval se sdílenými zápasy níže).", F)
+    srows = [["všechny tikety (hypotetické ROI)", v["tickets"], v["all"]["settled"], v["all"]["profit"], v["all"]["roi"]]]
     for cls, st in v["classes"].items():
         srows.append([cls, st["open"] + st["settled"], st["settled"], st["profit"] if st["settled"] else None, st["roi"]])
     srows.append(["ROI jen z tiketů s ověřenými cenami", v["fully_verified"], v["verified"]["settled"],
                   v["verified"]["profit"] if v["verified"]["settled"] else None, v["verified"]["roi"]])
+    ev = kombi.evaluation(d.picks)
+
+    def _ci(st):
+        return (f", 95 % interval se sdílenými zápasy {st['ci'][0] * 100:+.0f} až {st['ci'][1] * 100:+.0f} %" if st.get("ci") else "")
+
+    srows.append([f"A: všechny tikety ({ev['all']['matches']} nezávislých zápasů{_ci(ev['all'])})",
+                  ev["all"]["open"] + ev["all"]["settled"], ev["all"]["settled"], ev["all"]["profit"], ev["all"]["roi"]])
+    srows.append([f"C: doporučený tiket ({ev['rec']['matches']} zápasů{_ci(ev['rec'])})",
+                  ev["rec"]["open"] + ev["rec"]["settled"], ev["rec"]["settled"], ev["rec"]["profit"], ev["rec"]["roi"]])
+    lg = ev["legs"]
+    srows.append([f"F: sázky jednotlivě jako single (vyšlo {lg['hit'] * 100:.0f} %, kurzy čekaly {lg['implied'] * 100:.0f} %{_ci(lg)})"
+                  if lg["hit"] is not None else "F: sázky jednotlivě jako single", lg["unique"], lg["settled"],
+                  lg["roi"] * lg["settled"] if lg["roi"] is not None else None, lg["roi"]])
+    srows.append([f"Kontrola dat (tiket = obě nohy, kurz = součin, stejná sázka = stejný výsledek): "
+                  + ("OK" if not ev["issues"] else f"{len(ev['issues'])} neshod – " + "; ".join(f"{n}: {i}" for n, i in ev["issues"][:5])),
+                  ev["checked"], None, None, None])
     end = table(ws, 7, ["Skupina", "Tiketů", "Vyhodnoceno", "Zisk (j.)", "ROI na 1 j."], srows,
                 {4: "+0.00;-0.00;0.00", 5: YF}, [44, 8, 10, 9, 10], False)
     pc = d.placed_combo or {}
@@ -1225,10 +1241,9 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
     recs, legs, seen, dup = [], [], set(), 0
     from .kombi import is_verified
     picks = paper.load(led)
-    kombi_skip = kombi.overlaps(picks)
     for p in picks:
         key = (p.profile, p.match_id, p.market, p.selection)
-        if key in seen or p.id in kombi_skip:  # stejna sazka = jedna (i kombi tiket s uz zapocitanou sazkou)
+        if key in seen:  # stejna sazka = jedna
             dup += 1
             continue
         seen.add(key)

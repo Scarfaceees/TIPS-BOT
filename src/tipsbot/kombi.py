@@ -109,7 +109,7 @@ def placed(session) -> dict:
     from .metrics import is_staked
     from .storage import COMBO, Ticket
 
-    ts = list(session.scalars(select(Ticket).where(Ticket.market == COMBO)))
+    ts = list(session.scalars(select(Ticket).where(Ticket.market == COMBO, Ticket.test.is_(False))))
     st = [t for t in ts if is_staked(t.status)]
     stake = sum(t.stake for t in st)
     profit = sum(t.profit_loss or 0.0 for t in st)

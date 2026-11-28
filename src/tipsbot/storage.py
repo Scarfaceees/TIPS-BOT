@@ -88,6 +88,8 @@ class Ticket(Base):
     clv_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
     profit_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # testovaci tiket: jen evidence a vyhodnoceni, nikdy bankroll, expozice ani statistiky vsazenych tiketu
+    test: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
 
 class TicketLeg(Base):
@@ -246,7 +248,26 @@ def make_session_factory(database_url: str | None = None) -> sessionmaker[Sessio
         if "already exists" not in str(e):
             raise
         Base.metadata.create_all(engine)
+    _add_columns(engine)
     return sessionmaker(engine, expire_on_commit=False)
+
+
+# sloupce pridane do existujicich tabulek (create_all je do starsi databaze neprida): (tabulka, sloupec, definice)
+NEW_COLUMNS = (("tickets", "test", "BOOLEAN NOT NULL DEFAULT 0"),)
+
+
+def _add_columns(engine) -> None:
+    from sqlalchemy import inspect, text
+
+    for table, col, ddl in NEW_COLUMNS:
+        if col in {c["name"] for c in inspect(engine).get_columns(table)}:
+            continue
+        try:
+            with engine.begin() as con:
+                con.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+        except OperationalError as e:  # panel a automat startuji soucasne: druhy uz sloupec najde
+            if "duplicate column" not in str(e):
+                raise
 
 
 def profit_for(result: str, odds: float, stake: float) -> float:
@@ -512,13 +533,13 @@ class Ledger:
     # --- expozice -------------------------------------------------------
     def open_exposure(self, day: date) -> float:
         q = select(func.coalesce(func.sum(Ticket.stake), 0.0)).where(
-            Ticket.match_day == day, Ticket.status == TICKET_OPEN
+            Ticket.match_day == day, Ticket.status == TICKET_OPEN, Ticket.test.is_(False)
         )
         return float(self.s.scalar(q) or 0.0)
 
     def bets_on_match(self, match_id: str) -> int:
         q = select(func.count(func.distinct(Ticket.selection + "|" + Ticket.market))).where(
-            Ticket.match_id == match_id, Ticket.status != "void"
+            Ticket.match_id == match_id, Ticket.status != "void", Ticket.test.is_(False)
         )
         return int(self.s.scalar(q) or 0)
 
@@ -554,6 +575,7 @@ class Ledger:
         match_day: date | None = None,
         league: str = "",
         match_name: str = "",
+        test: bool = False,
     ) -> Ticket:
         """Zapise rucne podanou sazku. S tip_id se udaje o zapase doplni z tipu."""
         if odds <= 1.0 or stake <= 0:
@@ -583,12 +605,14 @@ class Ledger:
             bookmaker=bookmaker,
             odds=odds,
             stake=stake,
+            test=test,
         )
         self.s.add(ticket)
         self.s.flush()
         return ticket
 
-    def add_combo_ticket(self, *, bookmaker: str, odds: float, stake: float, legs: list[dict]) -> Ticket:
+    def add_combo_ticket(self, *, bookmaker: str, odds: float, stake: float, legs: list[dict],
+                         test: bool = False) -> Ticket:
         """Tiket AKU (vic zapasu, jeden vklad). `legs`: match_name, match_day, market, selection, odds (+ league).
         `odds` = celkovy kurz z tiketu kancelare (zaokrouhleny soucin kurzu nohou)."""
         if len(legs) < 2:
@@ -605,7 +629,7 @@ class Ledger:
         ticket = Ticket(match_id=f"aku:{min(leg['match_day'] for leg in legs)}:{' + '.join(names)}",
                         league=leagues.pop() if len(leagues) == 1 else "", match_name=" + ".join(names),
                         match_day=max(leg["match_day"] for leg in legs), market=COMBO, selection=f"{len(legs)} zápasy",
-                        bookmaker=bookmaker, odds=odds, stake=stake)
+                        bookmaker=bookmaker, odds=odds, stake=stake, test=test)
         self.s.add(ticket)
         self.s.flush()
         for leg in legs:
@@ -677,7 +701,8 @@ class Ledger:
         ticket.settled_at = utcnow()
         if fair_closing_odds:
             self.set_closing(ticket, fair_closing_odds)
-        self._move(pnl, "settlement", ticket.id)
+        if not ticket.test:  # testovaci tiket se vyhodnoti, ale do bankrollu nejde
+            self._move(pnl, "settlement", ticket.id)
         return ticket
 
     def delete_open_ticket(self, ticket_id: int) -> Ticket:
@@ -703,13 +728,14 @@ class Ledger:
 
     # --- prehled --------------------------------------------------------
     def summary(self) -> dict[str, float]:
-        settled = list(self.s.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN)))
+        settled = list(self.s.scalars(select(Ticket).where(Ticket.status != TICKET_OPEN, Ticket.test.is_(False))))
         graded = [t for t in settled if t.status != "void"]
         staked = sum(t.stake for t in graded)
         pnl = sum(t.profit_loss or 0.0 for t in settled)
         wins = sum(1 for t in graded if t.status in ("won", "half_won"))
         clv = [t.clv_pct for t in settled if t.clv_pct is not None]
-        open_n = self.s.scalar(select(func.count()).select_from(Ticket).where(Ticket.status == TICKET_OPEN))
+        open_n = self.s.scalar(select(func.count()).select_from(Ticket).where(Ticket.status == TICKET_OPEN,
+                                                                               Ticket.test.is_(False)))
         return {
             "bankroll": self.bankroll(),
             "peak": self.peak(),

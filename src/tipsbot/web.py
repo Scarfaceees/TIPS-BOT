@@ -691,11 +691,12 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
   <label>Celkový kurz tiketu<input name="odds" type="number" step="0.01" min="1.01" required data-total></label>
   <label>Vklad ({{ cur }})<input name="stake" type="number" step="1" min="1" list="stakes" required></label>
 </div><div class="muted">Celkový kurz se doplní jako součin kurzů zápasů – oprav ho podle tiketu kanceláře.</div>
+<label class="row"><input type="checkbox" name="test" value="1"> Testovací tiket – jen evidovat a vyhodnotit, nepočítat do bankrollu ani statistik</label>
 <div class="row"><button>Zapsat sázku</button></div></form></div>
 </aside><div class="colmain">
 <h2>Otevřené tikety ({{ open_tickets|length }})</h2>
 <div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Sázka</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th></th></tr>
-{% for k in open_tickets %}<tr><td class="muted">{{ k.match_day.strftime('%d.%m.') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}</td><td><b>{{ 'kombinace' if legs_by_ticket.get(k.id) else k.market|bet(k.selection, k.match_name) }}</b></td><td>{{ k.bookmaker }}</td>
+{% for k in open_tickets %}<tr><td class="muted">{{ k.match_day.strftime('%d.%m.') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}{% if k.test %} <span class="badge warn">TEST – mimo bankroll</span>{% endif %}</td><td><b>{{ 'kombinace' if legs_by_ticket.get(k.id) else k.market|bet(k.selection, k.match_name) }}</b></td><td>{{ k.bookmaker }}</td>
 <td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
 <td><details class="fold"><summary>ručně</summary><form method="post" action="{{ url_for('ticket_settle', ticket_id=k.id) }}"><input type="hidden" name="tab" value="tikety">
 <label>Kurz bez marže těsně před zápasem (nepovinné)<input name="closing" type="number" step="0.01"></label>
@@ -711,7 +712,7 @@ button{background:linear-gradient(135deg,#1975e8,#1057b8);border-radius:9px;padd
 <div class="muted">Výsledky ({{ rec.n }} sázek): největší propad {{ '%.0f'|format(rec.max_drawdown) }} {{ cur }} · nejdelší série proher {{ rec.longest_losing }}{% if rec.current_losing %} (teď {{ rec.current_losing }}){% endif %}</div>
 {% if rec.n < 30 %}<div class="muted note-inline">Při {{ rec.n }} sázkách jsou čísla jen orientační (potřeba desítky až stovky).</div>{% endif %}</div>{% endif %}
 <div class="card tablewrap"><table class="cardt"><tr><th>Den</th><th>Zápas</th><th>Výběr</th><th>Kancelář</th><th class="num">Kurz</th><th class="num">Vklad</th><th>Výsledek</th><th class="num">Zisk / ztráta</th><th class="num" title="o kolik lepší kurz jsi vzal než ten těsně před zápasem; dlouhodobě v plusu = sázíš chytře">Proti závěr. kurzu</th></tr>
-{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}</td>
+{% for k in settled %}<tr class="r-{{ k.status }}"><td class="muted">{{ k.match_day.strftime('%d.%m.%Y') }}</td><td>{% if legs_by_ticket.get(k.id) %}<b>AKU ({{ legs_by_ticket[k.id]|length }} zápasy)</b>{{ leglist(legs_by_ticket[k.id]) }}{% else %}<b>{{ k.match_name or k.match_id }}</b>{% endif %}{% if k.test %} <span class="badge warn">TEST – mimo bankroll</span>{% endif %}</td>
 <td>{{ 'kombinace' if legs_by_ticket.get(k.id) else k.market|bet(k.selection, k.match_name) }}</td><td>{{ k.bookmaker }}</td><td class="num" data-l="kurz">{{ '%.2f'|format(k.odds) }}</td><td class="num" data-l="vklad">{{ '%.0f'|format(k.stake) }}</td>
 <td>{{ {'won': 'výhra', 'lost': 'prohra', 'void': 'vráceno', 'half_won': 'půl výhra', 'half_lost': 'půl prohra'}.get(k.status, k.status) }}</td>
 <td class="num {{ 'pos' if k.profit_loss >= 0 else 'neg' }}">{{ '%+.0f'|format(k.profit_loss) }}</td>
@@ -1833,7 +1834,8 @@ def create_app(database_url: str | None = None) -> Flask:
             p3pair=(strategy.paired(all_picks, "profil3", "profil3x")
                     if tab == "sledovani" and prof.key in ("profil3", "profil3x") else None),
             props_split=_props_split(picks) if tab == "sledovani" and prof.props else None,
-            rec=metrics.track_record([t.profit_loss for t in reversed(settled)], [t.stake for t in reversed(settled)]),
+            rec=metrics.track_record([t.profit_loss for t in reversed(settled) if not t.test],
+                                     [t.stake for t in reversed(settled) if not t.test]),
             prec=metrics.track_record([p.profit for p in done_picks], [1.0] * len(done_picks)),
             done_skip={p.id for p in picks if p.result is not None and paper.hard_rejected(p)},
             paper_open=[p for p in picks if p.result is None],
@@ -2463,6 +2465,7 @@ def create_app(database_url: str | None = None) -> Flask:
         def fn(led: Ledger, _):
             f = request.form
             tip_id = int(f["tip_id"]) if f.get("tip_id") else None
+            test = f.get("test") == "1"
             names = f.getlist("match_name")
             if tip_id is None and len(names) > 1:  # tiket AKU: vic zapasu, jeden vklad
                 legs = []
@@ -2476,9 +2479,9 @@ def create_app(database_url: str | None = None) -> Flask:
                     legs.append({"match_name": nm.strip(), "match_day": date.fromisoformat(dy), "market": mk,
                                  "selection": sl, "odds": float(od.replace(",", "."))})
                 ticket = led.add_combo_ticket(bookmaker=f["bookmaker"], odds=float(f["odds"]), stake=float(f["stake"]),
-                                              legs=legs)
+                                              legs=legs, test=test)
                 return (f"Tiket AKU #{ticket.id} zapsán: {len(legs)} zápasy, kurz {ticket.odds:.2f}, "
-                        f"vklad {ticket.stake:.0f} {SETTINGS.currency}.")
+                        f"vklad {ticket.stake:.0f} {SETTINGS.currency}" + (" (testovací, mimo bankroll)." if test else "."))
             name = f.get("match_name", "").strip()
             day = date.fromisoformat(f["match_day"]) if f.get("match_day") else None
             market, selection = f.get("market") or None, f.get("selection") or None
@@ -2495,8 +2498,10 @@ def create_app(database_url: str | None = None) -> Flask:
                 selection=selection,
                 match_day=day,
                 match_name=name,
+                test=test,
             )
-            return f"Tiket #{ticket.id} zapsán: {ticket.match_name} {ticket.market} {ticket.selection} @ {ticket.odds:.2f}."
+            return (f"Tiket #{ticket.id} zapsán: {ticket.match_name} {ticket.market} {ticket.selection} @ {ticket.odds:.2f}"
+                    + (" (testovací, mimo bankroll)." if test else "."))
 
         return action(fn, "", tab="tikety")
 

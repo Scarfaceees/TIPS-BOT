@@ -1282,7 +1282,7 @@ def collect(session, p4_path: Path | None = None, now: datetime | None = None, l
     from .storage import COMBO
 
     ticket_kinds = {}
-    for t in session.query(Ticket).order_by(Ticket.id):
+    for t in session.query(Ticket).filter(Ticket.test.is_(False)).order_by(Ticket.id):  # testovaci tikety mimo
         ticket_kinds[f"t-{t.id}"] = ("kombinovaný (AKU)" if t.market == COMBO else "z tipu bota" if t.tip_id
                                      else "ručně zadaný")
         res = None if t.status == "open" else t.status if t.status in OUTCOME or t.status == "void" else "invalid"

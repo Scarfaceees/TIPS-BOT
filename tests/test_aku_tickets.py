@@ -203,3 +203,46 @@ def test_other_market_text_is_never_auto_graded(led):
     notes = settle_open_tickets(led, _df([("Getafe", "Atletico Madrid", 0, 3), ("Marseille", "Le Mans", 2, 3)]))
     assert [x.status for x in led.ticket_legs(t.id)] == ["won", "open"] and t.status == "open"
     assert any("neumím vyhodnotit" in n for n in notes)
+
+
+def test_test_ticket_is_settled_but_never_touches_bankroll_or_stats(led, tmp_path):
+    """28.11.2026: testovaci tikety se jen eviduji a vyhodnoti – bankroll, expozice, statistiky beze zmeny."""
+    from sqlalchemy import create_engine, text
+
+    from tipsbot import kombi
+
+    t = led.add_combo_ticket(bookmaker="tipsport", odds=1.89, stake=25, test=True, legs=[
+        _leg("Hull City - Brighton", "OU_3.5", "under", 1.50), _leg("Liverpool - Manchester United", "OU_4.5", "under", 1.26)])
+    single = led.add_ticket(bookmaker="tipsport", odds=1.5, stake=10, match_id="manual:x", market="OU_2.5",
+                            selection="under", match_day=D, match_name="Paris FC - Angers", test=True)
+    assert led.open_exposure(D) == 0 and led.bets_on_match("manual:x") == 0 and led.summary()["open_bets"] == 0
+    settle_open_tickets(led, _df([("Hull City", "Brighton", 1, 1), ("Liverpool", "Manchester United", 2, 2),
+                                  ("Paris FC", "Angers", 3, 0)]))
+    assert t.status == "won" and t.profit_loss == pytest.approx(25 * 0.89) and single.status == "lost"
+    assert led.bankroll() == pytest.approx(1000) and led.summary()["settled_bets"] == 0
+    assert kombi.placed(led.s)["tickets"] == 0
+    # starsi databaze bez sloupce: doplni se pri startu, stare tikety nejsou testovaci
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    eng = create_engine(url)
+    with eng.begin() as con:
+        con.execute(text("CREATE TABLE tickets (id INTEGER PRIMARY KEY, tip_id INTEGER, match_id VARCHAR, league VARCHAR,"
+                         " match_name VARCHAR, match_day DATE, market VARCHAR, selection VARCHAR, bookmaker VARCHAR,"
+                         " odds FLOAT, stake FLOAT, placed_at DATETIME, status VARCHAR, closing_odds FLOAT,"
+                         " clv_pct FLOAT, profit_loss FLOAT, settled_at DATETIME)"))
+        con.execute(text("INSERT INTO tickets (id, match_id, match_day, market, selection, bookmaker, odds, stake, status)"
+                         " VALUES (1, 'm', '2026-11-22', 'OU_2.5', 'under', 'tipsport', 1.5, 10, 'open')"))
+    old = Ledger(make_session_factory(url)())
+    make_session_factory(url)  # druhy start uz nic nepridava
+    assert old.summary()["open_bets"] == 1 and old.open_exposure(D) == 10
+
+
+def test_panel_records_test_ticket(tmp_path):
+    url = f"sqlite:///{tmp_path / 't.db'}"
+    c = create_app(url).test_client()
+    r = c.post("/tickets", data={"tab": "tikety", "match_name": ["Leeds - Coventry", "Arouca - Rio Ave"],
+                                 "match_day": ["2026-11-28", "2026-11-28"], "market": ["TTA", "OU"],
+                                 "line": ["1.5", "3.5"], "selection": ["under", "under"], "leg_odds": ["1.23", "1.36"],
+                                 "bookmaker": "tipsport", "odds": "1.67", "stake": "20", "test": "1"},
+               follow_redirects=True)
+    html = r.get_data(as_text=True)
+    assert "testovací, mimo bankroll" in html and "TEST – mimo bankroll" in html

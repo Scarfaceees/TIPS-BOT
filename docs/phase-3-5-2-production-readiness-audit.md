@@ -339,3 +339,56 @@ Skutečná cache z 06:00:37 a **simulovaný** záznam B1 06:11:40 (skutečný po
 - `nhl.run` nad kopiemi DB: 15 snímků, 15 srovnatelných, `odds_call_id 16`, žádné anomálie kanceláří, řádky ostrá/P4 srovnatelné 78/100 ze 104. `code_rev` = `unknown` (lokálně bez proměnné; v image ji nastaví F2).
 - Mimo NHL: řádek 15 (UECL `refresh_league`) má `cost 0` při `cost_expected 2` (kredity se nezměnily) – evidence to zaznamenala správně, vliv na F1 žádný.
 - **Podmínka 1 splněna.** Podmínky 2–4 platí pro samostatně schválený deploy.
+
+## Záznam nasazení 28. 11. 2026
+
+Nasazeno automatizovaným během podle kapitoly 10. Schválení uživatele z 27. 11. 2026 večer platilo jen pro commit `bc859de`, tento postup a toto okno.
+
+### Okno a výchozí stav
+- Start 07:01 UTC, dokončení kontrol 07:22 UTC (povolené okno 06:20–11:40 UTC).
+- `tipsbot.db`: `state['auto:running']` = `''` (prázdná), `auto:last_refresh 2026-11-28T06:00:25`.
+- `docker logs --since 10m tipsbot-auto` bez výstupu – žádný rozběhnutý průchod.
+- `data/profil4.db` (`mode=ro`): 0 tipů `decision='APPROVED BET'` s výkopem v intervalu <07:02, 08:32> UTC; nejbližší 14:00 UTC.
+- `data/tipsbot.db` (`mode=ro`): 0 tipů s výkopem v intervalu; všech 9 tipů `cancelled`/`expired`, žádný otevřený.
+- Kontejnery před nasazením: `tipsbot` i `tipsbot-auto` na `sha256:30c74eb85cb5…`, `RestartCount 0`, `running`.
+- `git branch --show-current` = `dev`; `HEAD` = `bc859de519281d50ed7e05430334158bf38b1bb2` (diff proti `bc859de` prázdný).
+- `scripts/build_release.py --dry-run` → `0`, čistý strom v cestách buildu.
+
+### Zálohy a rollback
+- Záloha: `backups/predM2-20261128-0704` (`tipsbot.db` 35 889 152 B, `profil4.db` 288 792 576 B).
+- `scripts/b1_preflight.py verify` → `integrity kopie=ok, po obnove=ok`, `obnova shodna=True` pro obě DB, **`VERIFY OK`**.
+- Rollback tag: `tipsbot-local:rollback-e7e2a85` = `30c74eb85cb5` (ověřeno). Rollback **nebyl potřeba**.
+- Výchozí počty řádků ze zálohy: `profil4.tips 750`, `predictions 80533`, `forecasts 342`, `odds_quotes 259627`; `tipsbot.odds_api_calls 40`.
+
+### Build a restart
+- Build z odpojeného `bc859de519281d50ed7e05430334158bf38b1bb2` přes `scripts/build_release.py` → `OK: tipsbot-local:latest = commit bc859de5…` (label i `TIPSBOT_CODE_REV`). Pak návrat na `dev`.
+- Nový image: `155f7b6b9c6e` = `sha256:155f7b6b9c6e62dce8964a27e4a6f21554c3c3f23171eb6cb0c810c887497ec1`, také otagován `tipsbot-local:bc859de`.
+- Postupný restart: `tipsbot` 07:08 UTC → HTTP 200 z `http://127.0.0.1:8000/` do 2 s; pak `tipsbot-auto` 07:09 UTC. Automat rozjel průchod v 07:09:16, první řádek logu v 07:21 UTC (do té doby datová fáze), průchod dokončen 07:21:30 UTC.
+
+### Kontroly po nasazení (krok 7, jen čtení)
+- `.Image` obou kontejnerů = `sha256:155f7b6b9c6e…`, `RestartCount 0`, `running`.
+- `printenv TIPSBOT_CODE_REV` = `bc859de519281d50ed7e05430334158bf38b1bb2` v `tipsbot` **i** `tipsbot-auto`.
+- Label `org.opencontainers.image.revision` nového image = `bc859de519281d50ed7e05430334158bf38b1bb2`.
+- Migrace: `data/profil4.db` obsahuje `nhl_snapshots`, `nhl_measurements`, `nhl_results`, `nhl_result_corrections` (bez čekání, hned po otevření Store).
+- Počty řádků původních tabulek beze změny proti záloze: `tips 750`, `predictions 80533`, `forecasts 342`, `odds_quotes 259627`.
+- `tipsbot.db`: `odds_api_calls` existuje, 40 řádků, **žádný nový řádek** (poslední `id 40`, `ts 06:10:59`, `refresh_league` NHL – z ranního rozvrhu). Průchod v 07:09–07:21 jel z cache („kurzy z cache (68 min staré, kredity se nespotřebovaly)“).
+- `docker logs --since 10m` obou kontejnerů: žádné „měření NHL selhalo“, „ukládání výsledků selhalo“, „Traceback“ ani „database is locked“.
+- Panel Kombi: `GET /?tab=sledovani&profile=kombi` → HTTP 200, obsahuje „Vyhodnocení kombi“ a **„kontrola dat OK“** (202 tiketů: výsledek a zisk tiketu odpovídá oběma sázkám, kurz = součin kurzů, stejná sázka má všude stejný výsledek). Žádné neshody.
+  - Všechny tikety po 1 j.: 157 tiketů z 65 nezávislých zápasů, ROI **+33,3 %** (95 % interval −1 až +67 %).
+  - Doporučený tiket: 39 tiketů, 41 zápasů, ROI **+59,0 %** (95 % interval +18 až +100 %).
+  - Sázky jednotlivě: 70 sázek, vyšlo 71 % (kurzy čekaly 66 %), ROI jako single **+7,7 %** (95 % interval −8 až +24 %); čeká 23, vráceno 2.
+  - Ověření kurzů: plně ověřených tiketů 0, s neověřenou (cílovou) nohou 202; ROI hypotetické +33,3 % (158), ROI ověřené ceny – (0).
+
+### První NHL sken – ověřeno hned (nad plán kroku 7)
+Automat stihl první průchod ještě v okně, takže snímky už existují:
+- `nhl_snapshots` 13 řádků, `nhl_measurements` 98 řádků; `nhl_results` a `nhl_result_corrections` 0 (žádný zápas zatím nedohrál).
+- **F2:** `code_rev` = `bc859de519281d50ed7e05430334158bf38b1bb2` u všech 13 snímků (žádný `unknown`). `measure_version m2-2`, `model_version 0.1.0`, `config_hash ceea277f5e`.
+- **F1:** `odds_fetched_at` = `2026-11-28T06:10:59+00:00` u všech snímků = `ts` řádku evidence B1 `odds_api_calls.id 40`; `odds_call_id 40`, `odds_pass_started_at 2026-11-28T06:00:25+00:00`, `odds_fetch_evidence` → `candidates [40]`, `failed 0`, `cache_credits 183`. `odds_cost_source cache`.
+- **F3:** `ref_sharp_books ["pinnacle"]` se značkou 06:10:15, `ref_p4_books` 13+ kanceláří se `ref_p4_stamp_max 06:10:43`, `book_time_anomalies {}` u všech snímků.
+- Vylučovací pravidla fungují: snímky se `data MoneyPuck končí 2026-11-25 (víc než 3 dny před zápasem)` mají `comparable 0` – to je známé P2-3 (S5), ne chyba nasazení.
+- Průchod automatu: `NHL: zapasu 13, s ferovou linii 13, s modelem 13`, `Profil 4 – NHL: 13 zápasů, schválených sázek 8` – shodné s ranním průchodem v 06:00 pod `e7e2a85`.
+
+### Neověřeno (ověří se podle kroků 7–8 kapitoly 10 později)
+- Vznik **nových** tipů a predikcí pod novým kódem: tento průchod jel z cache, `novych tipu 0` ve všech ligách, počty řádků `tips`/`predictions` beze změny. Ověří se až při průchodu, který stáhne nové kurzy a vydá tip.
+- **První vyhodnocení výsledků** (`nhl_results`, `nhl_result_corrections` zatím 0) – až po prvním dohraném zápase.
+- Chyby 429 z Google News jsou známé a s nasazením nesouvisí.
